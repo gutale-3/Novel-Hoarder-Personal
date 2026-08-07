@@ -10,9 +10,8 @@ class AiProviderRegistry(private val context: Context) {
         if (userKey.isNotBlank()) userKey else com.example.BuildConfig.GEMINI_API_KEY
     }
     val localProvider = MediaPipeLocalProvider(context)
-    val mlKitProvider = MlKitGenAiProvider(context)
 
-    val providers = listOf(cloudProvider, localProvider, mlKitProvider)
+    val providers = listOf(cloudProvider, localProvider)
 
     fun getProvider(id: String): AiProvider {
         return providers.find { it.id == id } ?: cloudProvider
@@ -23,12 +22,6 @@ class AiProviderRegistry(private val context: Context) {
         
         // 1. Check if preferred is available
         if (preferred.isAvailable()) {
-            // ML Kit does not support JSON mode
-            if (requiresJson && preferred.id == "mlkit_genai") {
-                // Fallback to local or cloud
-                if (localProvider.isAvailable()) return localProvider
-                return cloudProvider
-            }
             return preferred
         }
 

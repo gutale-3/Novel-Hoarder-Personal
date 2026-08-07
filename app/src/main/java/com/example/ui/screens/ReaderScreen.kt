@@ -55,6 +55,7 @@ import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+// Number of LazyColumn header items placed before paragraph items (1: Chapter Header, 2: Audio Player Bar / Banner, 3: Chapter Summary / Recap card)
 private const val READER_HEADER_ITEMS = 3
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -958,6 +959,10 @@ fun ReaderScreen(
                     // Detect user-initiated drag to temporarily suspend auto-following
                     val isUserDragging by lazyListState.interactionSource.collectIsDraggedAsState()
                     var isAutoScrollSuspended by remember { mutableStateOf(false) }
+
+                    LaunchedEffect(currentChapterId) {
+                        isAutoScrollSuspended = false
+                    }
 
                     LaunchedEffect(isUserDragging, isTtsPlaying) {
                         if (isUserDragging && isTtsPlaying) {

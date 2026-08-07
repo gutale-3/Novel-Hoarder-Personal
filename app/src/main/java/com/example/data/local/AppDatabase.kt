@@ -17,7 +17,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookmarkEntity::class
     ],
     version = 5,
-    exportSchema = false
+    exportSchema = true
 )
 /**
  * Room Database represents the high-performance local persistence layer on Android,
@@ -55,6 +55,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `bookmarks` (" +
+                    "`id` TEXT NOT NULL, " +
+                    "`bookId` TEXT NOT NULL, " +
+                    "`chapterId` TEXT NOT NULL, " +
+                    "`paragraphIndex` INTEGER NOT NULL, " +
+                    "`text` TEXT NOT NULL, " +
+                    "`note` TEXT NOT NULL, " +
+                    "`timestamp` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`id`)" +
+                    ")"
+                )
+            }
+        }
+
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `autoArchiveHours` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `chapters` ADD COLUMN `isArchived` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `chapters` ADD COLUMN `readAt` INTEGER")
+            }
+        }
+
         internal val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `books` ADD COLUMN `isDeleted` INTEGER NOT NULL DEFAULT 0")
@@ -69,8 +94,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "novel_hoarder_db"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_4_5)
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
                 INSTANCE = instance
                 instance

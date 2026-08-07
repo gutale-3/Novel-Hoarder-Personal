@@ -52,7 +52,8 @@ class SettingsManager(val application: Application) {
         readerFontSize = prefs.getInt("reader_font_size", 18)
         readerFontFamily = prefs.getString("reader_font_family", "serif") ?: "serif"
         defaultUserAgent = prefs.getString("user_agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36") ?: ""
-        activeAiProviderId = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
+        val savedProvider = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
+        activeAiProviderId = if (savedProvider == "mlkit_genai") "gemini_cloud" else savedProvider
         userGeminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
 
         autoDownloadNextEnabled = prefs.getBoolean("auto_download_next", true)
