@@ -84,7 +84,7 @@ class PiperModelManager(private val context: Context) {
             }
 
             if (responseCode != HttpURLConnection.HTTP_OK) {
-                Log.e("KokoroDownload", "HTTP error for voice ${voice.id}: code=$responseCode, url=$urlString")
+                Log.e("NeuralTtsDownload", "HTTP error for voice ${voice.id}: code=$responseCode, url=$urlString")
                 return@withContext Result.failure(
                     Exception("Failed to download voice: Server returned HTTP $responseCode")
                 )
@@ -158,7 +158,7 @@ class PiperModelManager(private val context: Context) {
             Result.success(Unit)
         } catch (e: Exception) {
             voiceFolder.deleteRecursively()
-            Log.e("KokoroDownload", "Download/extraction failed for voice ${voice.id}", e)
+            Log.e("NeuralTtsDownload", "Download/extraction failed for voice ${voice.id}", e)
             Result.failure(e)
         } finally {
             if (tempTarBz2File.exists()) {

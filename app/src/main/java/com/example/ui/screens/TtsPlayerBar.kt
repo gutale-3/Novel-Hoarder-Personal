@@ -445,25 +445,20 @@ fun TtsPlayerBar(
                 }
             }
         }
-    }    // --- Voice Customization Dialog ---
+    }    // --- Voice Customization Bottom Sheet ---
     if (showSettingsDialog) {
-        Dialog(
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
             onDismissRequest = { showSettingsDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
         ) {
-            Surface(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.95f)
-                    .fillMaxHeight(0.9f),
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 16.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
-                ) {
                     // Header
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1177,7 +1172,6 @@ fun TtsPlayerBar(
                         Text("Done", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                 }
-            }
         }
     }
 }

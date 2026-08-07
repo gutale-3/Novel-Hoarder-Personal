@@ -44,12 +44,18 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import com.example.viewmodel.MainViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private const val READER_HEADER_ITEMS = 3
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -929,11 +935,11 @@ fun ReaderScreen(
                     LaunchedEffect(currentChapterId) {
                         if (!currentChapterId.isNullOrEmpty()) {
                             if (currentChapterId == initialChapterId && initialParaIndex >= 0) {
-                                lazyListState.scrollToItem(initialParaIndex + 3)
+                                lazyListState.scrollToItem(initialParaIndex + READER_HEADER_ITEMS)
                             } else {
                                 val savedPara = viewModel.progress.getSavedParagraphIndex(bookId, currentChapterId)
                                 if (savedPara > 0) {
-                                    lazyListState.scrollToItem(savedPara + 3)
+                                    lazyListState.scrollToItem(savedPara + READER_HEADER_ITEMS)
                                 } else {
                                     lazyListState.scrollToItem(0)
                                 }
@@ -948,9 +954,28 @@ fun ReaderScreen(
                     val isTtsPlaying = viewModel.ttsIsPlaying
                     val playingChapterId = viewModel.ttsPlayingChapter?.id
                     val autoScrollEnabled = viewModel.ttsAutoScrollEnabled
-                    LaunchedEffect(activePara, isTtsPlaying, playingChapterId, autoScrollEnabled, activeChapter?.id) {
-                        if (autoScrollEnabled && isTtsPlaying && playingChapterId == activeChapter?.id) {
-                            val targetItemIndex = if (activePara < 0) 0 else activePara + 3
+
+                    // Detect user-initiated drag to temporarily suspend auto-following
+                    val isUserDragging by lazyListState.interactionSource.collectIsDraggedAsState()
+                    var isAutoScrollSuspended by remember { mutableStateOf(false) }
+
+                    LaunchedEffect(isUserDragging, isTtsPlaying) {
+                        if (isUserDragging && isTtsPlaying) {
+                            isAutoScrollSuspended = true
+                        }
+                    }
+
+                    // Auto-re-engage auto-follow after 5 seconds of no manual scrolling
+                    LaunchedEffect(isAutoScrollSuspended, isUserDragging, activePara) {
+                        if (isAutoScrollSuspended && !isUserDragging) {
+                            delay(5000L)
+                            isAutoScrollSuspended = false
+                        }
+                    }
+
+                    LaunchedEffect(activePara, isTtsPlaying, playingChapterId, autoScrollEnabled, activeChapter?.id, isAutoScrollSuspended) {
+                        if (autoScrollEnabled && !isAutoScrollSuspended && isTtsPlaying && playingChapterId == activeChapter?.id) {
+                            val targetItemIndex = if (activePara < 0) 0 else activePara + READER_HEADER_ITEMS
                             val viewportHeight = lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset
                             val scrollOffset = if (viewportHeight > 0) -viewportHeight / 4 else -120
                             lazyListState.animateScrollToItem(targetItemIndex, scrollOffset)
@@ -969,7 +994,7 @@ fun ReaderScreen(
                                 (viewModel.ttsActiveParagraphIndex ?: -1).coerceIn(0, paragraphs.size - 1)
                             } else {
                                 if (paragraphs.isNotEmpty()) {
-                                    (lazyListState.firstVisibleItemIndex - 3).coerceIn(0, paragraphs.size - 1)
+                                    (lazyListState.firstVisibleItemIndex - READER_HEADER_ITEMS).coerceIn(0, paragraphs.size - 1)
                                 } else {
                                     0
                                 }
@@ -1140,6 +1165,38 @@ fun ReaderScreen(
                                     textAlign = if (viewModel.readerJustificationEnabled) TextAlign.Justify else TextAlign.Start
                                 ),
                                 modifier = textAndStyleModifier
+                            )
+                        }
+                    }
+
+                    // Floating "Resume auto-scroll" chip when auto-follow is temporarily suspended by user manual drag
+                    AnimatedVisibility(
+                        visible = isAutoScrollSuspended && autoScrollEnabled && isTtsPlaying && playingChapterId == activeChapter.id,
+                        enter = fadeIn() + slideInVertically { it },
+                        exit = fadeOut() + slideOutVertically { it },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 24.dp)
+                    ) {
+                        ElevatedButton(
+                            onClick = { isAutoScrollSuspended = false },
+                            colors = ButtonDefaults.elevatedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            elevation = ButtonDefaults.elevatedButtonElevation(defaultElevation = 6.dp),
+                            shape = RoundedCornerShape(20.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Resume auto-scroll",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
                             )
                         }
                     }
