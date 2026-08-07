@@ -1,0 +1,123 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Outer gold glowing ring -->
+    <path
+        android:pathData="M54,54m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="22"
+                android:startY="54"
+                android:endX="86"
+                android:endY="54"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE885"/>
+                <item android:offset="0.5" android:color="#D4AF37"/>
+                <item android:offset="1.0" android:color="#AA7C11"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Stylized Book Outline -->
+    <!-- Left Wing -->
+    <path
+        android:pathData="M54,72 C44,68 36,71 32,72 L32,40 C36,39 44,36 54,40 Z"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="32"
+                android:startY="38"
+                android:endX="54"
+                android:endY="72"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE885"/>
+                <item android:offset="1.0" android:color="#D4AF37"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Right Wing -->
+    <path
+        android:pathData="M54,72 C64,68 72,71 76,72 L76,40 C72,39 64,36 54,40 Z"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="54"
+                android:startY="38"
+                android:endX="76"
+                android:endY="72"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE885"/>
+                <item android:offset="1.0" android:color="#D4AF37"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Pages lines/details -->
+    <path
+        android:pathData="M36,48 C40,47 46,45 50,47 M36,54 C40,53 46,51 50,53 M36,60 C40,59 46,57 50,59"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="36"
+                android:startY="46"
+                android:endX="50"
+                android:endY="46"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE885"/>
+                <item android:offset="1.0" android:color="#AA7C11"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <path
+        android:pathData="M72,48 C68,47 62,45 58,47 M72,54 C68,53 62,51 58,53 M72,60 C68,59 62,57 58,59"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="58"
+                android:startY="46"
+                android:endX="72"
+                android:endY="46"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE885"/>
+                <item android:offset="1.0" android:color="#AA7C11"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Center Keyhole Lock representation (Hoarding books safely) -->
+    <path
+        android:pathData="M54,46 A4,4 0,0 0,50,50 A4,4 0,0 0,52,53.5 L50.5,60 C50.5,61 51,61.5 52,61.5 L56,61.5 C57,61.5 57.5,61 57.5,60 L56,53.5 A4,4 0,0 0,58,50 A4,4 0,0 0,54,46 Z"
+        android:fillType="nonZero">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="50"
+                android:startY="46"
+                android:endX="58"
+                android:endY="62"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE885"/>
+                <item android:offset="0.5" android:color="#FFD700"/>
+                <item android:offset="1.0" android:color="#AA7C11"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
