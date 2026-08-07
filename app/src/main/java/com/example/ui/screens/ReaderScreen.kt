@@ -1184,7 +1184,15 @@ fun ReaderScreen(
                             .padding(bottom = 24.dp)
                     ) {
                         ElevatedButton(
-                            onClick = { isAutoScrollSuspended = false },
+                            onClick = {
+                                isAutoScrollSuspended = false
+                                val targetItemIndex = if (activePara < 0) 0 else activePara + READER_HEADER_ITEMS
+                                scope.launch {
+                                    val viewportHeight = lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset
+                                    val scrollOffset = if (viewportHeight > 0) -viewportHeight / 4 else -120
+                                    lazyListState.animateScrollToItem(targetItemIndex, scrollOffset)
+                                }
+                            },
                             colors = ButtonDefaults.elevatedButtonColors(
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer
