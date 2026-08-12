@@ -30,10 +30,10 @@ fun DiscoverScreen(
     modifier: Modifier = Modifier
 ) {
     var queryText by remember { mutableStateOf("") }
-    var gemmaExists by remember { mutableStateOf(viewModel.modelManager.checkModelExists()) }
+    var gemmaExists by remember { mutableStateOf(viewModel.aiModelManager.checkModelExists()) }
 
     LaunchedEffect(Unit) {
-        gemmaExists = viewModel.modelManager.checkModelExists()
+        gemmaExists = viewModel.aiModelManager.checkModelExists()
     }
 
     LazyColumn(

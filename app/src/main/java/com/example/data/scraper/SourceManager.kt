@@ -1,21 +1,29 @@
 package com.example.data.scraper
 
+import com.example.data.plugin.PluginExecutionEngine
+import com.example.data.plugin.PluginManager
+import com.example.util.GenericScraper
 import com.example.util.TomatoScraper
 
 object SourceManager {
-    private val sources = listOf<NovelSource>(
-        TomatoScraper
-    )
 
     /**
-     * Resolves the appropriate NovelSource adapter based on the input URL.
-     * Defaults to TomatoScraper if no matches are found, maintaining full backwards compatibility.
+     * Resolves the right NovelSource for a URL.
+     *
+     * Order matters: the built-in TomatoMTL adapter is tuned for that site and must win over both
+     * user plugins and the universal scraper. User plugins come next, then the universal fallback.
      */
-    fun getSourceForUrl(url: String): NovelSource {
+    fun getSourceForUrl(url: String, pluginManager: PluginManager? = null): NovelSource {
         val lowerUrl = url.lowercase()
-        return sources.firstOrNull { source ->
-            lowerUrl.contains(source.sourceName.lowercase()) || 
-            (source == TomatoScraper && (lowerUrl.contains("tomatoy") || lowerUrl.contains("tomato")))
-        } ?: TomatoScraper
+
+        if (lowerUrl.contains("tomatomtl") || lowerUrl.contains("tomato") || lowerUrl.contains("tomatoy")) {
+            return TomatoScraper
+        }
+
+        pluginManager?.findPluginForUrl(url)?.let { plugin ->
+            return PluginExecutionEngine(plugin)
+        }
+
+        return GenericScraper
     }
 }

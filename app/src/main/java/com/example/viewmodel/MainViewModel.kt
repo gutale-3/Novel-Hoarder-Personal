@@ -1,48 +1,30 @@
 package com.example.viewmodel
 
 import android.app.Application
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.speech.tts.TextToSpeech
-import android.speech.tts.Voice
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
-import android.support.v4.media.MediaMetadataCompat
-import androidx.media.app.NotificationCompat.MediaStyle
-import android.webkit.CookieManager
-import android.webkit.WebView
-import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.local.*
-import com.example.data.repository.NovelRepository
-import com.example.data.ai.SherpaOnnxTtsEngine
+import com.example.data.ai.ModelManager
+import com.example.data.ai.PiperModelManager
 import com.example.data.ai.PiperVoice
 import com.example.data.ai.PiperVoiceCatalog
+import com.example.data.ai.SherpaOnnxTtsEngine
+import com.example.data.local.*
+import com.example.data.plugin.PluginManager
+import com.example.data.repository.NovelRepository
 import com.example.ui.theme.AppTheme
-import com.example.util.CloudflareException
-import com.example.util.NovelCompiler
-import com.example.util.TomatoScraper
-import com.example.data.scraper.SourceManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.io.File
-import java.util.Locale
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getDatabase(application)
     val repository = NovelRepository(database.bookDao())
 
-    // --- Global Theme & Preferences ---
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
 
     var focusModeEnabled: Boolean
@@ -83,6 +65,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         set(value) { progress.resumeChapterTitle = value }
 
     val settings = SettingsManager(application)
+    val pluginManager = PluginManager(application)
+    val piperModelManager = PiperModelManager(application)
+    val aiModelManager = ModelManager(application)
+    val manualCapture = ManualCaptureManager(application, repository, viewModelScope)
+
+    var showAiSettings by mutableStateOf(false)
 
     val currentTheme: AppTheme get() = settings.currentTheme
     val readerFontSize: Int get() = settings.readerFontSize
@@ -117,7 +105,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var selectedLibraryBookIds by mutableStateOf<Set<String>>(emptySet())
 
     val aiRegistry = com.example.data.ai.AiProviderRegistry(application)
-    val modelManager = com.example.data.ai.ModelManager(application)
     val aiFeatures = AiFeaturesManager(repository, aiRegistry, settings).apply {
         aggressiveCleanProvider = { aggressiveClean }
     }
@@ -353,71 +340,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         get() = tts.sleepTimerRemainingSeconds
         set(value) { tts.sleepTimerRemainingSeconds = value }
 
-
-    private fun downloadCoverAndSaveMetadata(book: BookEntity, cookies: String): BookEntity {
-        val context = getApplication<Application>().applicationContext
-        val outputFolder = File(context.filesDir, book.id)
-        if (!outputFolder.exists()) outputFolder.mkdirs()
-
-        // 1. Download Cover Image
-        var updatedBook = book
-        val coverUrl = book.coverUrl
-        if (!coverUrl.isNullOrEmpty()) {
-            try {
-                scraping.addLog("Downloading book cover from $coverUrl...")
-                val coverFile = File(outputFolder, "cover.jpg")
-                val url = java.net.URL(coverUrl)
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("User-Agent", defaultUserAgent)
-                if (cookies.isNotEmpty()) {
-                    conn.setRequestProperty("Cookie", cookies)
-                }
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
-                
-                val responseCode = conn.responseCode
-                if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                    conn.inputStream.use { input ->
-                        java.io.FileOutputStream(coverFile).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    updatedBook = book.copy(coverLocalPath = coverFile.absolutePath)
-                    scraping.addLog("Book cover downloaded successfully to: ${coverFile.name}")
-                } else {
-                    scraping.addLog("Failed to download book cover (HTTP $responseCode)")
-                }
-            } catch (e: Exception) {
-                scraping.addLog("Error downloading book cover: ${e.message}")
-                e.printStackTrace()
-            }
-        }
-
-        // 2. Save info.json metadata
-        try {
-            val infoFile = File(outputFolder, "info.json")
-            val json = org.json.JSONObject().apply {
-                put("id", updatedBook.id)
-                put("url", updatedBook.url)
-                put("title", updatedBook.title)
-                put("author", updatedBook.author)
-                put("synopsis", updatedBook.synopsis)
-                put("coverUrl", updatedBook.coverUrl ?: "")
-                put("coverLocalPath", updatedBook.coverLocalPath ?: "")
-                put("totalChapters", updatedBook.totalChapters)
-                put("updatedAt", updatedBook.updatedAt)
-            }
-            infoFile.writeText(json.toString(4))
-            scraping.addLog("Saved metadata info.json for book: ${updatedBook.title}")
-        } catch (e: Exception) {
-            scraping.addLog("Error saving info.json: ${e.message}")
-            e.printStackTrace()
-        }
-
-        return updatedBook
-    }
-
     // --- Glossary AI State ---
     val isGeneratingGlossary: Boolean get() = aiFeatures.isGeneratingGlossary
     val glossaryStatusMessage: String get() = aiFeatures.glossaryStatusMessage
@@ -509,17 +431,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         scopeAllBooks: Boolean
     ): Pair<Int, Int> = withContext(Dispatchers.IO) {
         if (findText.isEmpty()) return@withContext Pair(0, 0)
-        
+
         var chaptersModified = 0
         var totalMatchesReplaced = 0
-        
+
         val targetChapters = if (scopeAllBooks) {
             val books = repository.allBooks.firstOrNull() ?: emptyList()
             books.flatMap { repository.getChapters(it.id) }
         } else {
             if (bookId == null) emptyList() else repository.getChapters(bookId)
         }
-        
+
         for (chapter in targetChapters) {
             if (chapter.content.contains(findText, ignoreCase = true)) {
                 val regex = Regex(Regex.escape(findText), RegexOption.IGNORE_CASE)
@@ -532,7 +454,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        
+
         return@withContext Pair(chaptersModified, totalMatchesReplaced)
     }
 
@@ -553,6 +475,3 @@ data class DiscoveryItem(
     val description: String,
     val searchUrl: String
 )
-
-
-

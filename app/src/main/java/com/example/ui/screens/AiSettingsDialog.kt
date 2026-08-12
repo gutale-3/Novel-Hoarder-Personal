@@ -35,13 +35,13 @@ fun AiSettingsDialog(
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
-    val modelStatus by viewModel.modelManager.status.collectAsState()
-    var modelExists by remember { mutableStateOf(viewModel.modelManager.checkModelExists()) }
-    var modelSizeBytes by remember { mutableStateOf(viewModel.modelManager.modelSizeBytes()) }
+    val modelStatus by viewModel.aiModelManager.status.collectAsState()
+    var modelExists by remember { mutableStateOf(viewModel.aiModelManager.checkModelExists()) }
+    var modelSizeBytes by remember { mutableStateOf(viewModel.aiModelManager.modelSizeBytes()) }
 
     fun refreshState() {
-        modelExists = viewModel.modelManager.checkModelExists()
-        modelSizeBytes = viewModel.modelManager.modelSizeBytes()
+        modelExists = viewModel.aiModelManager.checkModelExists()
+        modelSizeBytes = viewModel.aiModelManager.modelSizeBytes()
     }
 
     // File picker launcher for importing Gemma task files
@@ -50,7 +50,7 @@ fun AiSettingsDialog(
     ) { uri: Uri? ->
         if (uri != null) {
             coroutineScope.launch {
-                viewModel.modelManager.importModel(uri)
+                viewModel.aiModelManager.importModel(uri)
                 refreshState()
             }
         }
@@ -162,7 +162,7 @@ fun AiSettingsDialog(
                                     Button(
                                         onClick = {
                                             coroutineScope.launch {
-                                                viewModel.modelManager.deleteModel()
+                                                viewModel.aiModelManager.deleteModel()
                                                 refreshState()
                                             }
                                         },
@@ -231,7 +231,7 @@ fun AiSettingsDialog(
                                             }
                                             OutlinedButton(
                                                 onClick = {
-                                                    viewModel.modelManager.deleteModel()
+                                                    viewModel.aiModelManager.deleteModel()
                                                     refreshState()
                                                 },
                                                 shape = RoundedCornerShape(12.dp)
@@ -284,122 +284,7 @@ fun AiSettingsDialog(
                         }
                     }
 
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    // ML Kit On-Device Translation Section
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = "ML Kit On-Device Translation",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Download offline translation models for fast, private translation of foreign language chapters.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        var requireWifi by remember { mutableStateOf(viewModel.settings.translationRequireWifi) }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Require Wi-Fi for Downloads", style = MaterialTheme.typography.bodyMedium)
-                            Switch(
-                                checked = requireWifi,
-                                onCheckedChange = {
-                                    requireWifi = it
-                                    viewModel.settings.updateTranslationRequireWifi(it)
-                                }
-                            )
-                        }
-
-                        var zhDownloaded by remember { mutableStateOf(false) }
-                        var jaDownloaded by remember { mutableStateOf(false) }
-                        var koDownloaded by remember { mutableStateOf(false) }
-                        var isDownloadingLang by remember { mutableStateOf<String?>(null) }
-
-                        LaunchedEffect(Unit) {
-                            zhDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.CHINESE)
-                            jaDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.JAPANESE)
-                            koDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.KOREAN)
-                        }
-
-                        listOf(
-                            Triple("Chinese -> English", com.google.mlkit.nl.translate.TranslateLanguage.CHINESE, zhDownloaded),
-                            Triple("Japanese -> English", com.google.mlkit.nl.translate.TranslateLanguage.JAPANESE, jaDownloaded),
-                            Triple("Korean -> English", com.google.mlkit.nl.translate.TranslateLanguage.KOREAN, koDownloaded)
-                        ).forEach { (label, langCode, isDownloaded) ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                        Text(
-                                            if (isDownloaded) "Status: Downloaded (~30MB)" else "Status: Not Downloaded",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (isDownloaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    if (isDownloadingLang == langCode) {
-                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                    } else if (isDownloaded) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    try {
-                                                        val model = com.google.mlkit.nl.translate.TranslateRemoteModel.Builder(langCode).build()
-                                                        com.google.mlkit.common.model.RemoteModelManager.getInstance().deleteDownloadedModel(model)
-                                                        zhDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.CHINESE)
-                                                        jaDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.JAPANESE)
-                                                        koDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.KOREAN)
-                                                    } catch (e: Exception) {
-                                                        e.printStackTrace()
-                                                    }
-                                                }
-                                            },
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Text("Remove")
-                                        }
-                                    } else {
-                                        Button(
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    isDownloadingLang = langCode
-                                                    com.example.util.TranslatorEngine.ensureModelDownloaded(
-                                                        sourceLang = langCode,
-                                                        targetLang = com.google.mlkit.nl.translate.TranslateLanguage.ENGLISH,
-                                                        allowMobileData = !requireWifi
-                                                    )
-                                                    zhDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.CHINESE)
-                                                    jaDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.JAPANESE)
-                                                    koDownloaded = com.example.util.TranslatorEngine.isModelDownloaded(com.google.mlkit.nl.translate.TranslateLanguage.KOREAN)
-                                                    isDownloadingLang = null
-                                                }
-                                            },
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Text("Download")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                     // Customizable Prompts Section
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -460,7 +345,7 @@ fun AiSettingsDialog(
                         }
                     }
 
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                     // Offline Voice Info
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

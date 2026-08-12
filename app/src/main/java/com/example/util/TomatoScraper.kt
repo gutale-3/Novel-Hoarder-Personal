@@ -17,8 +17,6 @@ import java.util.regex.Pattern
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
-class CloudflareException(message: String) : IOException(message)
-
 object TomatoScraper : NovelSource {
 
     override val sourceName: String = "TomatoMTL"
