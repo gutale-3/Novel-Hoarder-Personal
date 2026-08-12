@@ -840,9 +840,9 @@ class ScrapingManager(
                     continue
                 }
 
-                // Simple random delay to respect scraping etiquette and prevent bans (just like desktop engine!)
+                // Simple delay to respect scraping etiquette and rate limits based on user settings
                 if (isScraping && index < chaptersToProcess.size - 1) {
-                    val delayTime = (1000L..2500L).random()
+                    val delayTime = settings.requestDelayMs.toLong().coerceAtLeast(300L)
                     delay(delayTime)
                 }
             }
@@ -925,6 +925,150 @@ class ScrapingManager(
             // Cancellation cleanups
         }
         captchaContinuation = null
+    }
+
+    suspend fun downloadSingleChapter(chapter: ChapterEntity): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (chapter.url.startsWith("local://")) {
+                return@runCatching
+            }
+            val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
+            val webView = withContext(Dispatchers.Main) {
+                WebView(application.applicationContext).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.userAgentString = defaultUserAgent
+                }
+            }
+            try {
+                val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
+                val title = rawContent.first
+                var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+
+                val glossaries = repository.getGlossary(chapter.bookId)
+                if (glossaries.isNotEmpty()) {
+                    cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                }
+
+                val md5 = java.security.MessageDigest.getInstance("MD5")
+                val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+                val updatedChapter = chapter.copy(
+                    title = if (title.isNotBlank()) title else chapter.title,
+                    content = cleanedBody,
+                    hash = hash,
+                    downloadedAt = System.currentTimeMillis()
+                )
+
+                repository.deletePolishedChapter(chapter.id)
+                repository.deleteChapterRecap(chapter.id)
+                repository.insertChapter(updatedChapter)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    try { webView.destroy() } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    fun downloadNextChapters(bookId: String, limit: Int = 10, onComplete: ((Int, Int) -> Unit)? = null) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val pending = repository.getPendingChapters(bookId, limit)
+            var success = 0
+            var fail = 0
+            for ((idx, ch) in pending.withIndex()) {
+                val res = downloadSingleChapter(ch)
+                if (res.isSuccess) success++ else fail++
+                if (idx < pending.size - 1) {
+                    delay(settings.requestDelayMs.toLong().coerceAtLeast(300L))
+                }
+            }
+            withContext(Dispatchers.Main) {
+                onComplete?.invoke(success, fail)
+            }
+        }
+    }
+
+    fun downloadAllRemainingChapters(bookId: String, onComplete: ((Int, Int) -> Unit)? = null) {
+        downloadNextChapters(bookId, limit = 10000, onComplete = onComplete)
+    }
+
+    fun refreshTableOfContents(bookId: String, onComplete: ((Boolean, String) -> Unit)? = null) {
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val book = repository.getBook(bookId)
+                if (book == null) {
+                    withContext(Dispatchers.Main) { onComplete?.invoke(false, "Novel not found.") }
+                    return@launch
+                }
+                if (book.url.startsWith("local://")) {
+                    withContext(Dispatchers.Main) { onComplete?.invoke(false, "Cannot refresh Table of Contents for local imported files.") }
+                    return@launch
+                }
+
+                val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
+                val webView = withContext(Dispatchers.Main) {
+                    WebView(application.applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.userAgentString = defaultUserAgent
+                    }
+                }
+
+                val chapterUrls = try {
+                    scraper.scrapeChapterList(webView, book.url)
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        try { webView.destroy() } catch (_: Exception) {}
+                    }
+                }
+
+                val existingChapters = repository.getChapters(bookId).associateBy { it.url }
+                var newCount = 0
+                val chapterEntities = mutableListOf<ChapterEntity>()
+
+                chapterUrls.forEachIndexed { index, chapterUrl ->
+                    val chapNum = index + 1
+                    val chapId = scraper.parseChapterId(chapterUrl) ?: "ch_$chapNum"
+                    val fullChapId = "${bookId}_$chapId"
+                    val existing = existingChapters[chapterUrl]
+                    if (existing != null) {
+                        chapterEntities.add(existing)
+                    } else {
+                        newCount++
+                        chapterEntities.add(
+                            ChapterEntity(
+                                id = fullChapId,
+                                bookId = bookId,
+                                chapterId = chapId,
+                                chapterNumber = chapNum,
+                                title = "Chapter $chapNum",
+                                url = chapterUrl,
+                                content = "",
+                                hash = ""
+                            )
+                        )
+                    }
+                }
+
+                repository.insertChapters(chapterEntities)
+                val updatedBook = book.copy(
+                    totalChapters = chapterEntities.size,
+                    updatedAt = System.currentTimeMillis()
+                )
+                repository.updateBook(updatedBook)
+
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(true, "Table of contents updated! Found $newCount new chapter(s). Total: ${chapterEntities.size}")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(false, "Failed to refresh table of contents: ${e.message}")
+                }
+            }
+        }
     }
 
     fun rescrapeSingleChapter(chapter: ChapterEntity, onComplete: (Boolean, String) -> Unit) {

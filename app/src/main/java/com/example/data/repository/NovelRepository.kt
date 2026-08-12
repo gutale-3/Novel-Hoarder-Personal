@@ -103,6 +103,14 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun getChapterCount(bookId: String): Int = bookDao.getChapterCountForBook(bookId)
 
+    suspend fun getDownloadedChapterCount(bookId: String): Int = bookDao.getDownloadedChapterCount(bookId)
+
+    fun getDownloadedChapterCountFlow(bookId: String): Flow<Int> = bookDao.getDownloadedChapterCountFlow(bookId)
+
+    suspend fun getPendingChapters(bookId: String, limit: Int): List<ChapterEntity> = bookDao.getPendingChapters(bookId, limit)
+
+    suspend fun getNextPendingChapter(bookId: String, afterNumber: Int): ChapterEntity? = bookDao.getNextPendingChapter(bookId, afterNumber)
+
     suspend fun getTotalChapterCount(): Int = bookDao.getTotalChapterCount()
 
     // --- Glossaries ---

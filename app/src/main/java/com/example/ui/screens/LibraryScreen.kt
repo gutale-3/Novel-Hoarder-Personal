@@ -68,15 +68,28 @@ fun LibraryScreen(
     var showImportStatusDialog by remember { mutableStateOf(false) }
     var importStatusMessage by remember { mutableStateOf("") }
 
-    // Keep Map of bookId -> unreadCount in memory to sort
+    // Keep Map of bookId -> unreadCount & downloadedCount in memory
     val unreadCounts = remember { mutableStateMapOf<String, Int>() }
+    val downloadedCounts = remember { mutableStateMapOf<String, Int>() }
 
     LaunchedEffect(books) {
         books.forEach { book ->
-            val count = viewModel.repository.getUnreadChapterCount(book.id)
-            unreadCounts[book.id] = count
+            val unread = viewModel.repository.getUnreadChapterCount(book.id)
+            val downloaded = viewModel.repository.getDownloadedChapterCount(book.id)
+            unreadCounts[book.id] = unread
+            downloadedCounts[book.id] = downloaded
         }
     }
+
+    // Export with missing chapters state
+    var showMissingExportDialog by remember { mutableStateOf(false) }
+    var pendingExportBook by remember { mutableStateOf<BookEntity?>(null) }
+    var pendingExportFormat by remember { mutableStateOf<String?>(null) }
+    var missingChaptersCount by remember { mutableStateOf(0) }
+
+    // Download All Remaining confirmation state
+    var showDownloadAllConfirmDialog by remember { mutableStateOf(false) }
+    var pendingDownloadAllBook by remember { mutableStateOf<BookEntity?>(null) }
 
     // Configure Import state
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
@@ -456,25 +469,47 @@ fun LibraryScreen(
                             showGlossaryDialog = true
                         },
                         onExportEpub = {
-                            viewModel.library.compileFormat(book, "EPUB") { ok, path ->
-                                exportStatusMessage = if (ok) {
-                                    "EPUB compiled successfully!\nFile: $path"
+                            scope.launch {
+                                val downloaded = viewModel.repository.getDownloadedChapterCount(book.id)
+                                val missing = book.totalChapters - downloaded
+                                if (missing > 0) {
+                                    pendingExportBook = book
+                                    pendingExportFormat = "EPUB"
+                                    missingChaptersCount = missing
+                                    showMissingExportDialog = true
                                 } else {
-                                    "Failed to compile EPUB!"
+                                    viewModel.library.compileFormat(book, "EPUB") { ok, path ->
+                                        exportStatusMessage = if (ok) {
+                                            "EPUB compiled successfully!\nFile: $path"
+                                        } else {
+                                            "Failed to compile EPUB!"
+                                        }
+                                        showExportResultDialog = true
+                                        if (ok) shareFile(context, File(path), "application/epub+zip")
+                                    }
                                 }
-                                showExportResultDialog = true
-                                if (ok) shareFile(context, File(path), "application/epub+zip")
                             }
                         },
                         onExportPdf = {
-                            viewModel.library.compileFormat(book, "PDF") { ok, path ->
-                                exportStatusMessage = if (ok) {
-                                    "PDF compiled successfully!\nFile: $path"
+                            scope.launch {
+                                val downloaded = viewModel.repository.getDownloadedChapterCount(book.id)
+                                val missing = book.totalChapters - downloaded
+                                if (missing > 0) {
+                                    pendingExportBook = book
+                                    pendingExportFormat = "PDF"
+                                    missingChaptersCount = missing
+                                    showMissingExportDialog = true
                                 } else {
-                                    "Failed to compile PDF!"
+                                    viewModel.library.compileFormat(book, "PDF") { ok, path ->
+                                        exportStatusMessage = if (ok) {
+                                            "PDF compiled successfully!\nFile: $path"
+                                        } else {
+                                            "Failed to compile PDF!"
+                                        }
+                                        showExportResultDialog = true
+                                        if (ok) shareFile(context, File(path), "application/pdf")
+                                    }
                                 }
-                                showExportResultDialog = true
-                                if (ok) shareFile(context, File(path), "application/pdf")
                             }
                         },
                         onDelete = {
@@ -488,6 +523,23 @@ fun LibraryScreen(
                             }
                         },
                         onCheckNewChapters = { viewModel.scraping.checkForNewChapters(book) },
+                        onDownloadBatch = { count ->
+                            viewModel.scraping.downloadNextChapters(book.id, count) { s, f ->
+                                scope.launch {
+                                    downloadedCounts[book.id] = viewModel.repository.getDownloadedChapterCount(book.id)
+                                }
+                            }
+                        },
+                        onDownloadAllRemaining = {
+                            pendingDownloadAllBook = book
+                            showDownloadAllConfirmDialog = true
+                        },
+                        onRefreshToc = {
+                            viewModel.scraping.refreshTableOfContents(book.id) { success, msg ->
+                                rescrapeResultMessage = msg
+                                showRescrapeResultDialog = true
+                            }
+                        },
                         isCheckingNewChapters = viewModel.isCheckingNewChapters && viewModel.checkingNewChaptersBookId == book.id,
                         isBatchMode = isBatchMode,
                         isSelected = selectedBookIds.contains(book.id),
@@ -499,6 +551,7 @@ fun LibraryScreen(
                             }
                         },
                         unreadCount = unreadCounts[book.id] ?: 0,
+                        downloadedCount = downloadedCounts[book.id] ?: 0,
                         onEditDetails = {
                             activeEditBook = book
                             editTitle = book.title
@@ -1068,6 +1121,73 @@ fun LibraryScreen(
             }
         )
     }
+
+    // --- Missing Chapters Export Prompt Dialog ---
+    if (showMissingExportDialog && pendingExportBook != null) {
+        val book = pendingExportBook!!
+        val fmt = pendingExportFormat ?: "EPUB"
+        AlertDialog(
+            onDismissRequest = { showMissingExportDialog = false },
+            title = { Text("Undownloaded Chapters Detected") },
+            text = {
+                Text("'$missingChaptersCount' out of ${book.totalChapters} chapters are not downloaded yet.\n\nWould you like to download missing chapters first before compiling the $fmt ebook?")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showMissingExportDialog = false
+                    viewModel.scraping.downloadAllRemainingChapters(book.id) { s, f ->
+                        android.widget.Toast.makeText(context, "Downloaded $s chapters ($f failed). Ready for export!", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }) {
+                    Text("Download Missing First")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showMissingExportDialog = false
+                    viewModel.library.compileFormat(book, fmt) { ok, path ->
+                        exportStatusMessage = if (ok) "$fmt compiled successfully!\nFile: $path" else "Failed to compile $fmt!"
+                        showExportResultDialog = true
+                        if (ok) shareFile(context, File(path), if (fmt == "EPUB") "application/epub+zip" else "application/pdf")
+                    }
+                }) {
+                    Text("Export Downloaded Only")
+                }
+            }
+        )
+    }
+
+    // --- Download All Remaining Confirmation Dialog ---
+    if (showDownloadAllConfirmDialog && pendingDownloadAllBook != null) {
+        val book = pendingDownloadAllBook!!
+        val downloaded = downloadedCounts[book.id] ?: 0
+        val pending = (book.totalChapters - downloaded).coerceAtLeast(0)
+        val delaySec = viewModel.settings.requestDelayMs / 1000f
+        val estMinutes = ((pending * delaySec) / 60).toInt().coerceAtLeast(1)
+
+        AlertDialog(
+            onDismissRequest = { showDownloadAllConfirmDialog = false },
+            title = { Text("Download All Remaining Chapters?") },
+            text = {
+                Text("This will batch download $pending remaining chapters.\n\nEstimated time: ~${estMinutes} minute(s) (at ${delaySec}s delay per request).")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showDownloadAllConfirmDialog = false
+                    viewModel.scraping.downloadAllRemainingChapters(book.id) { s, f ->
+                        android.widget.Toast.makeText(context, "Completed! $s downloaded, $f failed.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text("Start Download")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDownloadAllConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -1081,11 +1201,15 @@ fun LibraryBookItem(
     onDelete: () -> Unit,
     onRescrapeCorrupted: () -> Unit,
     onCheckNewChapters: () -> Unit,
+    onDownloadBatch: (Int) -> Unit = {},
+    onDownloadAllRemaining: () -> Unit = {},
+    onRefreshToc: () -> Unit = {},
     isCheckingNewChapters: Boolean,
     isBatchMode: Boolean = false,
     isSelected: Boolean = false,
     onToggleSelect: () -> Unit = {},
     unreadCount: Int = 0,
+    downloadedCount: Int = 0,
     onEditDetails: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1217,6 +1341,41 @@ fun LibraryBookItem(
                                         enabled = !isCheckingNewChapters
                                     )
                                 }
+                                if (!book.url.startsWith("local://")) {
+                                    DropdownMenuItem(
+                                        text = { Text("Refresh Table of Contents") },
+                                        onClick = {
+                                            expandedMenu = false
+                                            onRefreshToc()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.ListAlt, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Download Next 10 Chapters") },
+                                        onClick = {
+                                            expandedMenu = false
+                                            onDownloadBatch(10)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Download Next 50 Chapters") },
+                                        onClick = {
+                                            expandedMenu = false
+                                            onDownloadBatch(50)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Download All Remaining") },
+                                        onClick = {
+                                            expandedMenu = false
+                                            onDownloadAllRemaining()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.CloudDownload, contentDescription = null) }
+                                    )
+                                    Divider()
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Manage Glossary") },
                                     onClick = {
@@ -1307,14 +1466,14 @@ fun LibraryBookItem(
                 }
             }
 
-            // Info row (Chapters Saved and unread count)
+            // Info row (Chapters Downloaded and unread count)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Start,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${book.totalChapters} Chapters Saved",
+                    text = if (downloadedCount == book.totalChapters) "${book.totalChapters} Chapters Downloaded" else "$downloadedCount / ${book.totalChapters} Downloaded",
                     style = MaterialTheme.typography.bodyMedium.copy(
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
@@ -1342,6 +1501,39 @@ fun LibraryBookItem(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            // Offline availability progress bar
+            if (downloadedCount < book.totalChapters && book.totalChapters > 0) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Offline Available: ${((downloadedCount.toFloat() / book.totalChapters) * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Text(
+                            text = "${book.totalChapters - downloadedCount} pending",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = downloadedCount.toFloat() / book.totalChapters,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = MaterialTheme.colorScheme.secondary,
+                        trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                     )
                 }
             }

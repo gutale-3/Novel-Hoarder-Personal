@@ -586,16 +586,36 @@ fun ReaderScreen(
                                                 }
                                             }
                                             
+                                            val isStub = ch.content.isBlank()
                                             Text(
                                                 text = ch.title,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                                                 color = if (isCurrent) MaterialTheme.colorScheme.primary 
+                                                        else if (isStub) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                                                         else if (ch.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                                                         else MaterialTheme.colorScheme.onSurface,
                                                 modifier = Modifier.weight(1f)
                                             )
+
+                                            if (isStub && !isMultiSelectMode) {
+                                                IconButton(
+                                                    onClick = {
+                                                        scope.launch {
+                                                            viewModel.scraping.downloadSingleChapter(ch)
+                                                        }
+                                                    },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CloudDownload,
+                                                        contentDescription = "Download Chapter",
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                                                    )
+                                                }
+                                            }
 
                                             if (!isMultiSelectMode) {
                                                 Row(
@@ -1052,7 +1072,117 @@ fun ReaderScreen(
                         viewModel.ttsTotalParagraphs = paragraphs.size
                     }
 
-                    LazyColumn(
+                    // Background prefetching of next chapter when auto-fetch is enabled
+                    LaunchedEffect(activeChapter.id, activeChapter.content) {
+                        if (activeChapter.content.isNotBlank() && viewModel.settings.autoFetchWhileReading) {
+                            val currentIndex = chapters.indexOfFirst { it.id == activeChapter.id }
+                            if (currentIndex >= 0) {
+                                val nextChap = chapters.getOrNull(currentIndex + 1)
+                                if (nextChap != null && nextChap.content.isBlank()) {
+                                    delay(1500L)
+                                    viewModel.scraping.downloadSingleChapter(nextChap)
+                                }
+                            }
+                        }
+                    }
+
+                    if (activeChapter.content.isBlank()) {
+                        var isDownloadingChapter by remember(activeChapter.id) { mutableStateOf(false) }
+                        var downloadError by remember(activeChapter.id) { mutableStateOf<String?>(null) }
+
+                        LaunchedEffect(activeChapter.id) {
+                            if (viewModel.settings.autoFetchWhileReading) {
+                                isDownloadingChapter = true
+                                downloadError = null
+                                val res = viewModel.scraping.downloadSingleChapter(activeChapter)
+                                isDownloadingChapter = false
+                                if (res.isFailure) {
+                                    downloadError = res.exceptionOrNull()?.message ?: "Failed to download chapter"
+                                }
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Card(
+                                modifier = Modifier
+                                    .widthIn(max = 400.dp)
+                                    .padding(24.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                                shape = RoundedCornerShape(20.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudDownload,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(48.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = activeChapter.title,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Text(
+                                        text = "Not downloaded yet",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (isDownloadingChapter) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(32.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            strokeWidth = 3.dp
+                                        )
+                                        Text(
+                                            text = "Downloading chapter...",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        if (downloadError != null) {
+                                            Text(
+                                                text = downloadError!!,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                        Button(
+                                            onClick = {
+                                                scope.launch {
+                                                    isDownloadingChapter = true
+                                                    downloadError = null
+                                                    val res = viewModel.scraping.downloadSingleChapter(activeChapter)
+                                                    isDownloadingChapter = false
+                                                    if (res.isFailure) {
+                                                        downloadError = res.exceptionOrNull()?.message ?: "Failed to download chapter"
+                                                    }
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(if (downloadError != null) "Retry Download" else "Download Chapter")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        LazyColumn(
                         state = lazyListState,
                         modifier = Modifier
                             .fillMaxHeight()
@@ -1215,6 +1345,7 @@ fun ReaderScreen(
                         }
                     }
                 }
+            }
             }
         }
     }

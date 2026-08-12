@@ -28,6 +28,9 @@ class SettingsManager(val application: Application) {
 
     // --- Auto-download / Reading Queue ---
     var autoDownloadNextEnabled by mutableStateOf(true)
+    var requestDelayMs by mutableStateOf(3000)     // pause between consecutive page loads
+    var batchSize by mutableStateOf(10)            // default "download next N"
+    var autoFetchWhileReading by mutableStateOf(true)
 
     // --- Reader Settings ---
     var readerTheme by mutableStateOf("follow_app") // "follow_app", "light", "dark", "sepia", "night", "mint", "nord", "oled"
@@ -68,6 +71,9 @@ class SettingsManager(val application: Application) {
         }
 
         autoDownloadNextEnabled = prefs.getBoolean("auto_download_next", true)
+        requestDelayMs = prefs.getInt("request_delay_ms", 3000)
+        batchSize = prefs.getInt("batch_size", 10)
+        autoFetchWhileReading = prefs.getBoolean("auto_fetch_while_reading", true)
         readerTheme = prefs.getString("reader_theme", "follow_app") ?: "follow_app"
         readerLineHeight = prefs.getFloat("reader_line_height", 1.4f)
         readerParagraphSpacing = prefs.getInt("reader_paragraph_spacing", 12)
@@ -232,6 +238,21 @@ class SettingsManager(val application: Application) {
     fun updateAutoDownloadNextEnabled(enabled: Boolean) {
         autoDownloadNextEnabled = enabled
         prefs.edit().putBoolean("auto_download_next", enabled).apply()
+    }
+
+    fun updateRequestDelayMs(delayMs: Int) {
+        requestDelayMs = delayMs.coerceIn(500, 30000)
+        prefs.edit().putInt("request_delay_ms", requestDelayMs).apply()
+    }
+
+    fun updateBatchSize(size: Int) {
+        batchSize = size.coerceIn(1, 200)
+        prefs.edit().putInt("batch_size", batchSize).apply()
+    }
+
+    fun updateAutoFetchWhileReading(enabled: Boolean) {
+        autoFetchWhileReading = enabled
+        prefs.edit().putBoolean("auto_fetch_while_reading", enabled).apply()
     }
 
     fun updateGlossaryPrompt(prompt: String) {

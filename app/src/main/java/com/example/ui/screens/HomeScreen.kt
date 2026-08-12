@@ -467,7 +467,7 @@ fun HomeScreen(
                             )
                         )
                         Text(
-                            text = "Paste a TomatoMTL book URL in the 'Scrape' tab to download a novel for offline reading.",
+                            text = "Paste any novel's URL to download it, or import an EPUB you already have.",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             ),

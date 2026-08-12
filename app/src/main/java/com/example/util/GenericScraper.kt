@@ -9,6 +9,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.IOException
 import java.util.regex.Pattern
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
@@ -59,6 +60,10 @@ object GenericScraper : NovelSource {
             delay(500)
         }
 
+        if (jsonResult == null) {
+            jsonResult = evaluateJs(webView, PageExtractors.BOOK_INFO_JS)
+        }
+
         val jsonObj = JsResultParser.toJsonObject(jsonResult)
         val rawTitle = jsonObj?.optString("title") ?: "Unknown Book"
         val cleanTitle = ChapterCleaner.cleanBookTitle(rawTitle)
@@ -104,29 +109,41 @@ object GenericScraper : NovelSource {
         webView: WebView,
         chapterUrl: String,
         shouldSkip: () -> Boolean
+    ): Pair<String, String> = scrapeChapterContent(webView, chapterUrl, null, shouldSkip)
+
+    suspend fun scrapeChapterContent(
+        webView: WebView,
+        chapterUrl: String,
+        expectedNumber: Int? = null,
+        shouldSkip: () -> Boolean
     ): Pair<String, String> = withContext(Dispatchers.Main) {
         evaluateJs(webView, PageExtractors.MARK_PREVIOUS_CONTENT_JS)
         loadUrlAndWait(webView, chapterUrl)
 
-        var jsonResult: String? = null
+        val readyJs = PageExtractors.chapterReadyJs(expectedNumber)
         val startTime = System.currentTimeMillis()
+        var ready = false
 
         while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
             if (shouldSkip()) break
-            val eval = evaluateJs(webView, PageExtractors.CHAPTER_CONTENT_JS)
+            val eval = evaluateJs(webView, readyJs)
             if (JsResultParser.isReady(eval)) {
-                jsonResult = eval
+                ready = true
                 break
             }
             delay(500)
         }
 
+        val jsonResult = evaluateJs(webView, PageExtractors.CHAPTER_CONTENT_JS)
         val jsonObj = JsResultParser.toJsonObject(jsonResult)
-        val title = jsonObj?.optString("title") ?: "Chapter"
-        val rawContent = jsonObj?.optString("content") ?: ""
+        val title = jsonObj?.optString("title").orEmpty().ifBlank { "Chapter" }
+        val rawContent = jsonObj?.optString("content").orEmpty()
 
-        val cleanBody = sanitizeText(rawContent, aggressive = false)
-        Pair(title, cleanBody)
+        if (!ready && rawContent.length < 200) {
+            throw IOException("Page did not finish loading: $chapterUrl")
+        }
+
+        Pair(ChapterCleaner.cleanTitle(title), sanitizeText(rawContent, aggressive = false))
     }
 
     fun parseTocEntries(raw: String?): List<TocEntry> {
