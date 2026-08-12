@@ -205,12 +205,16 @@ class LibraryManager(
                 val book = repository.getBook(id) ?: continue
                 try {
                     val scraper = SourceManager.getSourceForUrl(book.url)
-                    val webView = withContext(Dispatchers.Main) {
-                        WebView(application.applicationContext).apply {
+                    val urls = withContext(Dispatchers.Main) {
+                        val webView = WebView(application.applicationContext).apply {
                             settings.javaScriptEnabled = true
                         }
+                        try {
+                            scraper.scrapeChapterList(webView, book.url)
+                        } finally {
+                            try { webView.destroy() } catch (_: Exception) {}
+                        }
                     }
-                    val urls = scraper.scrapeChapterList(webView, book.url)
                     if (urls.isNotEmpty()) {
                         val currentCount = repository.getChapterCount(book.id)
                         val diff = urls.size - currentCount

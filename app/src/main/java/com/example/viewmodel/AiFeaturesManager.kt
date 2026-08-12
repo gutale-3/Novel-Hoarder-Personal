@@ -380,50 +380,60 @@ class AiFeaturesManager(
                     }
                 }
 
-                val chapterUrls = scraper.scrapeChapterList(webView, book.url)
-                if (chapterUrls.isEmpty()) return@launch
-
-                val currentIdx = chapterUrls.indexOfFirst { it == currentChapter.url }
-                if (currentIdx == -1) return@launch
-
-                val nextUrls = chapterUrls.drop(currentIdx + 1).take(3)
-                val glossaries = repository.getGlossary(book.id)
-
-                for ((offset, nextUrl) in nextUrls.withIndex()) {
-                    val absoluteChapterNum = currentChapter.chapterNumber + 1 + offset
-                    val chapId = scraper.parseChapterId(nextUrl) ?: "ch_$absoluteChapterNum"
-                    val fullChapId = "${book.id}_$chapId"
-
-                    val existing = repository.getChapter(fullChapId)
-                    if (existing != null && existing.content.length > 100) {
-                        continue
+                try {
+                    val chapterUrls = withContext(Dispatchers.Main) {
+                        scraper.scrapeChapterList(webView, book.url)
                     }
+                    if (chapterUrls.isEmpty()) return@launch
 
-                    try {
-                        val rawContent = scraper.scrapeChapterContent(webView, nextUrl) { false }
-                        val title = rawContent.first
-                        var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveCleanProvider())
+                    val currentIdx = chapterUrls.indexOfFirst { it == currentChapter.url }
+                    if (currentIdx == -1) return@launch
 
-                        if (glossaries.isNotEmpty()) {
-                            cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                    val nextUrls = chapterUrls.drop(currentIdx + 1).take(3)
+                    val glossaries = repository.getGlossary(book.id)
+
+                    for ((offset, nextUrl) in nextUrls.withIndex()) {
+                        val absoluteChapterNum = currentChapter.chapterNumber + 1 + offset
+                        val chapId = scraper.parseChapterId(nextUrl) ?: "ch_$absoluteChapterNum"
+                        val fullChapId = "${book.id}_$chapId"
+
+                        val existing = repository.getChapter(fullChapId)
+                        if (existing != null && existing.content.length > 100) {
+                            continue
                         }
 
-                        val md5 = java.security.MessageDigest.getInstance("MD5")
-                        val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                        try {
+                            val rawContent = withContext(Dispatchers.Main) {
+                                scraper.scrapeChapterContent(webView, nextUrl) { false }
+                            }
+                            val title = rawContent.first
+                            var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveCleanProvider())
 
-                        val chapterEntity = ChapterEntity(
-                            id = fullChapId,
-                            bookId = book.id,
-                            chapterId = chapId,
-                            chapterNumber = absoluteChapterNum,
-                            title = title,
-                            url = nextUrl,
-                            content = cleanedBody,
-                            hash = hash
-                        )
-                        repository.insertChapter(chapterEntity)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
+                            if (glossaries.isNotEmpty()) {
+                                cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                            }
+
+                            val md5 = java.security.MessageDigest.getInstance("MD5")
+                            val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+                            val chapterEntity = ChapterEntity(
+                                id = fullChapId,
+                                bookId = book.id,
+                                chapterId = chapId,
+                                chapterNumber = absoluteChapterNum,
+                                title = title,
+                                url = nextUrl,
+                                content = cleanedBody,
+                                hash = hash
+                            )
+                            repository.insertChapter(chapterEntity)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        try { webView.destroy() } catch (_: Exception) {}
                     }
                 }
             } catch (e: Exception) {

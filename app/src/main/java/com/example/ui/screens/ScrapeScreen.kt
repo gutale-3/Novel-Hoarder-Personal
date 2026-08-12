@@ -37,6 +37,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.ui.theme.MinTouchTarget
+import com.example.ui.theme.isNarrowScreen
 import com.example.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -803,7 +807,9 @@ fun ScrapeScreen(
                     Surface(
                         tonalElevation = 3.dp,
                         shadowElevation = 2.dp,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
                     ) {
                         Column(
                             modifier = Modifier
@@ -1006,75 +1012,137 @@ fun ScrapeScreen(
 
                     // --- Manual Capture Bottom Action Bar ---
                     val manualCapture = viewModel.manualCapture
+                    val narrow = isNarrowScreen()
+                    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+
                     Surface(
                         tonalElevation = 6.dp,
                         shadowElevation = 8.dp,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .imePadding()
                     ) {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (!manualCapture.captureBookTitle.isNullOrBlank()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Session: ${manualCapture.captureBookTitle} (${manualCapture.captureChapterCount} chapters)",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        maxLines = 1,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    TextButton(
-                                        onClick = { manualCapture.startNewBrowserSession() },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            if (manualCapture.isCapturing) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (!manualCapture.captureBookTitle.isNullOrBlank()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("New Session", fontSize = 12.sp)
+                                        Text(
+                                            text = "Session: ${manualCapture.captureBookTitle} (${manualCapture.captureChapterCount} chapters)",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(
+                                            onClick = { manualCapture.startNewBrowserSession() },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "New Session",
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
-                            }
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Button(
-                                    onClick = {
-                                        webViewInstance?.let { webView ->
-                                            viewModel.scraping.grabInfoFromWebView(webView) { msg ->
-                                                coroutineScope.launch {
-                                                    snackbarHostState.showSnackbar(msg)
+                                @Composable
+                                fun GrabInfoButton(btnModifier: Modifier) {
+                                    Button(
+                                        onClick = {
+                                            webViewInstance?.let { webView ->
+                                                viewModel.scraping.grabInfoFromWebView(webView) { msg ->
+                                                    coroutineScope.launch {
+                                                        snackbarHostState.showSnackbar(msg)
+                                                    }
                                                 }
                                             }
-                                        }
-                                    },
-                                    enabled = !manualCapture.isCapturing,
-                                    modifier = Modifier.weight(1f).testTag("scrape_grab_info_btn"),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Grab Novel Info", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        },
+                                        enabled = !manualCapture.isCapturing,
+                                        modifier = btnModifier
+                                            .defaultMinSize(minHeight = MinTouchTarget)
+                                            .testTag("scrape_grab_info_btn"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = if (manualCapture.isCapturing) "Saving…" else if (narrow) "Grab Info" else "Grab Novel Info",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
 
-                                Button(
-                                    onClick = {
-                                        webViewInstance?.let { webView ->
-                                            viewModel.scraping.grabChapterFromWebView(webView) { msg ->
-                                                coroutineScope.launch {
-                                                    snackbarHostState.showSnackbar(msg)
+                                @Composable
+                                fun SaveChapterButton(btnModifier: Modifier) {
+                                    Button(
+                                        onClick = {
+                                            webViewInstance?.let { webView ->
+                                                viewModel.scraping.grabChapterFromWebView(webView) { msg ->
+                                                    coroutineScope.launch {
+                                                        snackbarHostState.showSnackbar(msg)
+                                                    }
                                                 }
                                             }
-                                        }
-                                    },
-                                    enabled = !manualCapture.isCapturing,
-                                    modifier = Modifier.weight(1f).testTag("scrape_save_chapter_btn"),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Save This Chapter", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        },
+                                        enabled = !manualCapture.isCapturing,
+                                        modifier = btnModifier
+                                            .defaultMinSize(minHeight = MinTouchTarget)
+                                            .testTag("scrape_save_chapter_btn"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = if (manualCapture.isCapturing) "Saving…" else if (narrow) "Save Chapter" else "Save This Chapter",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                if (screenWidthDp < 320) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        GrabInfoButton(Modifier.fillMaxWidth())
+                                        SaveChapterButton(Modifier.fillMaxWidth())
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        GrabInfoButton(Modifier.weight(1f))
+                                        SaveChapterButton(Modifier.weight(1f))
+                                    }
                                 }
                             }
                         }

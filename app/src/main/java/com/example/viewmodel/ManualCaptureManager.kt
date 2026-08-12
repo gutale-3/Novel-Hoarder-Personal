@@ -89,7 +89,7 @@ class ManualCaptureManager(
                 val author = jsonObj?.optString("author")?.ifBlank { "Unknown Author" } ?: "Unknown Author"
                 val synopsis = jsonObj?.optString("synopsis") ?: ""
                 val cover = jsonObj?.optString("cover") ?: ""
-                val pageUrl = webView.url ?: "manual://capture"
+                val pageUrl = currentUrl(webView).ifBlank { "manual://capture" }
 
                 val bookId = captureBookId ?: ("manual_" + pageUrl.hashCode())
 
@@ -118,6 +118,7 @@ class ManualCaptureManager(
 
                 onResult("Captured novel info: $cleanTitle")
             } catch (e: Exception) {
+                android.util.Log.e("ManualCapture", "Book info grab failed", e)
                 onResult("Failed to grab info: ${e.message}")
             } finally {
                 isCapturing = false
@@ -142,6 +143,10 @@ class ManualCaptureManager(
         coroutineScope.launch(Dispatchers.Main) {
             try {
                 val rawResult = evaluateJs(webView, PageExtractors.CHAPTER_CONTENT_JS)
+                // WebView getters are main-thread-only, exactly like its methods. Read this here, while
+                // we are still on Main — reading it inside the IO block below throws.
+                val pageUrl = currentUrl(webView)
+
                 val jsonObj = JsResultParser.toJsonObject(rawResult)
 
                 val rawTitle = jsonObj?.optString("title") ?: "Chapter"
@@ -158,18 +163,18 @@ class ManualCaptureManager(
 
                 withContext(Dispatchers.IO) {
                     val existingChapters = repository.getChapters(targetBookId)
-                    val lastChapter = existingChapters.lastOrNull()
 
-                    if (lastChapter != null && lastChapter.hash == contentHash) {
+                    val duplicate = existingChapters.firstOrNull { it.hash == contentHash }
+                    if (duplicate != null) {
                         withContext(Dispatchers.Main) {
-                            onResult("Chapter already captured (duplicate content).")
+                            onResult("Already captured as Chapter ${duplicate.chapterNumber}: ${duplicate.title}")
                         }
                         return@withContext
                     }
 
-                    val nextIndex = existingChapters.size + 1
+                    val nextIndex = (existingChapters.maxOfOrNull { it.chapterNumber } ?: 0) + 1
                     val chapterId = "${targetBookId}_ch_$nextIndex"
-                    val pageUrl = webView.url ?: "manual://$targetBookId/ch/$nextIndex"
+                    val resolvedUrl = pageUrl.ifBlank { "manual://$targetBookId/ch/$nextIndex" }
 
                     val chapter = ChapterEntity(
                         id = chapterId,
@@ -177,7 +182,7 @@ class ManualCaptureManager(
                         chapterId = "ch_$nextIndex",
                         chapterNumber = nextIndex,
                         title = if (rawTitle.isBlank() || rawTitle == "Chapter") "Chapter $nextIndex" else rawTitle,
-                        url = pageUrl,
+                        url = resolvedUrl,
                         content = cleanBody,
                         hash = contentHash
                     )
@@ -191,22 +196,32 @@ class ManualCaptureManager(
                     }
                 }
             } catch (e: Exception) {
-                onResult("Failed to grab chapter: ${e.message}")
+                android.util.Log.e("ManualCapture", "Chapter capture failed", e)
+                onResult("Could not save this chapter. Try reloading the page, then press Save again.")
             } finally {
                 isCapturing = false
             }
         }
     }
 
-    private suspend fun evaluateJs(webView: WebView, script: String): String? {
-        return withTimeoutOrNull(5000) {
-            suspendCancellableCoroutine { continuation ->
-                webView.evaluateJavascript(script) { result ->
-                    if (continuation.isActive) continuation.resume(result)
+    private suspend fun currentUrl(webView: WebView): String =
+        withContext(Dispatchers.Main) { webView.url.orEmpty() }
+
+    private suspend fun evaluateJs(webView: WebView, script: String): String? =
+        withContext(Dispatchers.Main) {
+            withTimeoutOrNull(5000) {
+                suspendCancellableCoroutine { continuation ->
+                    try {
+                        webView.evaluateJavascript(script) { result ->
+                            if (continuation.isActive) continuation.resume(result)
+                        }
+                    } catch (e: Exception) {
+                        // A destroyed WebView throws here; a null result is handled by the caller.
+                        if (continuation.isActive) continuation.resume(null)
+                    }
                 }
             }
         }
-    }
 
     private fun md5(input: String): String {
         val md = MessageDigest.getInstance("MD5")

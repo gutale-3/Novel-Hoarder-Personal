@@ -57,6 +57,7 @@ class ChapterUpdateWorker(
                     val webView = WebView(context).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        @Suppress("DEPRECATION")
                         settings.databaseEnabled = true
                     }
                     var urls = emptyList<String>()
@@ -64,6 +65,8 @@ class ChapterUpdateWorker(
                         urls = scraper.scrapeChapterList(webView, bookUrl)
                     } catch (e: Exception) {
                         e.printStackTrace()
+                    } finally {
+                        try { webView.destroy() } catch (_: Exception) {}
                     }
                     urls
                 }
