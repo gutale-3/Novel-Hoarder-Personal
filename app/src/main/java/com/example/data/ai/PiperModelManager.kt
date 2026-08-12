@@ -147,7 +147,7 @@ class PiperModelManager(private val context: Context) {
                             while (entry != null) {
                                 val targetFile = File(voicesDir, entry.name)
                                 // Tar Slip Security Guard
-                                if (!targetFile.canonicalPath.startsWith(canonicalVoicesDir)) {
+                                if (!targetFile.canonicalPath.startsWith(canonicalVoicesDir + File.separator)) {
                                     throw SecurityException("Tar entry '${entry.name}' attempts directory traversal.")
                                 }
 
@@ -228,7 +228,7 @@ class PiperModelManager(private val context: Context) {
                             while (entry != null) {
                                 val targetFile = File(voicesDir, entry.name)
                                 // Tar Slip Security Guard
-                                if (!targetFile.canonicalPath.startsWith(canonicalVoicesDir)) {
+                                if (!targetFile.canonicalPath.startsWith(canonicalVoicesDir + File.separator)) {
                                     throw SecurityException("Tar entry '${entry.name}' attempts directory traversal.")
                                 }
 

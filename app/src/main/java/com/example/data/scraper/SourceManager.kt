@@ -8,21 +8,22 @@ import com.example.util.TomatoScraper
 object SourceManager {
 
     /**
-     * Resolves the right NovelSource for a URL.
-     *
-     * Order matters: the built-in TomatoMTL adapter is tuned for that site and must win over both
-     * user plugins and the universal scraper. User plugins come next, then the universal fallback.
+     * Set once by AppContainer. Held here so every call site resolves plugins without each of
+     * them having to thread a PluginManager through — the previous design meant a forgotten
+     * parameter silently disabled every user plugin.
      */
+    @Volatile
+    var pluginManagerProvider: (() -> PluginManager?)? = null
+
     fun getSourceForUrl(url: String, pluginManager: PluginManager? = null): NovelSource {
         val lowerUrl = url.lowercase()
 
-        if (lowerUrl.contains("tomatomtl") || lowerUrl.contains("tomato") || lowerUrl.contains("tomatoy")) {
+        if (lowerUrl.contains("tomatomtl") || lowerUrl.contains("tomatoy") || lowerUrl.contains("tomato")) {
             return TomatoScraper
         }
 
-        pluginManager?.findPluginForUrl(url)?.let { plugin ->
-            return PluginExecutionEngine(plugin)
-        }
+        val plugins = pluginManager ?: pluginManagerProvider?.invoke()
+        plugins?.findPluginForUrl(url)?.let { return PluginExecutionEngine(it) }
 
         return GenericScraper
     }

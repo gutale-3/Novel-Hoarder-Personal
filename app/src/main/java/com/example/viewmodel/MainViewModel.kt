@@ -7,6 +7,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.AppContainer
+import com.example.NovelHoarderApp
+import com.example.data.ai.AiProviderRegistry
 import com.example.data.ai.ModelManager
 import com.example.data.ai.PiperModelManager
 import com.example.data.ai.PiperVoice
@@ -22,8 +25,20 @@ import java.io.File
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val database = AppDatabase.getDatabase(application)
-    val repository = NovelRepository(database.bookDao())
+    private val container: AppContainer = NovelHoarderApp.getContainer(application)
+
+    val repository: NovelRepository get() = container.repository
+    val settings: SettingsManager get() = container.settings
+    val pluginManager: PluginManager get() = container.pluginManager
+    val aiRegistry: AiProviderRegistry get() = container.aiRegistry
+    val aiModelManager: ModelManager get() = container.aiModelManager
+    val piperModelManager: PiperModelManager get() = container.piperModelManager
+    val aiFeatures: AiFeaturesManager get() = container.aiFeatures
+    val scraping: ScrapingManager get() = container.scraping
+    val tts: TtsPlaybackManager get() = container.tts
+    val library: LibraryManager get() = container.library
+    val progress: ReadingProgressManager get() = container.progress
+    val manualCapture: ManualCaptureManager get() = container.manualCapture
 
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
 
@@ -38,6 +53,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var ttsTotalParagraphs: Int
         get() = tts.ttsTotalParagraphs
         set(value) { tts.ttsTotalParagraphs = value }
+
+    var showTtsSpeedDialog by mutableStateOf(false)
+    var showTtsPitchDialog by mutableStateOf(false)
+    var showTtsEngineDialog by mutableStateOf(false)
+    var showTtsVoiceDialog by mutableStateOf(false)
 
     // Resumable session state
     var hasResumableSession: Boolean
@@ -64,22 +84,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         get() = progress.resumeChapterTitle
         set(value) { progress.resumeChapterTitle = value }
 
-    val settings = SettingsManager(application)
-    val pluginManager = PluginManager(application)
-    val piperModelManager = PiperModelManager(application)
-    val aiModelManager = ModelManager(application)
-    val manualCapture = ManualCaptureManager(application, repository, viewModelScope)
-
     var showAiSettings by mutableStateOf(false)
 
     val currentTheme: AppTheme get() = settings.currentTheme
     val readerFontSize: Int get() = settings.readerFontSize
     val readerFontFamily: String get() = settings.readerFontFamily
     val defaultUserAgent: String get() = settings.defaultUserAgent
-
-    // --- AI Configuration and State ---
-    val activeAiProviderId: String get() = "mediapipe_local"
-    val userGeminiApiKey: String get() = ""
 
     // --- Auto-download / Reading Queue ---
     val autoDownloadNextEnabled: Boolean get() = settings.autoDownloadNextEnabled
@@ -104,31 +114,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var isLibraryMultiSelectMode by mutableStateOf(false)
     var selectedLibraryBookIds by mutableStateOf<Set<String>>(emptySet())
 
-    val aiRegistry = com.example.data.ai.AiProviderRegistry(application)
-    val aiFeatures = AiFeaturesManager(repository, aiRegistry, settings).apply {
-        aggressiveCleanProvider = { aggressiveClean }
-    }
-    val scraping = ScrapingManager(
-        application = application,
-        repository = repository,
-        settings = settings,
-        coroutineScope = viewModelScope
-    )
-    val tts = com.example.NovelHoarderApp.getContainer(application).tts
-    val library = LibraryManager(
-        application = application,
-        repository = repository,
-        scrapingManager = scraping,
-        onClearSelection = {
-            selectedLibraryBookIds = emptySet()
-            isLibraryMultiSelectMode = false
-        }
-    )
-    val progress = ReadingProgressManager(application, repository, tts, viewModelScope)
-
     // --- Deleted Items (Trash) Flows ---
-    val deletedBooks = repository.deletedBooks
-    val deletedChapters = repository.deletedChapters
+    val deletedBooks get() = repository.deletedBooks
+    val deletedChapters get() = repository.deletedChapters
 
     // --- Scraper State Delegations ---
     var failedChaptersList: List<MissingChapter>
@@ -167,27 +155,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     var isScraping: Boolean
         get() = scraping.isScraping
-        private set(value) { scraping.isScraping = value }
+        set(value) { scraping.isScraping = value }
 
     var isScrapePaused: Boolean
         get() = scraping.isScrapePaused
-        private set(value) { scraping.isScrapePaused = value }
+        set(value) { scraping.isScrapePaused = value }
 
     var shouldSkipCurrentChapter: Boolean
         get() = scraping.shouldSkipCurrentChapter
-        private set(value) { scraping.shouldSkipCurrentChapter = value }
+        set(value) { scraping.shouldSkipCurrentChapter = value }
 
     var isSearchingMissing: Boolean
         get() = scraping.isSearchingMissing
-        private set(value) { scraping.isSearchingMissing = value }
+        set(value) { scraping.isSearchingMissing = value }
 
     var missingChaptersToScrape: List<MissingChapter>
         get() = scraping.missingChaptersToScrape
-        private set(value) { scraping.missingChaptersToScrape = value }
+        set(value) { scraping.missingChaptersToScrape = value }
 
     var missingChaptersSummary: String
         get() = scraping.missingChaptersSummary
-        private set(value) { scraping.missingChaptersSummary = value }
+        set(value) { scraping.missingChaptersSummary = value }
 
     var checkingNewChaptersBookId: String?
         get() = scraping.checkingNewChaptersBookId
@@ -215,19 +203,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     var scrapingStatus: String
         get() = scraping.scrapingStatus
-        private set(value) { scraping.scrapingStatus = value }
+        set(value) { scraping.scrapingStatus = value }
 
     var currentChapterNum: Int
         get() = scraping.currentChapterNum
-        private set(value) { scraping.currentChapterNum = value }
+        set(value) { scraping.currentChapterNum = value }
 
     var totalChaptersToScrape: Int
         get() = scraping.totalChaptersToScrape
-        private set(value) { scraping.totalChaptersToScrape = value }
+        set(value) { scraping.totalChaptersToScrape = value }
 
     var scrapeProgress: Float
         get() = scraping.scrapeProgress
-        private set(value) { scraping.scrapeProgress = value }
+        set(value) { scraping.scrapeProgress = value }
 
     var showCaptchaDialog: Boolean
         get() = scraping.showCaptchaDialog
@@ -258,8 +246,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         set(value) { scraping.rescrapeBookProgress = value }
 
     init {
-        library.scheduleChapterUpdatesCheck()
-        tts.onSpeakStarted = { isTtsPlayerBarMinimized = false }
+        container.library.onClearSelection = {
+            isLibraryMultiSelectMode = false
+            selectedLibraryBookIds = emptySet()
+        }
+        container.aiFeatures.aggressiveCleanProvider = { container.scraping.aggressiveClean }
+        container.library.scheduleChapterUpdatesCheck()
+        container.tts.onSpeakStarted = { isTtsPlayerBarMinimized = false }
     }
 
     // --- Stats state ---

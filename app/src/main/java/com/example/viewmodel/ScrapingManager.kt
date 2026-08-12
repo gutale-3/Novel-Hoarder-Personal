@@ -40,7 +40,9 @@ class ScrapingManager(
     private val application: Application,
     private val repository: NovelRepository,
     private val settings: SettingsManager,
-    private val coroutineScope: CoroutineScope
+    private val coroutineScope: CoroutineScope,
+    val pluginManager: com.example.data.plugin.PluginManager? = null,
+    val manualCapture: ManualCaptureManager? = null
 ) {
     // --- Scraper State ---
     var scrapeUrl by mutableStateOf("")
@@ -95,7 +97,31 @@ class ScrapingManager(
 
     // Manual Interactive Browser variables
     var showManualBrowser by mutableStateOf(false)
-    var manualBrowserUrl by mutableStateOf("https://tomatomtl.com")
+    var manualBrowserUrl by mutableStateOf(settings.lastBrowserUrl.ifBlank { "https://tomatomtl.com" })
+
+    fun grabInfoFromWebView(webView: WebView, onResult: (String) -> Unit) {
+        manualCapture?.grabInfoFromCurrentPage(webView, onResult) ?: onResult("Manual capture unavailable")
+    }
+
+    fun grabChapterFromWebView(webView: WebView, onResult: (String) -> Unit) {
+        manualCapture?.grabChapterFromCurrentPage(webView, onResult) ?: onResult("Manual capture unavailable")
+    }
+
+    fun resolveBookUrl(rawUrl: String): String {
+        if (rawUrl.isBlank()) return rawUrl
+        val lower = rawUrl.lowercase()
+        if (lower.contains("/chapter-") || lower.contains("/chapter/") || lower.contains("/ch-") || lower.endsWith(".html")) {
+            val lastSlash = rawUrl.lastIndexOf('/')
+            if (lastSlash > 8) {
+                return rawUrl.substring(0, lastSlash)
+            }
+        }
+        return rawUrl
+    }
+
+    fun saveBrowserUrl(url: String) {
+        settings.updateLastBrowserUrl(url)
+    }
 
     // --- Single Chapter and Novel Rescraping Logic ---
     var rescrapingChapterId by mutableStateOf<String?>(null)
@@ -264,7 +290,8 @@ class ScrapingManager(
         addLog("Starting search for missing chapters...")
         
         coroutineScope.launch(Dispatchers.IO) {
-            val scraper = SourceManager.getSourceForUrl(url)
+            val scraper = SourceManager.getSourceForUrl(url, pluginManager)
+            addLog("Using source: ${scraper.sourceName}")
             val bookId = scraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
             val bookUrl = if (url.contains("/book/")) {
                 val idx = url.indexOf("/book/")
@@ -368,7 +395,7 @@ class ScrapingManager(
 
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val scraper = SourceManager.getSourceForUrl(book.url)
+                val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
                 val bookUrl = if (book.url.contains("/book/")) {
                     val idx = book.url.indexOf("/book/")
                     val bookPart = book.url.substring(idx)
@@ -510,7 +537,7 @@ class ScrapingManager(
             addLog("ERROR: Please enter a Novel or Chapter URL!")
             return
         }
-        val scraper = SourceManager.getSourceForUrl(url)
+        val scraper = SourceManager.getSourceForUrl(url, pluginManager)
         val bookId = scraper.parseBookId(url)
         if (bookId == null) {
             addLog("ERROR: Could not determine Novel ID from URL.")
@@ -577,7 +604,8 @@ class ScrapingManager(
         bookName: String,
         specificChapters: List<MissingChapter>? = null
     ) {
-        val scraper = SourceManager.getSourceForUrl(url)
+        val scraper = SourceManager.getSourceForUrl(url, pluginManager)
+        addLog("Using source: ${scraper.sourceName}")
         val bookId = scraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
         val bookUrl = if (url.contains("/book/")) {
             val idx = url.indexOf("/book/")
@@ -907,7 +935,7 @@ class ScrapingManager(
         rescrapingChapterId = chapter.id
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val scraper = SourceManager.getSourceForUrl(chapter.url)
+                val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
                 val webView = withContext(Dispatchers.Main) {
                     WebView(application.applicationContext).apply {
                         settings.javaScriptEnabled = true
@@ -1018,7 +1046,7 @@ class ScrapingManager(
                     return@launch
                 }
                 
-                val scraper = SourceManager.getSourceForUrl(book.url)
+                val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
                 val webView = withContext(Dispatchers.Main) {
                     WebView(application.applicationContext).apply {
                         settings.javaScriptEnabled = true

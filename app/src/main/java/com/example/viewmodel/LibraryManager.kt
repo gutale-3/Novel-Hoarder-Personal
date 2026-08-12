@@ -21,9 +21,9 @@ import java.io.File
 class LibraryManager(
     private val application: Application,
     private val repository: NovelRepository,
-    private val scrapingManager: ScrapingManager,
-    private val onClearSelection: () -> Unit
+    private val scrapingManager: ScrapingManager
 ) {
+    var onClearSelection: (() -> Unit)? = null
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     // --- Book & Chapter Soft-Delete / Restore / Trash Helpers ---
@@ -192,7 +192,7 @@ class LibraryManager(
                 repository.softDeleteBook(id)
             }
             withContext(Dispatchers.Main) {
-                onClearSelection()
+                onClearSelection?.invoke()
             }
         }
     }
@@ -224,7 +224,7 @@ class LibraryManager(
                 }
             }
             withContext(Dispatchers.Main) {
-                onClearSelection()
+                onClearSelection?.invoke()
                 onResult("Checked $checked novels. Found $added new chapters to download!")
             }
         }

@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import kotlinx.coroutines.launch
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -46,6 +47,8 @@ fun ScrapeScreen(
 ) {
     val logs by viewModel.scrapeLogs.collectAsState()
     val terminalListState = rememberLazyListState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     // Auto-scroll logs to bottom when new items are added
     LaunchedEffect(logs.size) {
@@ -978,6 +981,7 @@ fun ScrapeScreen(
                                             canGoForward = view?.canGoForward() == true
                                             if (url != null) {
                                                 currentWebUrl = url
+                                                viewModel.scraping.saveBrowserUrl(url)
                                                 CookieManager.getInstance().flush()
                                             }
                                         }
@@ -999,11 +1003,99 @@ fun ScrapeScreen(
                             modifier = Modifier.fillMaxSize()
                         )
                     }
+
+                    // --- Manual Capture Bottom Action Bar ---
+                    val manualCapture = viewModel.manualCapture
+                    Surface(
+                        tonalElevation = 6.dp,
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (!manualCapture.captureBookTitle.isNullOrBlank()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Session: ${manualCapture.captureBookTitle} (${manualCapture.captureChapterCount} chapters)",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick = { manualCapture.startNewBrowserSession() },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("New Session", fontSize = 12.sp)
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        webViewInstance?.let { webView ->
+                                            viewModel.scraping.grabInfoFromWebView(webView) { msg ->
+                                                coroutineScope.launch {
+                                                    snackbarHostState.showSnackbar(msg)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    enabled = !manualCapture.isCapturing,
+                                    modifier = Modifier.weight(1f).testTag("scrape_grab_info_btn"),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Grab Novel Info", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        webViewInstance?.let { webView ->
+                                            viewModel.scraping.grabChapterFromWebView(webView) { msg ->
+                                                coroutineScope.launch {
+                                                    snackbarHostState.showSnackbar(msg)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    enabled = !manualCapture.isCapturing,
+                                    modifier = Modifier.weight(1f).testTag("scrape_save_chapter_btn"),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Save This Chapter", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
                 }
+
+                SnackbarHost(
+                    hostState = snackbarHostState,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp)
+                )
             }
         }
     }
 
-    // Close the top-level Box layout wrapper
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(16.dp)
+    )
     }
 }

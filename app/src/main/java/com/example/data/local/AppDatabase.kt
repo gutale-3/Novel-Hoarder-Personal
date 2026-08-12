@@ -72,32 +72,50 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** ALTER TABLE ADD COLUMN throws if the column already exists, so probe first. */
+        private fun addColumnIfMissing(
+            db: SupportSQLiteDatabase, table: String, column: String, type: String
+        ) {
+            var exists = false
+            db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                if (nameIndex >= 0) {
+                    while (cursor.moveToNext()) {
+                        if (cursor.getString(nameIndex) == column) { exists = true; break }
+                    }
+                }
+            }
+            if (!exists) db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $type")
+        }
+
         internal val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `books` ADD COLUMN `autoArchiveHours` INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE `chapters` ADD COLUMN `isArchived` INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE `chapters` ADD COLUMN `readAt` INTEGER")
+                addColumnIfMissing(db, "books", "autoArchiveHours", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "chapters", "isArchived", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "chapters", "readAt", "INTEGER")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapters_bookId` ON `chapters` (`bookId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_glossaries_bookId` ON `glossaries` (`bookId`)")
             }
         }
 
         internal val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `books` ADD COLUMN `isDeleted` INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE `chapters` ADD COLUMN `isDeleted` INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "books", "isDeleted", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "chapters", "isDeleted", "INTEGER NOT NULL DEFAULT 0")
             }
         }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
+                INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "novel_hoarder_db"
                 )
                 .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
-                INSTANCE = instance
-                instance
+                .also { INSTANCE = it }
             }
         }
     }
