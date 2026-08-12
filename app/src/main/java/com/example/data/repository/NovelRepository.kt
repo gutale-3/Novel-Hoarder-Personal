@@ -18,6 +18,8 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun insertBook(book: BookEntity) = bookDao.insertBook(book)
 
+    suspend fun insertBookAndChapters(book: BookEntity, chapters: List<ChapterEntity>) = bookDao.insertBookAndChapters(book, chapters)
+
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
     // Soft delete book (move to trash)

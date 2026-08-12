@@ -113,4 +113,5 @@ dependencies {
   implementation(libs.sherpa.onnx)
   implementation(libs.commons.compress)
   implementation(libs.androidx.graphics.path)
+  implementation(libs.mlkit.translate)
 }

@@ -432,23 +432,60 @@ class LibraryManager(
     // --- Import Local File ---
     fun importLocalFile(context: Context, uri: Uri, isEpub: Boolean, customUrl: String? = null, onResult: (Boolean, String) -> Unit) {
         coroutineScope.launch(Dispatchers.IO) {
-            val result = if (isEpub) {
-                com.example.util.EpubImporter.importEpub(context, uri)
-            } else {
-                com.example.util.EpubImporter.importTxt(context, uri)
-            }
+            val importRes = com.example.util.EpubImporter.import(context, uri)
             
-            if (result != null) {
-                val finalUrl = if (!customUrl.isNullOrBlank()) customUrl.trim() else result.first.url
-                val updatedBook = result.first.copy(url = finalUrl)
-                repository.insertBook(updatedBook)
-                repository.insertChapters(result.second)
+            if (importRes != null) {
+                val bookWithCover = com.example.util.EpubImporter.saveCoverAndBuildBook(context, importRes.book, importRes.coverBytes)
+                val finalUrl = if (!customUrl.isNullOrBlank()) customUrl.trim() else bookWithCover.url
+                val updatedBook = bookWithCover.copy(url = finalUrl)
+                
+                repository.insertBookAndChapters(updatedBook, importRes.chapters)
+                
+                val warnText = if (importRes.warnings.isNotEmpty()) "\nWarnings:\n" + importRes.warnings.joinToString("\n") else ""
                 withContext(Dispatchers.Main) {
-                    onResult(true, "Imported \"${result.first.title}\" with ${result.second.size} chapters!")
+                    onResult(true, "Imported \"${updatedBook.title}\" with ${importRes.chapters.size} chapters!$warnText")
                 }
             } else {
                 withContext(Dispatchers.Main) {
                     onResult(false, "Failed to parse local book file. Ensure the format is valid.")
+                }
+            }
+        }
+    }
+
+    fun importLocalFileWithProgress(
+        context: Context,
+        uri: Uri,
+        customUrl: String? = null,
+        customTitle: String? = null,
+        onProgress: (com.example.util.ImportProgress) -> Unit,
+        onComplete: (Boolean, String, com.example.util.ImportResult?) -> Unit
+    ) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val importRes = com.example.util.EpubImporter.import(context, uri) { prog ->
+                coroutineScope.launch(Dispatchers.Main) {
+                    onProgress(prog)
+                }
+            }
+
+            if (importRes != null) {
+                val finalTitle = if (!customTitle.isNullOrBlank()) customTitle.trim() else importRes.book.title
+                val bookWithTitle = importRes.book.copy(title = finalTitle)
+                val bookWithCover = com.example.util.EpubImporter.saveCoverAndBuildBook(context, bookWithTitle, importRes.coverBytes)
+                val finalUrl = if (!customUrl.isNullOrBlank()) customUrl.trim() else bookWithCover.url
+                val updatedBook = bookWithCover.copy(url = finalUrl)
+
+                repository.insertBookAndChapters(updatedBook, importRes.chapters)
+
+                val warnText = if (importRes.warnings.isNotEmpty()) "\nWarnings:\n" + importRes.warnings.take(5).joinToString("\n") else ""
+                val msg = "Successfully imported \"${updatedBook.title}\" (${importRes.chapters.size} chapters).$warnText"
+
+                withContext(Dispatchers.Main) {
+                    onComplete(true, msg, importRes.copy(book = updatedBook))
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onComplete(false, "Failed to import file. Ensure file is an EPUB or readable text document.", null)
                 }
             }
         }

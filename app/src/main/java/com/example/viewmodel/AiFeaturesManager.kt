@@ -162,60 +162,95 @@ class AiFeaturesManager(
     // --- Translation Polish ---
     fun polishChapter(chapter: ChapterEntity) {
         coroutineScope.launch {
-            val provider = aiRegistry.localProvider
-            if (!provider.isAvailable()) {
-                return@launch
-            }
-
             _polishedChaptersLoading.update { it + (chapter.id to true) }
             try {
-                // Split chapter into ~1500 character sections on paragraph boundaries to prevent model truncation
-                val paragraphs = chapter.content.split("\n\n").filter { it.isNotBlank() }
-                val chunks = mutableListOf<String>()
-                val currentChunk = StringBuilder()
+                // Load book glossary
+                val glossary = repository.getGlossary(chapter.bookId)
 
-                for (para in paragraphs) {
-                    if (currentChunk.length + para.length > 1500 && currentChunk.isNotEmpty()) {
-                        chunks.add(currentChunk.toString().trim())
-                        currentChunk.clear()
-                    }
-                    if (currentChunk.isNotEmpty()) currentChunk.append("\n\n")
-                    currentChunk.append(para)
-                }
-                if (currentChunk.isNotEmpty()) {
-                    chunks.add(currentChunk.toString().trim())
-                }
+                // First attempt: ML Kit On-Device Translation with Glossary Protection
+                val translatedText = com.example.util.TranslatorEngine.translateText(
+                    context = settings.application,
+                    text = chapter.content,
+                    sourceLang = com.google.mlkit.nl.translate.TranslateLanguage.CHINESE,
+                    targetLang = com.google.mlkit.nl.translate.TranslateLanguage.ENGLISH,
+                    glossary = glossary,
+                    allowMobileData = !settings.translationRequireWifi
+                )
 
-                val basePrompt = settings.polishPrompt.ifBlank {
-                    "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
-                }
-
-                val polishedChunks = mutableListOf<String>()
-                var failed = false
-
-                for (chunk in chunks.ifEmpty { listOf(chapter.content) }) {
-                    val prompt = """
-                        $basePrompt
-                        
-                        Text to polish:
-                        $chunk
-                    """.trimIndent()
-
-                    val response = provider.generate(prompt, jsonMode = false)
-                    if (response.startsWith("Error:") || response.startsWith("No on-device") || response.startsWith("That model")) {
-                        failed = true
-                        break
-                    }
-                    polishedChunks.add(response.trim())
-                }
-
-                if (!failed && polishedChunks.isNotEmpty()) {
-                    val fullPolished = polishedChunks.joinToString("\n\n")
+                if (translatedText.isNotBlank() && translatedText != chapter.content) {
                     repository.insertPolishedChapter(
                         PolishedChapterEntity(
                             chapterId = chapter.id,
                             bookId = chapter.bookId,
-                            content = fullPolished
+                            content = translatedText
+                        )
+                    )
+                    return@launch
+                }
+
+                // Fallback attempt: On-device MediaPipe / Gemma LLM
+                val provider = aiRegistry.localProvider
+                if (provider.isAvailable()) {
+                    val paragraphs = chapter.content.split("\n\n").filter { it.isNotBlank() }
+                    val chunks = mutableListOf<String>()
+                    val currentChunk = StringBuilder()
+
+                    for (para in paragraphs) {
+                        if (currentChunk.length + para.length > 1500 && currentChunk.isNotEmpty()) {
+                            chunks.add(currentChunk.toString().trim())
+                            currentChunk.clear()
+                        }
+                        if (currentChunk.isNotEmpty()) currentChunk.append("\n\n")
+                        currentChunk.append(para)
+                    }
+                    if (currentChunk.isNotEmpty()) {
+                        chunks.add(currentChunk.toString().trim())
+                    }
+
+                    val basePrompt = settings.polishPrompt.ifBlank {
+                        "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
+                    }
+
+                    val polishedChunks = mutableListOf<String>()
+                    var failed = false
+
+                    for (chunk in chunks.ifEmpty { listOf(chapter.content) }) {
+                        val (preparedChunk, tokenMap) = com.example.util.TranslatorEngine.applyGlossaryPlaceholders(chunk, glossary)
+                        val prompt = """
+                            $basePrompt
+                            
+                            Text to polish:
+                            $preparedChunk
+                        """.trimIndent()
+
+                        val response = provider.generate(prompt, jsonMode = false)
+                        if (response.startsWith("Error:") || response.startsWith("No on-device") || response.startsWith("That model")) {
+                            failed = true
+                            break
+                        }
+                        val restored = com.example.util.TranslatorEngine.restoreGlossaryPlaceholders(response.trim(), tokenMap)
+                        polishedChunks.add(restored)
+                    }
+
+                    if (!failed && polishedChunks.isNotEmpty()) {
+                        val fullPolished = polishedChunks.joinToString("\n\n")
+                        repository.insertPolishedChapter(
+                            PolishedChapterEntity(
+                                chapterId = chapter.id,
+                                bookId = chapter.bookId,
+                                content = fullPolished
+                            )
+                        )
+                    }
+                } else {
+                    // Final fallback: Apply glossary directly to source content
+                    val (prepared, tokenMap) = com.example.util.TranslatorEngine.applyGlossaryPlaceholders(chapter.content, glossary)
+                    val restored = com.example.util.TranslatorEngine.restoreGlossaryPlaceholders(prepared, tokenMap)
+                    repository.insertPolishedChapter(
+                        PolishedChapterEntity(
+                            chapterId = chapter.id,
+                            bookId = chapter.bookId,
+                            content = restored
                         )
                     )
                 }

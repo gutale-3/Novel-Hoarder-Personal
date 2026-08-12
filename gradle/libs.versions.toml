@@ -47,6 +47,7 @@ onnxruntime = "1.19.0"
 sherpaOnnx = "v1.13.4"
 commonsCompress = "1.27.1"
 androidxGraphicsPath = "1.0.1"
+mlkitTranslate = "17.0.3"
 
 
 [libraries]
@@ -110,6 +111,7 @@ onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime
 sherpa-onnx = { group = "com.github.k2-fsa", name = "sherpa-onnx", version.ref = "sherpaOnnx" }
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 androidx-graphics-path = { group = "androidx.graphics", name = "graphics-path", version.ref = "androidxGraphicsPath" }
+mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
 
 
 [plugins]

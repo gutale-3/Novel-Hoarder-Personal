@@ -37,10 +37,11 @@ class SettingsManager(val application: Application) {
     var readerHyphenationEnabled by mutableStateOf(false)
     var readerAmbientSyncEnabled by mutableStateOf(false)
 
-    // --- Customizable AI Prompts ---
+    // --- Customizable AI Prompts & Translation ---
     var glossaryPrompt by mutableStateOf("")
     var polishPrompt by mutableStateOf("")
     var recapPrompt by mutableStateOf("")
+    var translationRequireWifi by mutableStateOf(true)
 
     init {
         val themeName = prefs.getString("selected_theme", AppTheme.CLASSIC_LIGHT.name)
@@ -68,6 +69,7 @@ class SettingsManager(val application: Application) {
         glossaryPrompt = prefs.getString("glossary_prompt", "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary.") ?: "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary."
         polishPrompt = prefs.getString("polish_prompt", "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.") ?: "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
         recapPrompt = prefs.getString("recap_prompt", "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding.") ?: "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding."
+        translationRequireWifi = prefs.getBoolean("translation_require_wifi", true)
     }
 
     fun updateTheme(theme: AppTheme) {
@@ -184,5 +186,10 @@ class SettingsManager(val application: Application) {
     fun updateRecapPrompt(prompt: String) {
         recapPrompt = prompt
         prefs.edit().putString("recap_prompt", prompt).apply()
+    }
+
+    fun updateTranslationRequireWifi(requireWifi: Boolean) {
+        translationRequireWifi = requireWifi
+        prefs.edit().putBoolean("translation_require_wifi", requireWifi).apply()
     }
 }

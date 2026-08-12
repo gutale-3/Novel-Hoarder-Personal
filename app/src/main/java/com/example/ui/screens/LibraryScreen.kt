@@ -96,12 +96,13 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
 
     val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            val isEpub = uri.toString().endsWith(".epub", ignoreCase = true) || 
-                         (context.contentResolver.getType(uri)?.contains("epub") == true)
-            pendingImportUri = uri
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            val firstUri = uris.first()
+            val isEpub = firstUri.toString().endsWith(".epub", ignoreCase = true) || 
+                         (context.contentResolver.getType(firstUri)?.contains("epub") == true)
+            pendingImportUri = firstUri
             pendingImportIsEpub = isEpub
             importCustomUrl = ""
             showConfigureImportDialog = true
@@ -303,7 +304,15 @@ fun LibraryScreen(
                                     text = { Text("Import Local EPUB/TXT") },
                                     onClick = {
                                         showImportBackupMenu = false
-                                        importLauncher.launch("*/*")
+                                        importLauncher.launch(
+                                            arrayOf(
+                                                "application/epub+zip",
+                                                "application/zip",
+                                                "text/plain",
+                                                "text/html",
+                                                "application/octet-stream"
+                                            )
+                                        )
                                     },
                                     leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) }
                                 )
@@ -1183,29 +1192,31 @@ fun LibraryBookItem(
                                 expanded = expandedMenu,
                                 onDismissRequest = { expandedMenu = false }
                             ) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Text("Check for New Chapters")
-                                            if (isCheckingNewChapters) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(16.dp),
-                                                    strokeWidth = 2.dp,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
+                                if (!book.url.startsWith("local://")) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text("Check for New Chapters")
+                                                if (isCheckingNewChapters) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(16.dp),
+                                                        strokeWidth = 2.dp,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
                                             }
-                                        }
-                                    },
-                                    onClick = {
-                                        expandedMenu = false
-                                        onCheckNewChapters()
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                    enabled = !isCheckingNewChapters
-                                )
+                                        },
+                                        onClick = {
+                                            expandedMenu = false
+                                            onCheckNewChapters()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                                        enabled = !isCheckingNewChapters
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Manage Glossary") },
                                     onClick = {
@@ -1259,14 +1270,30 @@ fun LibraryBookItem(
                         }
                     }
 
-                    Text(
-                        text = "Author: ${book.author}",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Author: ${book.author}",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (book.url.startsWith("local://")) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "Imported",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
 
                     Text(
                         text = book.synopsis,

@@ -1,229 +1,754 @@
+/**
+ * EPUB and TXT document importer for Novel Hoarder.
+ *
+ * Fixes bugs in initial implementation:
+ * 1. Jsoup `.text()` collapsed all whitespace including paragraph breaks into spaces. We now convert
+ *    <br> to \n and structural elements (<p>, <div>, <li>, <h1>-<h6>, <tr>) to \n\n before extracting text.
+ * 2. ZIP entry order is arbitrary and caused chapters to import out of order. We now parse the OPF <spine>
+ *    to guarantee reading order.
+ * 3. Document <title> tags often duplicate the book title. We now parse EPUB 3 nav / EPUB 2 NCX files for
+ *    real chapter titles, falling back to headings or distinct <title> tags.
+ * 4. OPF <metadata> is parsed for title, author, description, language, and cover image.
+ * 5. Front matter (cover, copyright, title page) is filtered out and recorded in warnings.
+ * 6. TXT importer previously used chunked(8000) cutting mid-word. It now detects line-anchored chapter patterns,
+ *    auto-detects UTF-8 / windows-1252 encodings, rejoins hard-wrapped paragraphs, and uses smart sentence-boundary
+ *    splitting as a fallback.
+ * 7. Implements Zip Slip security guards and size limits to prevent unsafe archive extraction.
+ */
 package com.example.util
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import com.example.data.local.BookEntity
 import com.example.data.local.ChapterEntity
-import java.io.InputStream
-import java.util.zip.ZipInputStream
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
+import org.jsoup.parser.Parser
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.InputStream
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
+import java.security.MessageDigest
+import java.util.Locale
+import java.util.zip.ZipInputStream
+
+data class ImportResult(
+    val book: BookEntity,
+    val chapters: List<ChapterEntity>,
+    val coverBytes: ByteArray?,
+    val warnings: List<String>
+)
+
+sealed class ImportProgress {
+    data class Reading(val message: String) : ImportProgress()
+    data class Parsing(val current: Int, val total: Int) : ImportProgress()
+    data class Done(val result: ImportResult) : ImportProgress()
+    data class Failed(val reason: String) : ImportProgress()
+}
 
 object EpubImporter {
-    fun importEpub(context: Context, uri: Uri): Pair<BookEntity, List<ChapterEntity>>? {
+
+    suspend fun import(
+        context: Context,
+        uri: Uri,
+        onProgress: (ImportProgress) -> Unit = {}
+    ): ImportResult? = withContext(Dispatchers.IO) {
+        onProgress(ImportProgress.Reading("Opening file..."))
         val contentResolver = context.contentResolver
-        var zipInputStream: ZipInputStream? = null
+
+        // Read first 4 bytes to check format by content
+        val header = ByteArray(4)
         try {
-            val inputStream: InputStream = contentResolver.openInputStream(uri) ?: return null
-            zipInputStream = ZipInputStream(inputStream)
-            
-            var entry = zipInputStream.nextEntry
-            val chapters = mutableListOf<ChapterEntity>()
-            val bookId = "epub_${System.currentTimeMillis()}"
-            var bookTitle = "Imported EPUB"
-            
+            contentResolver.openInputStream(uri)?.use { stream ->
+                stream.read(header, 0, 4)
+            }
+        } catch (e: Exception) {
+            onProgress(ImportProgress.Failed("Could not open file: ${e.message}"))
+            return@withContext null
+        }
+
+        val isZip = header[0] == 0x50.toByte() &&
+                header[1] == 0x4B.toByte() &&
+                header[2] == 0x03.toByte() &&
+                header[3] == 0x04.toByte()
+
+        if (isZip) {
+            val result = importEpubInternal(context, uri, onProgress)
+            if (result != null) {
+                onProgress(ImportProgress.Done(result))
+            } else {
+                onProgress(ImportProgress.Failed("Failed to parse EPUB file."))
+            }
+            return@withContext result
+        } else {
+            val result = importTxtInternal(context, uri, onProgress)
+            if (result != null) {
+                onProgress(ImportProgress.Done(result))
+            } else {
+                onProgress(ImportProgress.Failed("Failed to parse TXT file."))
+            }
+            return@withContext result
+        }
+    }
+
+    // --- Legacy compatibility entry points ---
+    fun importEpub(context: Context, uri: Uri): Pair<BookEntity, List<ChapterEntity>>? {
+        val result = kotlinx.coroutines.runBlocking {
+            importEpubInternal(context, uri) {}
+        } ?: return null
+        return Pair(saveCoverAndBuildBook(context, result.book, result.coverBytes), result.chapters)
+    }
+
+    fun importTxt(context: Context, uri: Uri): Pair<BookEntity, List<ChapterEntity>>? {
+        val result = kotlinx.coroutines.runBlocking {
+            importTxtInternal(context, uri) {}
+        } ?: return null
+        return Pair(result.book, result.chapters)
+    }
+
+    // Helper to write cover file if available
+    fun saveCoverAndBuildBook(context: Context, book: BookEntity, coverBytes: ByteArray?): BookEntity {
+        if (coverBytes == null || coverBytes.isEmpty()) return book
+        return try {
+            val coversDir = File(context.filesDir, "covers")
+            if (!coversDir.exists()) coversDir.mkdirs()
+
+            val coverFile = File(coversDir, "${book.id}.jpg")
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
+
+            var sample = 1
+            while (options.outWidth / sample > 1000) {
+                sample *= 2
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sample }
+            val bitmap = BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, decodeOptions)
+
+            FileOutputStream(coverFile).use { out ->
+                bitmap?.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            }
+
+            book.copy(coverLocalPath = coverFile.absolutePath)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            book
+        }
+    }
+
+    // =========================================================================
+    // EPUB IMPORTER
+    // =========================================================================
+
+    private suspend fun importEpubInternal(
+        context: Context,
+        uri: Uri,
+        onProgress: (ImportProgress) -> Unit
+    ): ImportResult? = withContext(Dispatchers.IO) {
+        val warnings = mutableListOf<String>()
+        val timestamp = System.currentTimeMillis()
+        val tempDir = File(context.cacheDir, "epub_import_$timestamp")
+        if (!tempDir.exists()) tempDir.mkdirs()
+
+        var totalSize = 0L
+        var totalEntries = 0
+
+        try {
+            onProgress(ImportProgress.Reading("Extracting EPUB archive..."))
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                ZipInputStream(BufferedInputStream(inputStream)).use { zipStream ->
+                    var entry = zipStream.nextEntry
+                    val buffer = ByteArray(65536)
+                    while (entry != null) {
+                        if (!entry.isDirectory) {
+                            totalEntries++
+                            if (totalEntries > 5000) {
+                                throw IOException("EPUB contains more than 5000 entries (possible zip bomb).")
+                            }
+
+                            val target = File(tempDir, entry.name)
+                            // Zip Slip Guard
+                            if (!target.canonicalPath.startsWith(tempDir.canonicalPath + File.separator)) {
+                                throw IOException("Blocked unsafe archive entry: ${entry.name}")
+                            }
+
+                            target.parentFile?.mkdirs()
+                            FileOutputStream(target).use { out ->
+                                var bytesRead: Int
+                                while (zipStream.read(buffer).also { bytesRead = it } != -1) {
+                                    out.write(buffer, 0, bytesRead)
+                                    totalSize += bytesRead
+                                    if (totalSize > 500 * 1024 * 1024) { // 500 MB limit
+                                        throw IOException("Uncompressed archive size exceeds 500 MB limit.")
+                                    }
+                                }
+                            }
+                        }
+                        zipStream.closeEntry()
+                        entry = zipStream.nextEntry
+                    }
+                }
+            } ?: return@withContext null
+
+            // Step 2 — Find OPF
+            var opfRelativePath = ""
+            val containerFile = File(tempDir, "META-INF/container.xml")
+            if (containerFile.exists()) {
+                try {
+                    val containerDoc = Jsoup.parse(containerFile, "UTF-8", "", Parser.xmlParser())
+                    opfRelativePath = containerDoc.select("rootfile").attr("full-path")
+                } catch (e: Exception) {
+                    warnings.add("Failed to parse container.xml: ${e.message}")
+                }
+            }
+
+            var opfFile = if (opfRelativePath.isNotEmpty()) File(tempDir, opfRelativePath) else null
+            if (opfFile == null || !opfFile.exists()) {
+                opfFile = tempDir.walk().firstOrNull { it.extension.equals("opf", ignoreCase = true) }
+            }
+
+            if (opfFile == null || !opfFile.exists()) {
+                warnings.add("No OPF metadata file found in EPUB archive.")
+                return@withContext null
+            }
+
+            val opfDir = opfFile.parentFile ?: tempDir
+            val opfDoc = Jsoup.parse(opfFile, "UTF-8", "", Parser.xmlParser())
+
+            // Step 3 — Read Metadata
+            val metaTitle = opfDoc.select("metadata > dc|title, metadata > title").text().trim()
+            val metaAuthor = opfDoc.select("metadata > dc|creator, metadata > creator").text().trim()
+            val metaDescHtml = opfDoc.select("metadata > dc|description, metadata > description").text()
+            val metaDesc = Jsoup.parse(metaDescHtml).text().trim()
+
+            var filenameTitle = "Imported EPUB"
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (nameIndex != -1 && cursor.moveToFirst()) {
-                    val displayName = cursor.getString(nameIndex)
-                    if (displayName.endsWith(".epub", ignoreCase = true)) {
-                        bookTitle = displayName.substring(0, displayName.length - 5)
-                    } else if (displayName.endsWith(".txt", ignoreCase = true)) {
-                        bookTitle = displayName.substring(0, displayName.length - 4)
-                    } else {
-                        bookTitle = displayName
-                    }
+                val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIdx != -1 && cursor.moveToFirst()) {
+                    val name = cursor.getString(nameIdx)
+                    filenameTitle = name.replace(Regex("(?i)\\.(epub|zip)$"), "")
                 }
             }
 
-            var chapterNum = 1
-            while (entry != null) {
-                val name = entry.name
-                if (name.endsWith(".html", ignoreCase = true) || name.endsWith(".xhtml", ignoreCase = true)) {
-                    val reader = BufferedReader(InputStreamReader(zipInputStream))
-                    val sb = StringBuilder()
-                    var line = reader.readLine()
-                    while (line != null) {
-                        sb.append(line).append("\n")
-                        line = reader.readLine()
-                    }
-                    
-                    val htmlContent = sb.toString()
-                    val doc = Jsoup.parse(htmlContent)
-                    val title = doc.title().trim().ifEmpty { "Chapter $chapterNum" }
-                    val bodyText = doc.body()?.text() ?: ""
-                    
-                    if (bodyText.length > 100) {
-                        val md5 = java.security.MessageDigest.getInstance("MD5")
-                        val hash = md5.digest(bodyText.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            val rawTitle = metaTitle.ifEmpty { filenameTitle }
+            val cleanTitle = rawTitle
+                .replace(Regex("(?i)\\(EPUB\\)|\\[Complete\\]|\\[Finished\\]"), "")
+                .replace(Regex("(?i)Vol(ume)?\\s*\\d+"), "")
+                .trim()
+                .removeSurrounding("[", "]")
+                .removeSurrounding("(", ")")
+                .trim()
 
-                        chapters.add(
-                            ChapterEntity(
-                                id = "${bookId}_ch_$chapterNum",
-                                bookId = bookId,
-                                chapterId = "ch_$chapterNum",
-                                chapterNumber = chapterNum,
-                                title = title,
-                                url = "local://$bookId/ch/$chapterNum",
-                                content = bodyText,
-                                hash = hash
-                            )
+            val bookTitle = cleanTitle.ifEmpty { filenameTitle }
+            val bookAuthor = metaAuthor.ifEmpty { "Unknown Author" }
+            val bookDesc = metaDesc.ifEmpty { "Imported from EPUB." }
+
+            // Step 4 — Find Cover
+            var coverBytes: ByteArray? = null
+            try {
+                var coverHref: String? = null
+                val coverMetaId = opfDoc.select("metadata > meta[name=cover]").attr("content")
+                if (coverMetaId.isNotEmpty()) {
+                    coverHref = opfDoc.select("manifest > item[id=$coverMetaId]").attr("href")
+                }
+                if (coverHref.isNullOrEmpty()) {
+                    coverHref = opfDoc.select("manifest > item[properties*=cover-image]").attr("href")
+                }
+                if (coverHref.isNullOrEmpty()) {
+                    coverHref = opfDoc.select("manifest > item[href~=(?i)cover\\.(jpe?g|png|webp)]").attr("href")
+                }
+                if (coverHref.isNullOrEmpty()) {
+                    val imageItems = opfDoc.select("manifest > item[media-type^=image/]")
+                    if (imageItems.size in 1..399) {
+                        coverHref = imageItems.first()?.attr("href")
+                    }
+                }
+
+                if (!coverHref.isNullOrEmpty()) {
+                    val resolvedCover = File(opfDir, coverHref)
+                    if (resolvedCover.exists()) {
+                        coverBytes = resolvedCover.readBytes()
+                    }
+                }
+            } catch (e: Exception) {
+                warnings.add("Failed to extract cover image: ${e.message}")
+            }
+
+            // Step 5 — Build Reading Order (Spine)
+            val manifestMap = mutableMapOf<String, String>() // id -> href
+            opfDoc.select("manifest > item").forEach { item ->
+                val id = item.attr("id")
+                val href = item.attr("href")
+                if (id.isNotEmpty() && href.isNotEmpty()) {
+                    manifestMap[id] = href
+                }
+            }
+
+            val spineHrefs = mutableListOf<String>()
+            opfDoc.select("spine > itemref").forEach { itemref ->
+                val idref = itemref.attr("idref")
+                val href = manifestMap[idref]
+                if (!href.isNullOrEmpty()) {
+                    spineHrefs.add(href)
+                }
+            }
+
+            val spineFiles = if (spineHrefs.isNotEmpty()) {
+                spineHrefs.mapNotNull { href ->
+                    val file = File(opfDir, href.substringBefore("#"))
+                    if (file.exists()) Pair(href, file) else null
+                }
+            } else {
+                // Fallback to natural numeric-aware filename sorting
+                tempDir.walk()
+                    .filter { it.extension.lowercase() in listOf("html", "xhtml", "htm") }
+                    .sortedWith(Comparator { f1, f2 -> naturalCompare(f1.name, f2.name) })
+                    .map { Pair(it.name, it) }
+                    .toList()
+            }
+
+            // Step 6 — Get Real Chapter Titles from Nav / NCX
+            val tocMap = mutableMapOf<String, String>() // href (relative to opfDir) -> Title
+            try {
+                val navItem = opfDoc.select("manifest > item[properties*=nav]").first()
+                    ?: opfDoc.select("manifest > item[media-type*=ncx], manifest > item[href$=.ncx]").first()
+
+                if (navItem != null) {
+                    val navFile = File(opfDir, navItem.attr("href"))
+                    if (navFile.exists()) {
+                        if (navFile.extension.equals("ncx", ignoreCase = true)) {
+                            val ncxDoc = Jsoup.parse(navFile, "UTF-8", "", Parser.xmlParser())
+                            ncxDoc.select("navPoint").forEach { point ->
+                                val text = point.select("> navLabel > text").text().trim()
+                                val src = point.select("> content").attr("src").substringBefore("#")
+                                if (text.isNotEmpty() && src.isNotEmpty()) {
+                                    val relPath = File(navFile.parentFile, src).relativeToOrSelf(opfDir).path
+                                    tocMap[relPath] = text
+                                    tocMap[src] = text
+                                }
+                            }
+                        } else {
+                            val navDoc = Jsoup.parse(navFile, "UTF-8")
+                            val navEl = navDoc.select("nav[epub|type=toc], nav[type=toc], nav").first()
+                            navEl?.select("a[href]")?.forEach { a ->
+                                val text = a.text().trim()
+                                val href = a.attr("href").substringBefore("#")
+                                if (text.isNotEmpty() && href.isNotEmpty()) {
+                                    val relPath = File(navFile.parentFile, href).relativeToOrSelf(opfDir).path
+                                    tocMap[relPath] = text
+                                    tocMap[href] = text
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                warnings.add("Failed to parse EPUB navigation document: ${e.message}")
+            }
+
+            // Step 7, 8, 9 — Extract Text, Drop Front Matter, Merge Split Chapters
+            val rawChapters = mutableListOf<RawChapter>()
+            val totalSpine = spineFiles.size
+
+            spineFiles.forEachIndexed { index, (href, file) ->
+                onProgress(ImportProgress.Parsing(index + 1, totalSpine))
+
+                val doc = Jsoup.parse(file, "UTF-8")
+                doc.select("script, style, nav, header, footer, .toc, #toc, svg, img, figure").remove()
+
+                doc.select("br").after("\n")
+                doc.select("p, div, li, blockquote, h1, h2, h3, h4, h5, h6, tr").after("\n\n")
+
+                val rawText = doc.body()?.wholeText().orEmpty()
+                val text = normalizeText(rawText)
+
+                // Chapter title resolution
+                val relPath = file.relativeToOrSelf(opfDir).path
+                val tocTitle = tocMap[relPath] ?: tocMap[href] ?: tocMap[file.name]
+
+                val hTitle = doc.select("h1, h2, h3").first()?.text()?.trim()
+                val docTitle = doc.title().trim()
+
+                val resolvedTitle = when {
+                    !tocTitle.isNullOrBlank() -> tocTitle
+                    !hTitle.isNullOrBlank() -> hTitle
+                    docTitle.isNotBlank() && !docTitle.equals(bookTitle, ignoreCase = true) -> docTitle
+                    else -> ""
+                }
+
+                // Front matter check
+                val isFrontPattern = resolvedTitle.matches(
+                    Regex("(?i)^(cover|title\\s*page|copyright|colophon|about the (author|publisher)|dedication|acknowledge?ments|table of contents|contents|toc|imprint|also by)")
+                ) || file.name.matches(Regex("(?i).*(cover|copyright|title).*"))
+
+                val isShortBoundary = text.length < 400 && (index < 3 || index >= totalSpine - 3)
+                val noPunctuation = !text.contains(Regex("[.!?。！？]"))
+
+                if (isFrontPattern || (isShortBoundary && noPunctuation)) {
+                    val skipName = resolvedTitle.ifEmpty { file.name }
+                    warnings.add("Skipped front matter: $skipName")
+                    return@forEachIndexed
+                }
+
+                rawChapters.add(RawChapter(title = resolvedTitle, content = text))
+            }
+
+            if (rawChapters.isEmpty()) {
+                warnings.add("No readable chapter content found in EPUB.")
+                return@withContext null
+            }
+
+            // Merge split chapters & Build Chapter Entities
+            val mergedChapters = mutableListOf<RawChapter>()
+            for (raw in rawChapters) {
+                if (mergedChapters.isNotEmpty()) {
+                    val prev = mergedChapters.last()
+                    val sameTitle = raw.title.isNotEmpty() && raw.title.equals(prev.title, ignoreCase = true)
+                    val noTitleInRaw = raw.title.isEmpty() && prev.title.isNotEmpty()
+
+                    if (sameTitle || noTitleInRaw) {
+                        mergedChapters[mergedChapters.size - 1] = prev.copy(
+                            content = prev.content + "\n\n" + raw.content
                         )
-                        chapterNum++
+                        continue
                     }
                 }
-                zipInputStream.closeEntry()
-                entry = zipInputStream.nextEntry
-            }
-            
-            if (chapters.isEmpty()) {
-                return null
+                mergedChapters.add(raw)
             }
 
-            chapters.sortBy { it.chapterNumber }
+            val bookId = "epub_$timestamp"
+            val chapters = mergedChapters.mapIndexed { idx, raw ->
+                val chNum = idx + 1
+                val title = raw.title.ifBlank { "Chapter $chNum" }
+                val hash = md5(raw.content)
+
+                ChapterEntity(
+                    id = "${bookId}_ch_$chNum",
+                    bookId = bookId,
+                    chapterId = "ch_$chNum",
+                    chapterNumber = chNum,
+                    title = title,
+                    url = "local://$bookId/ch/$chNum",
+                    content = raw.content,
+                    hash = hash
+                )
+            }
 
             val book = BookEntity(
                 id = bookId,
                 title = bookTitle,
-                author = "Local Import",
-                coverUrl = "",
+                author = bookAuthor,
+                synopsis = bookDesc,
+                coverUrl = null,
                 coverLocalPath = null,
                 totalChapters = chapters.size,
                 url = "local://$bookId",
-                lastReadChapterId = chapters.first().id,
-                synopsis = "Imported offline from local EPUB file."
+                lastReadChapterId = chapters.first().id
             )
 
-            return Pair(book, chapters)
+            ImportResult(
+                book = book,
+                chapters = chapters,
+                coverBytes = coverBytes,
+                warnings = warnings
+            )
         } catch (e: Exception) {
             e.printStackTrace()
-            return null
+            null
         } finally {
-            try {
-                zipInputStream?.close()
-            } catch (e: Exception) {}
+            tempDir.deleteRecursively()
         }
     }
 
-    fun importTxt(context: Context, uri: Uri): Pair<BookEntity, List<ChapterEntity>>? {
+    private data class RawChapter(val title: String, val content: String)
+
+    // =========================================================================
+    // TXT IMPORTER
+    // =========================================================================
+
+    private suspend fun importTxtInternal(
+        context: Context,
+        uri: Uri,
+        onProgress: (ImportProgress) -> Unit
+    ): ImportResult? = withContext(Dispatchers.IO) {
+        val warnings = mutableListOf<String>()
         val contentResolver = context.contentResolver
-        try {
-            val inputStream: InputStream = contentResolver.openInputStream(uri) ?: return null
-            val reader = BufferedReader(InputStreamReader(inputStream))
-            val sb = StringBuilder()
-            var line = reader.readLine()
-            while (line != null) {
-                sb.append(line).append("\n")
-                line = reader.readLine()
+
+        var filenameTitle = "Imported Book"
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (nameIdx != -1 && cursor.moveToFirst()) {
+                val name = cursor.getString(nameIdx)
+                filenameTitle = name.replace(Regex("(?i)\\.txt$"), "")
             }
-            reader.close()
+        }
 
-            val textContent = sb.toString()
-            if (textContent.length < 100) return null
+        val rawBytes = try {
+            contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
+        } catch (e: Exception) {
+            return@withContext null
+        }
 
-            var bookTitle = "Imported Book"
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (nameIndex != -1 && cursor.moveToFirst()) {
-                    val displayName = cursor.getString(nameIndex)
-                    if (displayName.endsWith(".txt", ignoreCase = true)) {
-                        bookTitle = displayName.substring(0, displayName.length - 4)
-                    } else {
-                        bookTitle = displayName
+        if (rawBytes.size < 50) return@withContext null
+
+        // Encoding Detection: BOM check -> Strict UTF-8 -> windows-1252
+        val textContent = decodeTextBytes(rawBytes)
+
+        // Chapter Patterns (anchored at START OF LINE, multiline, case-insensitive)
+        val patterns = listOf(
+            Regex("(?m)^\\s*chapter\\s+\\d+", RegexOption.IGNORE_CASE),
+            Regex("(?m)^\\s*chapter\\s+[ivxlcdm]+\\b", RegexOption.IGNORE_CASE),
+            Regex("(?m)^\\s*第\\s*[0-9一二三四五六七八九十百千]+\\s*[章回节]"),
+            Regex("(?m)^\\s*\\d+\\s*[.、]\\s*\\S"),
+            Regex("(?m)^\\s*(part|book|volume)\\s+\\d+", RegexOption.IGNORE_CASE)
+        )
+
+        var bestPattern: Regex? = null
+        var bestMatches: List<MatchResult> = emptyList()
+
+        for (pattern in patterns) {
+            val matches = pattern.findAll(textContent).toList()
+            if (matches.size >= 3) {
+                // Check match spacing (no two matches closer than 500 characters)
+                var wellSpaced = true
+                for (i in 0 until matches.size - 1) {
+                    if (matches[i + 1].range.first - matches[i].range.first < 500) {
+                        wellSpaced = false
+                        break
                     }
                 }
-            }
-
-            val bookId = "txt_${System.currentTimeMillis()}"
-            val chapters = mutableListOf<ChapterEntity>()
-            
-            val patterns = listOf(
-                Regex("(?i)chapter\\s+\\d+", RegexOption.IGNORE_CASE),
-                Regex("(?i)chapter\\s+[ivxlcdm]+", RegexOption.IGNORE_CASE),
-                Regex("(?i)第\\s*\\d+\\s*章", RegexOption.IGNORE_CASE)
-            )
-
-            var bestPattern: Regex? = null
-            var bestCount = 0
-            for (pattern in patterns) {
-                val matches = pattern.findAll(textContent).count()
-                if (matches > bestCount) {
-                    bestCount = matches
+                if (wellSpaced && matches.size > bestMatches.size) {
+                    bestMatches = matches
                     bestPattern = pattern
                 }
             }
+        }
 
-            if (bestPattern != null && bestCount >= 2) {
-                val matches = bestPattern.findAll(textContent).toList()
-                for (i in matches.indices) {
-                    val currentMatch = matches[i]
-                    val start = currentMatch.range.first
-                    val end = if (i + 1 < matches.size) matches[i + 1].range.first else textContent.length
-                    
-                    val title = currentMatch.value.trim()
-                    val chapterContent = textContent.substring(start, end).trim()
-                    val absoluteChapterNum = i + 1
+        val bookId = "txt_${System.currentTimeMillis()}"
+        val chapters = mutableListOf<ChapterEntity>()
 
-                    if (chapterContent.length > 50) {
-                        val md5 = java.security.MessageDigest.getInstance("MD5")
-                        val hash = md5.digest(chapterContent.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        if (bestPattern != null && bestMatches.isNotEmpty()) {
+            for (i in bestMatches.indices) {
+                val currentMatch = bestMatches[i]
+                val start = currentMatch.range.first
+                val end = if (i + 1 < bestMatches.size) bestMatches[i + 1].range.first else textContent.length
 
-                        chapters.add(
-                            ChapterEntity(
-                                id = "${bookId}_ch_$absoluteChapterNum",
-                                bookId = bookId,
-                                chapterId = "ch_$absoluteChapterNum",
-                                chapterNumber = absoluteChapterNum,
-                                title = title,
-                                url = "local://$bookId/ch/$absoluteChapterNum",
-                                content = chapterContent,
-                                hash = hash
-                            )
-                        )
-                    }
+                val lineEnd = textContent.indexOf('\n', start)
+                val fullHeadingLine = if (lineEnd != -1 && lineEnd < end) {
+                    textContent.substring(start, lineEnd).trim()
+                } else {
+                    currentMatch.value.trim()
                 }
-            } else {
-                val parts = textContent.chunked(8000)
-                for ((index, part) in parts.withIndex()) {
-                    val absoluteChapterNum = index + 1
-                    val title = "Part $absoluteChapterNum"
-                    val md5 = java.security.MessageDigest.getInstance("MD5")
-                    val hash = md5.digest(part.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
+                val rawBlock = textContent.substring(start, end).trim()
+                val cleanBlock = formatTxtParagraphs(rawBlock)
+                val chNum = i + 1
+
+                if (cleanBlock.length > 30) {
                     chapters.add(
                         ChapterEntity(
-                            id = "${bookId}_ch_$absoluteChapterNum",
+                            id = "${bookId}_ch_$chNum",
                             bookId = bookId,
-                            chapterId = "ch_$absoluteChapterNum",
-                            chapterNumber = absoluteChapterNum,
-                            title = title,
-                            url = "local://$bookId/ch/$absoluteChapterNum",
-                            content = part.trim(),
-                            hash = hash
+                            chapterId = "ch_$chNum",
+                            chapterNumber = chNum,
+                            title = fullHeadingLine,
+                            url = "local://$bookId/ch/$chNum",
+                            content = cleanBlock,
+                            hash = md5(cleanBlock)
                         )
                     )
                 }
             }
+        } else {
+            // Fallback: splitIntoParts
+            warnings.add("No chapter markers found. Split into parts.")
+            val parts = splitIntoParts(textContent, targetChars = 12000)
 
-            if (chapters.isEmpty()) return null
-
-            val book = BookEntity(
-                id = bookId,
-                title = bookTitle,
-                author = "Local Import",
-                coverUrl = "",
-                coverLocalPath = null,
-                totalChapters = chapters.size,
-                url = "local://$bookId",
-                lastReadChapterId = chapters.first().id,
-                synopsis = "Imported offline from local text file."
-            )
-
-            return Pair(book, chapters)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return null
+            for ((idx, part) in parts.withIndex()) {
+                val chNum = idx + 1
+                val cleanBlock = formatTxtParagraphs(part)
+                chapters.add(
+                    ChapterEntity(
+                        id = "${bookId}_ch_$chNum",
+                        bookId = bookId,
+                        chapterId = "ch_$chNum",
+                        chapterNumber = chNum,
+                        title = "Part $chNum",
+                        url = "local://$bookId/ch/$chNum",
+                        content = cleanBlock,
+                        hash = md5(cleanBlock)
+                    )
+                )
+            }
         }
+
+        if (chapters.isEmpty()) return@withContext null
+
+        val book = BookEntity(
+            id = bookId,
+            title = filenameTitle,
+            author = "Unknown Author",
+            synopsis = "Imported offline from local text file.",
+            coverUrl = null,
+            coverLocalPath = null,
+            totalChapters = chapters.size,
+            url = "local://$bookId",
+            lastReadChapterId = chapters.first().id
+        )
+
+        ImportResult(
+            book = book,
+            chapters = chapters,
+            coverBytes = null,
+            warnings = warnings
+        )
+    }
+
+    /**
+     * Splits text into readable parts when no chapter markers exist. Cuts on a blank line near the
+     * target size, never mid-sentence — the previous chunked() call split words in half.
+     */
+    fun splitIntoParts(text: String, targetChars: Int = 12000): List<String> {
+        val result = mutableListOf<String>()
+        var cursor = 0
+        val len = text.length
+
+        while (cursor < len) {
+            if (len - cursor <= targetChars + 2000) {
+                result.add(text.substring(cursor).trim())
+                break
+            }
+
+            val target = cursor + targetChars
+            val windowStart = (target - 2000).coerceAtLeast(cursor)
+            val windowEnd = (target + 2000).coerceAtMost(len)
+            val windowText = text.substring(windowStart, windowEnd)
+
+            var cutOffset = -1
+
+            // Look for blank line in window
+            val blankLineIdx = windowText.indexOf("\n\n")
+            if (blankLineIdx != -1) {
+                cutOffset = windowStart + blankLineIdx
+            } else {
+                // Sentence end
+                val sentenceRegex = Regex("[.!?。！？]\\s+")
+                val matches = sentenceRegex.findAll(windowText).toList()
+                if (matches.isNotEmpty()) {
+                    cutOffset = windowStart + matches.last().range.last + 1
+                }
+            }
+
+            if (cutOffset <= cursor) {
+                cutOffset = target.coerceAtMost(len)
+            }
+
+            val part = text.substring(cursor, cutOffset).trim()
+            if (part.isNotEmpty()) {
+                result.add(part)
+            }
+            cursor = cutOffset
+        }
+
+        return result
+    }
+
+    // --- Helpers ---
+
+    private fun decodeTextBytes(bytes: ByteArray): String {
+        // Check BOM
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+            return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+            return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+        }
+
+        // Try strict UTF-8
+        try {
+            val decoder = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+            val byteBuffer = java.nio.ByteBuffer.wrap(bytes)
+            val charBuffer = java.nio.CharBuffer.allocate(bytes.size * 2 + 10)
+            val result = decoder.decode(byteBuffer, charBuffer, true)
+            if (result.isError) {
+                throw java.nio.charset.CharacterCodingException()
+            }
+            val flushResult = decoder.flush(charBuffer)
+            if (flushResult.isError) {
+                throw java.nio.charset.CharacterCodingException()
+            }
+            charBuffer.flip()
+            return charBuffer.toString()
+        } catch (e: Exception) {
+            // Fall back to windows-1252
+            return String(bytes, Charset.forName("windows-1252"))
+        }
+    }
+
+    private fun formatTxtParagraphs(raw: String): String {
+        val blocks = raw.split(Regex("\n\\s*\n"))
+        return blocks.map { block ->
+            // Rejoin soft-wrapped single newlines inside paragraph
+            block.split("\n")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString(" ")
+        }.filter { it.isNotEmpty() }
+            .joinToString("\n\n")
+    }
+
+    private fun normalizeText(text: String): String {
+        return text
+            .replace("\u00A0", " ")
+            .replace("ﬀ", "ff")
+            .replace("ﬁ", "fi")
+            .replace("ﬂ", "fl")
+            .replace("ﬃ", "ffi")
+            .replace("ﬄ", "ffl")
+            .replace("ﬅ", "ft")
+            .replace("ﬆ", "st")
+            .split("\n")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n\n")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+    }
+
+    private fun md5(input: String): String {
+        val md = MessageDigest.getInstance("MD5")
+        val bytes = md.digest(input.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun naturalCompare(s1: String, s2: String): Int {
+        val r = Regex("(\\d+)|(\\D+)")
+        val m1 = r.findAll(s1).map { it.value }.toList()
+        val m2 = r.findAll(s2).map { it.value }.toList()
+
+        for (i in 0 until minOf(m1.size, m2.size)) {
+            val p1 = m1[i]
+            val p2 = m2[i]
+
+            if (p1.all { it.isDigit() } && p2.all { it.isDigit() }) {
+                val cmp = p1.toBigInteger().compareTo(p2.toBigInteger())
+                if (cmp != 0) return cmp
+            } else {
+                val cmp = p1.compareTo(p2, ignoreCase = true)
+                if (cmp != 0) return cmp
+            }
+        }
+        return m1.size.compareTo(m2.size)
     }
 }

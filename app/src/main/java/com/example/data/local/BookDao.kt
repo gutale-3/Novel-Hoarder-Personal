@@ -38,6 +38,12 @@ interface BookDao {
         }
     }
 
+    @Transaction
+    suspend fun insertBookAndChapters(book: BookEntity, chapters: List<ChapterEntity>) {
+        insertBook(book)
+        insertChapters(chapters)
+    }
+
     // Soft delete / restore books
     @Query("UPDATE books SET isDeleted = 1 WHERE id = :id")
     suspend fun softDeleteBookById(id: String)
