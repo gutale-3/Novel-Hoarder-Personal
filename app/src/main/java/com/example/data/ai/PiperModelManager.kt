@@ -1,6 +1,12 @@
+/**
+ * Manages downloading, extracting, importing, and deleting local neural voice models
+ * (Kokoro ONNX & Piper VITS). Supports shared voice folders, free storage checks,
+ * Tar Slip security guards, and offline file import via Uri.
+ */
 package com.example.data.ai
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,7 +22,7 @@ import java.net.URL
 
 class PiperModelManager(private val context: Context) {
 
-    private val voicesDir: File
+    val voicesDir: File
         get() = File(context.filesDir, "piper_voices").apply { mkdirs() }
 
     fun getVoiceModelDir(voice: PiperVoice): File {
@@ -44,6 +50,17 @@ class PiperModelManager(private val context: Context) {
         voice: PiperVoice,
         onProgress: (Int) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        // Free space check before starting download
+        val requiredBytes = voice.sizeMb.toLong() * 1024L * 1024L * 2L
+        val freeBytes = context.filesDir.usableSpace
+        if (freeBytes < requiredBytes) {
+            val reqMb = voice.sizeMb * 2
+            val freeMb = freeBytes / (1024 * 1024)
+            return@withContext Result.failure(
+                Exception("Not enough disk space. $reqMb MB required ($voice.sizeMb MB download + extraction), but only $freeMb MB is available.")
+            )
+        }
+
         val voiceFolder = getVoiceModelDir(voice)
         val tempTarBz2File = File(context.cacheDir, "${voice.folderName}.tar.bz2")
         
@@ -118,6 +135,8 @@ class PiperModelManager(private val context: Context) {
             onProgress(55)
             voiceFolder.mkdirs()
 
+            val canonicalVoicesDir = voicesDir.canonicalPath
+
             FileInputStream(tempTarBz2File).use { fis ->
                 BufferedInputStream(fis).use { bis ->
                     BZip2CompressorInputStream(bis).use { bzIn ->
@@ -126,10 +145,12 @@ class PiperModelManager(private val context: Context) {
                             val buffer = ByteArray(8192)
                             
                             while (entry != null) {
-                                // entries inside tar.bz2 typically start with "vits-piper-..." folder
-                                // we want to extract them into the voicesDir
                                 val targetFile = File(voicesDir, entry.name)
-                                
+                                // Tar Slip Security Guard
+                                if (!targetFile.canonicalPath.startsWith(canonicalVoicesDir)) {
+                                    throw SecurityException("Tar entry '${entry.name}' attempts directory traversal.")
+                                }
+
                                 if (entry.isDirectory) {
                                     targetFile.mkdirs()
                                 } else {
@@ -167,8 +188,117 @@ class PiperModelManager(private val context: Context) {
         }
     }
 
-    fun deleteVoice(voice: PiperVoice): Boolean {
+    /**
+     * Installs a voice pack from a .tar.bz2 the user already has on their device. Same extraction
+     * path as the download, including the Tar Slip guard.
+     */
+    suspend fun importVoiceArchive(
+        uri: Uri,
+        voice: PiperVoice,
+        onProgress: (Int) -> Unit = {}
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val requiredBytes = voice.sizeMb.toLong() * 1024L * 1024L * 2L
+        val freeBytes = context.filesDir.usableSpace
+        if (freeBytes < requiredBytes) {
+            val reqMb = voice.sizeMb * 2
+            val freeMb = freeBytes / (1024 * 1024)
+            return@withContext Result.failure(
+                Exception("Not enough disk space. $reqMb MB required, but only $freeMb MB is available.")
+            )
+        }
+
         val voiceFolder = getVoiceModelDir(voice)
-        return voiceFolder.deleteRecursively()
+        val canonicalVoicesDir = voicesDir.canonicalPath
+
+        try {
+            onProgress(10)
+            voiceFolder.mkdirs()
+
+            val inputStream = context.contentResolver.openInputStream(uri)
+                ?: return@withContext Result.failure(Exception("Unable to open selected archive file."))
+
+            inputStream.use { rawIn ->
+                BufferedInputStream(rawIn).use { bis ->
+                    BZip2CompressorInputStream(bis).use { bzIn ->
+                        TarArchiveInputStream(bzIn).use { tarIn ->
+                            var entry: TarArchiveEntry? = tarIn.nextEntry
+                            val buffer = ByteArray(8192)
+                            var extractedCount = 0
+
+                            while (entry != null) {
+                                val targetFile = File(voicesDir, entry.name)
+                                // Tar Slip Security Guard
+                                if (!targetFile.canonicalPath.startsWith(canonicalVoicesDir)) {
+                                    throw SecurityException("Tar entry '${entry.name}' attempts directory traversal.")
+                                }
+
+                                if (entry.isDirectory) {
+                                    targetFile.mkdirs()
+                                } else {
+                                    targetFile.parentFile?.mkdirs()
+                                    FileOutputStream(targetFile).use { fos ->
+                                        while (true) {
+                                            val len = tarIn.read(buffer)
+                                            if (len == -1) break
+                                            fos.write(buffer, 0, len)
+                                        }
+                                    }
+                                }
+                                extractedCount++
+                                val progress = (10 + (extractedCount % 85)).coerceAtMost(95)
+                                onProgress(progress)
+                                entry = tarIn.nextEntry
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Verify expected model file exists and is non-empty inside folder
+            val modelFile = File(voiceFolder, voice.modelFilename)
+            if (!modelFile.exists() || modelFile.length() == 0L) {
+                voiceFolder.deleteRecursively()
+                return@withContext Result.failure(
+                    Exception("Archive extracted, but '${voice.modelFilename}' was missing or empty.")
+                )
+            }
+
+            if (!isVoiceDownloaded(voice)) {
+                voiceFolder.deleteRecursively()
+                return@withContext Result.failure(
+                    Exception("Extracted archive did not contain all required files for ${voice.name}.")
+                )
+            }
+
+            onProgress(100)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            voiceFolder.deleteRecursively()
+            Log.e("NeuralTtsImport", "Import failed for voice ${voice.id}", e)
+            Result.failure(e)
+        }
     }
+
+    fun deleteVoice(voice: PiperVoice): Boolean {
+        val sharers = PiperVoiceCatalog.ALL_VOICES.count { it.folderName == voice.folderName }
+        if (sharers > 1) return false
+        return getVoiceModelDir(voice).deleteRecursively()
+    }
+
+    /**
+     * Deletes every file inside the folder that holds [voice] (e.g. `kokoro-en-v0_19`).
+     * Returns true if the folder existed and was deleted successfully.
+     */
+    fun deleteSharedVoiceGroup(voice: PiperVoice): Boolean {
+        return try {
+            val modelDir = File(voicesDir, voice.folderName)
+            if (modelDir.exists()) modelDir.deleteRecursively() else false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun voicesSharingFolder(voice: PiperVoice): List<PiperVoice> =
+        PiperVoiceCatalog.ALL_VOICES.filter { it.folderName == voice.folderName && it.id != voice.id }
 }

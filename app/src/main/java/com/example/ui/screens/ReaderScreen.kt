@@ -197,6 +197,7 @@ fun ReaderScreen(
         if (activeChapter != null && bookState != null) {
             viewModel.repository.updateBook(bookState!!.copy(lastReadChapterId = activeChapter.id))
             viewModel.aiFeatures.triggerAutoDownloadNextChapters(bookState!!, activeChapter)
+            viewModel.tts.primeChapterOpening(activeChapter.content)
         }
     }
 
@@ -1703,7 +1704,7 @@ fun ReaderScreen(
                                 .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
                                 .clickable {
                                     scope.launch {
-                                        lazyListState.scrollToItem(selectedParaIndexForBookmark!! + 3)
+                                        lazyListState.scrollToItem(selectedParaIndexForBookmark!! + READER_HEADER_ITEMS)
                                         viewModel.progress.saveReadingProgress(
                                             bookId = bookId,
                                             chapterId = currentChapterId,

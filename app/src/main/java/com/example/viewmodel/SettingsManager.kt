@@ -23,10 +23,6 @@ class SettingsManager(val application: Application) {
     var readerFontFamily by mutableStateOf("serif")
     var defaultUserAgent by mutableStateOf("")
 
-    // --- AI Configuration and State ---
-    var activeAiProviderId by mutableStateOf("gemini_cloud")
-    var userGeminiApiKey by mutableStateOf("")
-
     // --- Auto-download / Reading Queue ---
     var autoDownloadNextEnabled by mutableStateOf(true)
 
@@ -52,9 +48,11 @@ class SettingsManager(val application: Application) {
         readerFontSize = prefs.getInt("reader_font_size", 18)
         readerFontFamily = prefs.getString("reader_font_family", "serif") ?: "serif"
         defaultUserAgent = prefs.getString("user_agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36") ?: ""
-        val savedProvider = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
-        activeAiProviderId = if (savedProvider == "mlkit_genai") "gemini_cloud" else savedProvider
-        userGeminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
+
+        // The cloud provider is gone. Remove any key a previous version stored on disk.
+        if (prefs.contains("gemini_api_key") || prefs.contains("active_ai_provider")) {
+            prefs.edit().remove("gemini_api_key").remove("active_ai_provider").apply()
+        }
 
         autoDownloadNextEnabled = prefs.getBoolean("auto_download_next", true)
         readerTheme = prefs.getString("reader_theme", "light") ?: "light"
@@ -70,16 +68,6 @@ class SettingsManager(val application: Application) {
         glossaryPrompt = prefs.getString("glossary_prompt", "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary.") ?: "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary."
         polishPrompt = prefs.getString("polish_prompt", "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.") ?: "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
         recapPrompt = prefs.getString("recap_prompt", "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding.") ?: "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding."
-    }
-
-    fun updateGeminiApiKey(key: String) {
-        userGeminiApiKey = key
-        prefs.edit().putString("gemini_api_key", key).apply()
-    }
-
-    fun updateActiveAiProvider(providerId: String) {
-        activeAiProviderId = providerId
-        prefs.edit().putString("active_ai_provider", providerId).apply()
     }
 
     fun updateTheme(theme: AppTheme) {

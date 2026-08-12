@@ -90,8 +90,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val defaultUserAgent: String get() = settings.defaultUserAgent
 
     // --- AI Configuration and State ---
-    val activeAiProviderId: String get() = settings.activeAiProviderId
-    val userGeminiApiKey: String get() = settings.userGeminiApiKey
+    val activeAiProviderId: String get() = "mediapipe_local"
+    val userGeminiApiKey: String get() = ""
 
     // --- Auto-download / Reading Queue ---
     val autoDownloadNextEnabled: Boolean get() = settings.autoDownloadNextEnabled
@@ -127,13 +127,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         settings = settings,
         coroutineScope = viewModelScope
     )
-    val tts = TtsPlaybackManager(
-        application = application,
-        repository = repository,
-        settings = settings,
-        scraping = scraping,
-        coroutineScope = viewModelScope
-    )
+    val tts = com.example.NovelHoarderApp.getContainer(application).tts
     val library = LibraryManager(
         application = application,
         repository = repository,
@@ -339,6 +333,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val sherpaOnnxTtsEngine: SherpaOnnxTtsEngine
         get() = tts.sherpaOnnxTtsEngine
 
+    val isPreparingVoice: Boolean
+        get() = tts.isPreparingVoice
+
     val premiumVoiceDownloading: Boolean
         get() = tts.premiumVoiceDownloading
 
@@ -446,18 +443,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _chapterRecapLoading.update { it + (chapter.id to true) }
         try {
-            val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = false)
+            val provider = aiRegistry.localProvider
+            if (!provider.isAvailable()) {
+                return "No on-device model installed. Import one in Settings → On-device AI."
+            }
+
+            val basePrompt = settings.recapPrompt.ifBlank {
+                "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding."
+            }
+
             val prompt = """
-                Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding.
+                $basePrompt
                 
                 Chapter Title: ${chapter.title}
                 
                 Chapter Content:
-                ${chapter.content}
+                ${chapter.content.take(3000)}
             """.trimIndent()
 
             val response = provider.generate(prompt, jsonMode = false)
-            if (!response.startsWith("Error:")) {
+            if (!response.startsWith("Error:") && !response.startsWith("No on-device") && !response.startsWith("That model")) {
                 val recap = response.trim()
                 repository.insertChapterRecap(
                     ChapterRecapEntity(
@@ -468,6 +473,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 return recap
             }
+            return response
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
@@ -479,7 +485,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // --- Ask About Selection ---
     suspend fun askAboutSelection(selection: String, question: String): String {
         try {
-            val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = false)
+            val provider = aiRegistry.localProvider
+            if (!provider.isAvailable()) {
+                return "No on-device model installed. Import one in Settings → On-device AI."
+            }
+
             val prompt = """
                 You are an expert novel reading assistant. A user has selected the following text from a novel: "$selection".
                 They have a question about it: "$question".

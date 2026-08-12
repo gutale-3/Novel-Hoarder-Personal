@@ -1,6 +1,12 @@
+/**
+ * Manages TTS audio playback state, foreground service lifecycle, audio focus,
+ * notification media controls, system TTS chunking/sliding window, sleep timer with volume fade,
+ * and pre-warming/priming of neural voice models.
+ */
 package com.example.viewmodel
 
 import android.app.Application
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -8,21 +14,29 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.AudioManager
+import android.net.Uri
 import android.speech.tts.TextToSpeech
-import android.speech.tts.Voice
+import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
-import android.support.v4.media.MediaMetadataCompat
-import androidx.media.app.NotificationCompat.MediaStyle
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import android.util.Log
-import com.example.data.local.*
-import com.example.data.repository.NovelRepository
-import com.example.data.ai.SherpaOnnxTtsEngine
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import com.example.data.ai.PiperVoice
 import com.example.data.ai.PiperVoiceCatalog
+import com.example.data.ai.SherpaOnnxTtsEngine
+import com.example.data.local.BookEntity
+import com.example.data.local.ChapterEntity
+import com.example.data.repository.NovelRepository
+import com.example.service.TtsPlaybackService
+import com.example.util.AudioFocusHelper
 import kotlinx.coroutines.*
 import java.io.File
 import java.util.Locale
@@ -42,7 +56,7 @@ class TtsPlaybackManager(
     var ttsAutoScrollEnabled by mutableStateOf(true)
     var ttsTotalParagraphs by mutableStateOf(0)
 
-    // --- Resumable session state & progress persistence (Declared here to avoid initialization order NPE in init block) ---
+    // --- Resumable session state & progress persistence ---
     var hasResumableSession by mutableStateOf(false)
     var resumeBookId by mutableStateOf("")
     var resumeChapterId by mutableStateOf("")
@@ -67,7 +81,7 @@ class TtsPlaybackManager(
     var ttsSpeed by mutableStateOf(1.0f)
     var ttsActiveParagraphIndex by mutableStateOf<Int?>(-1)
 
-    // Premium Piper offline voice properties
+    // Premium Piper / Kokoro offline voice properties
     val sherpaOnnxTtsEngine = SherpaOnnxTtsEngine(application)
     var premiumVoiceDownloading by mutableStateOf(false)
         private set
@@ -76,10 +90,47 @@ class TtsPlaybackManager(
     var premiumVoiceDownloadError by mutableStateOf<String?>(null)
         private set
 
+    var isPreparingVoice by mutableStateOf(false)
+        private set
+
     // Sleep Timer state
-    var sleepTimerMinutes by mutableStateOf(0) // 0 means Never / Off
+    var sleepTimerMinutes by mutableStateOf(0) // 0 = Off, -1 = End of Chapter
     var sleepTimerRemainingSeconds by mutableStateOf<Int?>(null)
     private var sleepTimerJob: Job? = null
+
+    // Audio Focus & Noisy Receiver
+    private var pausedByFocusLoss = false
+    private val audioFocusHelper = AudioFocusHelper(
+        context = application,
+        onFocusLost = { isTransient ->
+            if (ttsIsPlaying) {
+                if (isTransient) {
+                    pausedByFocusLoss = true
+                    pauseTts(abandonFocus = false)
+                } else {
+                    pausedByFocusLoss = false
+                    pauseTts(abandonFocus = true)
+                }
+            }
+        },
+        onFocusGained = {
+            if (pausedByFocusLoss && ttsIsPaused) {
+                pausedByFocusLoss = false
+                resumeTts()
+            }
+        }
+    )
+
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                if (ttsIsPlaying) {
+                    addLog("Headphones unplugged — pausing playback.")
+                    pauseTts()
+                }
+            }
+        }
+    }
 
     // TTS Broadcast Receiver & Notification state
     private var isReceiverRegistered = false
@@ -87,29 +138,40 @@ class TtsPlaybackManager(
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 "com.example.ACTION_PLAY_PAUSE" -> {
-                    if (ttsIsPlaying) {
-                        pauseTts()
-                    } else {
-                        resumeTts()
-                    }
+                    if (ttsIsPlaying) pauseTts() else resumeTts()
                 }
-                "com.example.ACTION_PREV_CHAPTER" -> {
-                    playPreviousChapterTts()
-                }
-                "com.example.ACTION_NEXT_CHAPTER" -> {
-                    playNextChapterTts()
-                }
-                "com.example.ACTION_STOP_TTS" -> {
-                    stopTts()
-                }
+                "com.example.ACTION_PREV_CHAPTER" -> playPreviousChapterTts()
+                "com.example.ACTION_NEXT_CHAPTER" -> playNextChapterTts()
+                "com.example.ACTION_STOP_TTS" -> stopTts()
             }
         }
     }
 
     private val channelId = "tts_player_channel"
-    private val notificationId = 1001
-
+    private val notificationId = TtsPlaybackService.NOTIFICATION_ID
     private var mediaSession: MediaSessionCompat? = null
+
+    // Cover bitmap caching for notifications
+    private var cachedCoverBookId: String? = null
+    private var cachedCoverBitmap: Bitmap? = null
+
+    // System TTS sliding window queue
+    private data class SpeechUnit(val paragraphIndex: Int, val text: String)
+    private var speechUnits: List<SpeechUnit> = emptyList()
+    private var nextUnitToQueue: Int = 0
+    private var activeChapterKey: String = ""
+
+    private var lastPersistMs: Long = 0L
+    private var lastNotificationMs: Long = 0L
+
+    private var settingsRestartJob: Job? = null
+
+    private companion object {
+        const val QUEUE_WINDOW_SIZE = 25
+        const val QUEUE_REFILL_THRESHOLD = 8
+        const val PERSIST_INTERVAL_MS = 3_000L
+        const val NOTIFICATION_INTERVAL_MS = 1_000L
+    }
 
     init {
         // Load preferences
@@ -117,11 +179,15 @@ class TtsPlaybackManager(
         ttsAutoScrollEnabled = prefs.getBoolean("tts_auto_scroll", true)
 
         registerTtsReceiver()
+        cleanUpRemovedVoiceModels()
+        warmUpLocalVoice()
     }
 
     fun unregister() {
         unregisterTtsReceiver()
         sleepTimerJob?.cancel()
+        settingsRestartJob?.cancel()
+        audioFocusHelper.abandonFocus()
         sherpaOnnxTtsEngine.stop()
         sherpaOnnxTtsEngine.shutdown()
         tts?.stop()
@@ -131,6 +197,51 @@ class TtsPlaybackManager(
             release()
         }
         mediaSession = null
+        TtsPlaybackService.stop(application)
+    }
+
+    private fun isLocalNeuralVoice(voiceId: String): Boolean =
+        PiperVoiceCatalog.ALL_VOICES.any { it.id == voiceId }
+
+    fun warmUpLocalVoice() {
+        if (!isLocalNeuralVoice(selectedVoiceId)) return
+        val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
+        if (!isVoiceDownloaded(voice) || isPreparingVoice) return
+
+        isPreparingVoice = true
+        coroutineScope.launch(Dispatchers.IO) {
+            runCatching {
+                sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
+                sherpaOnnxTtsEngine.initOnnx()
+            }
+            withContext(Dispatchers.Main) { isPreparingVoice = false }
+        }
+    }
+
+    fun primeChapterOpening(chapterContent: String) {
+        if (!isLocalNeuralVoice(selectedVoiceId)) return
+        val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
+        if (!isVoiceDownloaded(voice)) return
+        coroutineScope.launch(Dispatchers.IO) {
+            runCatching {
+                sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
+                sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(selectedVoiceId)
+                sherpaOnnxTtsEngine.primeOpening(chapterContent, ttsSpeed)
+            }
+        }
+    }
+
+    fun cleanUpRemovedVoiceModels() {
+        try {
+            val voicesDir = File(application.filesDir, "piper_voices")
+            if (!voicesDir.isDirectory) return
+            val keep = PiperVoiceCatalog.ALL_VOICES.map { it.folderName }.toSet()
+            voicesDir.listFiles()?.forEach { folder ->
+                if (folder.isDirectory && folder.name !in keep) folder.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     fun isVoiceDownloaded(voice: PiperVoice): Boolean {
@@ -141,8 +252,10 @@ class TtsPlaybackManager(
         return res
     }
 
+    fun voicesSharingFolder(voice: PiperVoice): List<PiperVoice> =
+        sherpaOnnxTtsEngine.modelManager.voicesSharingFolder(voice)
+
     fun downloadPremiumVoice(voice: PiperVoice) {
-        Log.d("KokoroDownload", "downloadPremiumVoice called for ${voice.id}, premiumVoiceDownloading=$premiumVoiceDownloading")
         if (premiumVoiceDownloading) return
         sherpaOnnxTtsEngine.selectedVoiceId = voice.id
         premiumVoiceDownloading = true
@@ -170,24 +283,52 @@ class TtsPlaybackManager(
         }
     }
 
+    fun importPremiumVoice(uri: Uri, voice: PiperVoice) {
+        if (premiumVoiceDownloading) return
+        sherpaOnnxTtsEngine.selectedVoiceId = voice.id
+        premiumVoiceDownloading = true
+        premiumVoiceDownloadError = null
+        premiumVoiceDownloadProgress = 0
+        coroutineScope.launch(Dispatchers.Main) {
+            sherpaOnnxTtsEngine.importModel(
+                uri = uri,
+                onProgress = { progress ->
+                    premiumVoiceDownloadProgress = progress
+                },
+                onSuccess = {
+                    premiumVoiceDownloading = false
+                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
+                    setTtsVoice(VoiceOption(voice.id, "$prefix - ${voice.name}", Locale.US))
+                    initTts()
+                    addLog("$prefix Voice (${voice.name}) imported from archive.")
+                },
+                onFailure = { error ->
+                    premiumVoiceDownloadError = error
+                    premiumVoiceDownloading = false
+                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
+                    addLog("Error importing $prefix Voice (${voice.name}): $error")
+                }
+            )
+        }
+    }
+
     fun deletePremiumVoice(voice: PiperVoice) {
         val oldVoiceId = sherpaOnnxTtsEngine.selectedVoiceId
         sherpaOnnxTtsEngine.selectedVoiceId = voice.id
-        if (sherpaOnnxTtsEngine.deleteModel()) {
-            if (selectedVoiceId == voice.id) {
+        if (sherpaOnnxTtsEngine.deleteVoicePack(voice)) {
+            if (selectedVoiceId == voice.id || voicesSharingFolder(voice).any { it.id == selectedVoiceId }) {
                 val defaultVoice = ttsVoices.find { it.id.startsWith("default_") } ?: ttsVoices.firstOrNull()
                 defaultVoice?.let { setTtsVoice(it) }
             }
             initTts()
             val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
-            addLog("$prefix Voice (${voice.name}) model deleted.")
+            addLog("$prefix Voice pack (${voice.name}) deleted.")
         }
         sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
     }
 
     fun saveSpeakerId(voiceId: String, speakerId: Int) {
         prefs.edit().putInt("tts_speaker_id_$voiceId", speakerId).apply()
-        // If it's the currently playing voice, reload the speaker ID
         if (selectedVoiceId == voiceId && ttsIsPlaying) {
             val book = ttsPlayingBook
             val chapter = ttsPlayingChapter
@@ -204,16 +345,23 @@ class TtsPlaybackManager(
     fun startSleepTimer(minutes: Int) {
         sleepTimerJob?.cancel()
         sleepTimerMinutes = minutes
-        if (minutes <= 0) {
+        if (minutes == 0) {
             sleepTimerRemainingSeconds = null
             return
         }
+        if (minutes == -1) { // End of Chapter mode
+            sleepTimerRemainingSeconds = null
+            addLog("Sleep timer set to end of current chapter.")
+            return
+        }
+        
         sleepTimerRemainingSeconds = minutes * 60
         sleepTimerJob = coroutineScope.launch(Dispatchers.Default) {
             while (isActive && (sleepTimerRemainingSeconds ?: 0) > 0) {
                 delay(1000L)
+                val remaining = (sleepTimerRemainingSeconds ?: 1) - 1
                 withContext(Dispatchers.Main) {
-                    sleepTimerRemainingSeconds = (sleepTimerRemainingSeconds ?: 1) - 1
+                    sleepTimerRemainingSeconds = remaining
                 }
             }
             if (isActive) {
@@ -233,47 +381,15 @@ class TtsPlaybackManager(
             mediaSession = MediaSessionCompat(context, "NovelHoarderTTS").apply {
                 setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
                 setCallback(object : MediaSessionCompat.Callback() {
-                    override fun onPlay() {
-                        coroutineScope.launch(Dispatchers.Main) {
-                            resumeTts()
-                        }
-                    }
-
-                    override fun onPause() {
-                        coroutineScope.launch(Dispatchers.Main) {
-                            pauseTts()
-                        }
-                    }
-
-                    override fun onSkipToNext() {
-                        coroutineScope.launch(Dispatchers.Main) {
-                            playNextChapterTts()
-                        }
-                    }
-
-                    override fun onSkipToPrevious() {
-                        coroutineScope.launch(Dispatchers.Main) {
-                            playPreviousChapterTts()
-                        }
-                    }
-
-                    override fun onStop() {
-                        coroutineScope.launch(Dispatchers.Main) {
-                            stopTts()
-                        }
-                    }
-
+                    override fun onPlay() { coroutineScope.launch(Dispatchers.Main) { resumeTts() } }
+                    override fun onPause() { coroutineScope.launch(Dispatchers.Main) { pauseTts() } }
+                    override fun onSkipToNext() { coroutineScope.launch(Dispatchers.Main) { playNextChapterTts() } }
+                    override fun onSkipToPrevious() { coroutineScope.launch(Dispatchers.Main) { playPreviousChapterTts() } }
+                    override fun onStop() { coroutineScope.launch(Dispatchers.Main) { stopTts() } }
                     override fun onSeekTo(pos: Long) {
                         coroutineScope.launch(Dispatchers.Main) {
                             val paraIndex = (pos / 1000L).toInt()
-                            val total = ttsTotalParagraphs
-                            if (paraIndex in 0 until total) {
-                                val book = ttsPlayingBook
-                                val chapter = ttsPlayingChapter
-                                if (book != null && chapter != null) {
-                                    speak(chapter.content, book, chapter, startFromParagraphIndex = paraIndex)
-                                }
-                            }
+                            seekToParagraph(paraIndex)
                         }
                     }
                 })
@@ -314,16 +430,50 @@ class TtsPlaybackManager(
         if (total > 0 && para >= 0) {
             val progressSubtitle = "Paragraph ${para + 1} of $total"
             metadataBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, progressSubtitle)
-            metadataBuilder.putString(MediaMetadataCompat.METADATA_KEY_AUTHOR, book?.author ?: "Unknown Author")
+        }
+
+        val coverBitmap = getDownsampledCover(book?.coverLocalPath, book?.id)
+        if (coverBitmap != null) {
+            metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, coverBitmap)
         }
 
         mediaSession?.setMetadata(metadataBuilder.build())
     }
 
-    fun showTtsNotification() {
+    private fun getDownsampledCover(coverPath: String?, bookId: String?): Bitmap? {
+        if (coverPath.isNullOrEmpty() || bookId.isNullOrEmpty()) return null
+        if (cachedCoverBookId == bookId && cachedCoverBitmap != null) {
+            return cachedCoverBitmap
+        }
+        val file = File(coverPath)
+        if (!file.exists()) return null
+
+        return try {
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(file.absolutePath, options)
+            val reqSize = 256
+            var sample = 1
+            while (options.outWidth / sample > reqSize || options.outHeight / sample > reqSize) {
+                sample *= 2
+            }
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = sample
+            }
+            val bmp = BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
+            cachedCoverBookId = bookId
+            cachedCoverBitmap = bmp
+            bmp
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun buildTtsNotification(): Notification? {
         val context = application.applicationContext
-        val book = ttsPlayingBook ?: return
-        val chapter = ttsPlayingChapter ?: return
+        val book = ttsPlayingBook ?: return null
+        val chapter = ttsPlayingChapter ?: return null
 
         updatePlaybackState()
 
@@ -340,37 +490,31 @@ class TtsPlaybackManager(
             notificationManager.createNotificationChannel(channel)
         }
 
-        // Actions intents
-        val playPauseIntent = Intent("com.example.ACTION_PLAY_PAUSE").apply {
-            `package` = context.packageName
-        }
+        val playPauseIntent = Intent("com.example.ACTION_PLAY_PAUSE").apply { `package` = context.packageName }
         val playPausePendingIntent = PendingIntent.getBroadcast(
             context, 1, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val prevIntent = Intent("com.example.ACTION_PREV_CHAPTER").apply {
-            `package` = context.packageName
-        }
+        val prevIntent = Intent("com.example.ACTION_PREV_CHAPTER").apply { `package` = context.packageName }
         val prevPendingIntent = PendingIntent.getBroadcast(
             context, 4, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val nextIntent = Intent("com.example.ACTION_NEXT_CHAPTER").apply {
-            `package` = context.packageName
-        }
+        val nextIntent = Intent("com.example.ACTION_NEXT_CHAPTER").apply { `package` = context.packageName }
         val nextPendingIntent = PendingIntent.getBroadcast(
             context, 2, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopIntent = Intent("com.example.ACTION_STOP_TTS").apply {
-            `package` = context.packageName
-        }
+        val stopIntent = Intent("com.example.ACTION_STOP_TTS").apply { `package` = context.packageName }
         val stopPendingIntent = PendingIntent.getBroadcast(
             context, 3, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Open app intent
-        val openAppIntent = Intent(context, com.example.MainActivity::class.java)
+        val openAppIntent = Intent(context, com.example.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("open_reader_book", book.id)
+            putExtra("open_reader_chapter", chapter.id)
+        }
         val openAppPendingIntent = PendingIntent.getActivity(
             context, 0, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -380,35 +524,57 @@ class TtsPlaybackManager(
 
         val para = ttsActiveParagraphIndex ?: 0
         val total = ttsTotalParagraphs
-        val contentText = if (total > 0 && para >= 0) {
-            "${chapter.title} • Paragraph ${para + 1} of $total"
-        } else {
-            chapter.title
-        }
+        val subText = if (total > 0 && para >= 0) "Paragraph ${para + 1} of $total" else null
 
-        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+        val coverBmp = getDownsampledCover(book.coverLocalPath, book.id)
+
+        val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(com.example.R.mipmap.ic_launcher)
-            .setContentTitle(book.title)
-            .setContentText(contentText)
+            .setContentTitle(chapter.title)
+            .setContentText(book.title)
+            .setSubText(subText)
             .setOngoing(ttsIsPlaying)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
             .setContentIntent(openAppPendingIntent)
-            .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
-            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
-                .setMediaSession(mediaSession?.sessionToken)
-                .setShowActionsInCompactView(0, 1, 2)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setStyle(
+                MediaStyle()
+                    .setMediaSession(mediaSession?.sessionToken)
+                    .setShowActionsInCompactView(0, 1, 2)
             )
-            .addAction(android.R.drawable.ic_media_previous, "Prev Chapter", prevPendingIntent)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", prevPendingIntent)
             .addAction(playPauseIcon, playPauseText, playPausePendingIntent)
-            .addAction(android.R.drawable.ic_media_next, "Next Chapter", nextPendingIntent)
+            .addAction(android.R.drawable.ic_media_next, "Next", nextPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
 
-        notificationManager.notify(notificationId, builder.build())
+        if (coverBmp != null) {
+            builder.setLargeIcon(coverBmp)
+        }
+
+        return builder.build()
+    }
+
+    fun showTtsNotification() {
+        val notification = buildTtsNotification() ?: return
+        val context = application.applicationContext
+        if (!TtsPlaybackService.isRunning) {
+            TtsPlaybackService.start(context)
+            return
+        }
+        try {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.notify(notificationId, notification)
+        } catch (e: Exception) {
+            // A missing POST_NOTIFICATIONS grant must never break playback.
+        }
     }
 
     fun dismissTtsNotification() {
         val context = application.applicationContext
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancel(notificationId)
+        TtsPlaybackService.stop(context)
     }
 
     fun registerTtsReceiver() {
@@ -420,12 +586,21 @@ class TtsPlaybackManager(
                 addAction("com.example.ACTION_NEXT_CHAPTER")
                 addAction("com.example.ACTION_STOP_TTS")
             }
-            androidx.core.content.ContextCompat.registerReceiver(
+            ContextCompat.registerReceiver(
                 context,
                 ttsReceiver,
                 filter,
-                androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+                ContextCompat.RECEIVER_EXPORTED
             )
+
+            val noisyFilter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            ContextCompat.registerReceiver(
+                context,
+                noisyReceiver,
+                noisyFilter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+
             isReceiverRegistered = true
         }
     }
@@ -433,11 +608,8 @@ class TtsPlaybackManager(
     fun unregisterTtsReceiver() {
         if (isReceiverRegistered) {
             val context = application.applicationContext
-            try {
-                context.unregisterReceiver(ttsReceiver)
-            } catch (e: Exception) {
-                // ignore
-            }
+            try { context.unregisterReceiver(ttsReceiver) } catch (e: Exception) {}
+            try { context.unregisterReceiver(noisyReceiver) } catch (e: Exception) {}
             isReceiverRegistered = false
         }
     }
@@ -514,10 +686,13 @@ class TtsPlaybackManager(
     }
 
     fun playVoicePreview(voiceOption: VoiceOption) {
-        val cleanName = voiceOption.name.replace("Piper - ", "").replace("Kokoro - ", "").replace("System: ", "")
-        val sampleText = "Hello! This is a sample of the $cleanName voice."
+        val cleanName = voiceOption.name
+            .replace(" (Natural)", "").replace("Piper - ", "")
+            .replace("Kokoro - ", "").replace("System: ", "")
+        val sampleText = "Hello, I am $cleanName."
+
         val isSherpa = voiceOption.id.startsWith("vits-piper-") || voiceOption.id.startsWith("kokoro-")
-        val piperVoice = if (isSherpa) com.example.data.ai.PiperVoiceCatalog.getVoiceById(voiceOption.id) else null
+        val piperVoice = if (isSherpa) PiperVoiceCatalog.getVoiceById(voiceOption.id) else null
         val isDownloaded = piperVoice != null && isVoiceDownloaded(piperVoice)
 
         stopVoicePreview()
@@ -603,6 +778,7 @@ class TtsPlaybackManager(
         if (voiceOption.id.startsWith("vits-piper-") || voiceOption.id.startsWith("kokoro-")) {
             sherpaOnnxTtsEngine.selectedVoiceId = voiceOption.id
             sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(voiceOption.id)
+            warmUpLocalVoice()
         } else if (voiceOption.id.startsWith("default_")) {
             tts?.setLanguage(voiceOption.locale)
         } else {
@@ -619,7 +795,6 @@ class TtsPlaybackManager(
             }
         }
 
-        // INSTANTANEOUS UPDATE: Restart speaking from current paragraph
         if (ttsIsPlaying) {
             val book = ttsPlayingBook
             val chapter = ttsPlayingChapter
@@ -638,6 +813,18 @@ class TtsPlaybackManager(
             .apply()
         tts?.setPitch(pitch)
         tts?.setSpeechRate(speed)
+
+        settingsRestartJob?.cancel()
+        settingsRestartJob = coroutineScope.launch(Dispatchers.Main) {
+            delay(600)
+            if (ttsIsPlaying) {
+                val book = ttsPlayingBook
+                val chapter = ttsPlayingChapter
+                if (book != null && chapter != null) {
+                    speak(chapter.content, book, chapter, startFromParagraphIndex = ttsActiveParagraphIndex ?: 0)
+                }
+            }
+        }
     }
 
     fun toggleFocusMode() {
@@ -650,8 +837,67 @@ class TtsPlaybackManager(
         prefs.edit().putBoolean("tts_auto_scroll", ttsAutoScrollEnabled).apply()
     }
 
+    private fun buildSpeechUnits(paragraphs: List<String>, startParagraph: Int): List<SpeechUnit> {
+        val maxLen = try {
+            TextToSpeech.getMaxSpeechInputLength().coerceAtLeast(500) - 100
+        } catch (t: Throwable) {
+            3800
+        }
+
+        val units = mutableListOf<SpeechUnit>()
+        paragraphs.forEachIndexed { idx, paragraph ->
+            if (idx < startParagraph) return@forEachIndexed
+            if (paragraph.length <= maxLen) {
+                units.add(SpeechUnit(idx, paragraph))
+                return@forEachIndexed
+            }
+            var remaining = paragraph
+            while (remaining.isNotEmpty()) {
+                if (remaining.length <= maxLen) {
+                    units.add(SpeechUnit(idx, remaining))
+                    break
+                }
+                val sentenceCut = remaining.lastIndexOf('.', maxLen)
+                val spaceCut = remaining.lastIndexOf(' ', maxLen)
+                val cut = when {
+                    sentenceCut > maxLen / 2 -> sentenceCut + 1
+                    spaceCut > maxLen / 2 -> spaceCut
+                    else -> maxLen
+                }
+                units.add(SpeechUnit(idx, remaining.substring(0, cut).trim()))
+                remaining = remaining.substring(cut).trim()
+            }
+        }
+        return units
+    }
+
+    private fun queueNextUnits() {
+        val end = minOf(nextUnitToQueue + QUEUE_WINDOW_SIZE, speechUnits.size)
+        while (nextUnitToQueue < end) {
+            val unit = speechUnits[nextUnitToQueue]
+            val id = "unit_${activeChapterKey}#${nextUnitToQueue}#${unit.paragraphIndex}"
+            tts?.speak(unit.text, TextToSpeech.QUEUE_ADD, null, id)
+            nextUnitToQueue++
+        }
+    }
+
+    private fun parseUnitIndex(utteranceId: String): Int? {
+        if (!utteranceId.startsWith("unit_")) return null
+        return utteranceId.split("#").getOrNull(1)?.toIntOrNull()
+    }
+
+    private fun parseParagraphIndex(utteranceId: String): Int? {
+        if (!utteranceId.startsWith("unit_")) return null
+        return utteranceId.split("#").getOrNull(2)?.toIntOrNull()
+    }
+
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
         onSpeakStarted?.invoke()
+
+        if (!audioFocusHelper.requestFocus()) {
+            addLog("Audio focus unavailable right now — starting playback anyway.")
+        }
+
         // Save chapter progress & mark chapter as read
         coroutineScope.launch(Dispatchers.IO) {
             val updatedBook = book.copy(lastReadChapterId = chapter.id)
@@ -670,7 +916,6 @@ class TtsPlaybackManager(
                 ttsIsPlaying = true
                 ttsIsPaused = false
 
-                // Stop any other standard TTS
                 tts?.stop()
 
                 val glossary = repository.getGlossary(book.id)
@@ -706,13 +951,27 @@ class TtsPlaybackManager(
                             } else {
                                 premiumIdx - 1
                             }
-                            saveTtsProgress()
-                            loadResumableTtsSession()
+                            val now = System.currentTimeMillis()
+                            if (now - lastPersistMs >= PERSIST_INTERVAL_MS) {
+                                lastPersistMs = now
+                                saveTtsProgress()
+                                loadResumableTtsSession()
+                            }
+                            if (now - lastNotificationMs >= NOTIFICATION_INTERVAL_MS) {
+                                lastNotificationMs = now
+                                showTtsNotification()
+                            }
                         }
                     },
                     onDone = {
                         coroutineScope.launch(Dispatchers.Main) {
-                            playNextChapterTts()
+                            if (sleepTimerMinutes == -1) {
+                                addLog("End of chapter reached for sleep timer. Stopping playback.")
+                                stopTts()
+                                sleepTimerMinutes = 0
+                            } else {
+                                playNextChapterTts()
+                            }
                         }
                     },
                     onError = { errorMsg ->
@@ -742,43 +1001,48 @@ class TtsPlaybackManager(
                 tts?.setPitch(ttsPitch)
                 tts?.setSpeechRate(ttsSpeed)
 
-                // Retrieve glossary replacements for clean speech
                 val glossary = repository.getGlossary(book.id)
                 val cleanText = repository.applyGlossary(text, glossary)
 
-                // Filter out html/extra characters and split to avoid 4000 char limits
                 val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 ttsTotalParagraphs = rawParagraphs.size
 
                 tts?.stop()
 
+                val startIdx = if (startFromParagraphIndex < 0) 0 else startFromParagraphIndex
+                speechUnits = buildSpeechUnits(rawParagraphs, startIdx)
+                nextUnitToQueue = 0
+                activeChapterKey = chapter.id
+
                 if (startFromParagraphIndex < 0) {
-                    // Speak title first
                     tts?.speak(chapter.title, TextToSpeech.QUEUE_ADD, null, "title_${chapter.id}")
                     ttsActiveParagraphIndex = -1
                 } else {
                     ttsActiveParagraphIndex = startFromParagraphIndex
                 }
 
-                rawParagraphs.forEachIndexed { idx, para ->
-                    if (idx >= startFromParagraphIndex) {
-                        tts?.speak(para, TextToSpeech.QUEUE_ADD, null, "para_${chapter.id}_$idx")
-                    }
-                }
-
+                queueNextUnits()
                 showTtsNotification()
+
+                var consecutiveFailures = 0
 
                 tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
+                        consecutiveFailures = 0
                         if (utteranceId != null) {
-                            if (utteranceId.startsWith("para_${chapter.id}_")) {
-                                val idxStr = utteranceId.substringAfterLast("_")
-                                val idx = idxStr.toIntOrNull()
-                                if (idx != null) {
-                                    coroutineScope.launch(Dispatchers.Main) {
-                                        ttsActiveParagraphIndex = idx
+                            val paraIdx = parseParagraphIndex(utteranceId)
+                            if (paraIdx != null) {
+                                coroutineScope.launch(Dispatchers.Main) {
+                                    ttsActiveParagraphIndex = paraIdx
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastPersistMs >= PERSIST_INTERVAL_MS) {
+                                        lastPersistMs = now
                                         saveTtsProgress()
                                         loadResumableTtsSession()
+                                    }
+                                    if (now - lastNotificationMs >= NOTIFICATION_INTERVAL_MS) {
+                                        lastNotificationMs = now
+                                        showTtsNotification()
                                     }
                                 }
                             } else if (utteranceId.startsWith("title_")) {
@@ -792,15 +1056,39 @@ class TtsPlaybackManager(
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        if (utteranceId != null && utteranceId.startsWith("para_${chapter.id}_${rawParagraphs.size - 1}")) {
-                            coroutineScope.launch(Dispatchers.Main) {
-                                playNextChapterTts()
+                        consecutiveFailures = 0
+                        if (utteranceId != null) {
+                            val unitIdx = parseUnitIndex(utteranceId)
+                            if (unitIdx != null) {
+                                if (unitIdx >= speechUnits.size - 1) {
+                                    coroutineScope.launch(Dispatchers.Main) {
+                                        if (sleepTimerMinutes == -1) {
+                                            addLog("End of chapter reached for sleep timer. Stopping playback.")
+                                            stopTts()
+                                            sleepTimerMinutes = 0
+                                        } else {
+                                            playNextChapterTts()
+                                        }
+                                    }
+                                } else if (unitIdx >= nextUnitToQueue - QUEUE_REFILL_THRESHOLD) {
+                                    coroutineScope.launch(Dispatchers.Main) {
+                                        queueNextUnits()
+                                    }
+                                }
                             }
                         }
                     }
 
                     @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {}
+                    override fun onError(utteranceId: String?) {
+                        consecutiveFailures++
+                        if (consecutiveFailures >= 3) {
+                            coroutineScope.launch(Dispatchers.Main) {
+                                addLog("3 consecutive speech utterance errors — stopping playback.")
+                                stopTts()
+                            }
+                        }
+                    }
                 })
             }
         }
@@ -847,9 +1135,12 @@ class TtsPlaybackManager(
         }
     }
 
-    fun pauseTts() {
+    fun pauseTts(abandonFocus: Boolean = true) {
         sherpaOnnxTtsEngine.stop()
         tts?.stop()
+        if (abandonFocus) {
+            audioFocusHelper.abandonFocus()
+        }
         ttsIsPlaying = false
         ttsIsPaused = true
         showTtsNotification()
@@ -866,6 +1157,7 @@ class TtsPlaybackManager(
     fun stopTts() {
         sherpaOnnxTtsEngine.stop()
         tts?.stop()
+        audioFocusHelper.abandonFocus()
         ttsPlayingBook = null
         ttsPlayingChapter = null
         ttsIsPlaying = false
@@ -880,9 +1172,8 @@ class TtsPlaybackManager(
             release()
         }
         mediaSession = null
+        TtsPlaybackService.stop(application)
     }
-
-
 
     fun saveTtsProgress() {
         val book = ttsPlayingBook ?: return
@@ -895,20 +1186,17 @@ class TtsPlaybackManager(
             .putBoolean("tts_was_playing", ttsIsPlaying)
             .apply()
 
-        // Sync with reading progress
         prefs.edit()
             .putInt("progress_para_${book.id}_${chapter.id}", if (para < 0) 0 else para)
             .putString("progress_chapter_${book.id}", chapter.id)
             .apply()
 
-        // Make sure the lastReadChapterId matches
         if (book.lastReadChapterId != chapter.id) {
             coroutineScope.launch(Dispatchers.IO) {
                 repository.updateBook(book.copy(lastReadChapterId = chapter.id))
             }
         }
 
-        // Keep system notification and MediaSession API updated in real time as paragraphs change
         showTtsNotification()
     }
 

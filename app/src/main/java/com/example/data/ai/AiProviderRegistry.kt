@@ -2,35 +2,22 @@ package com.example.data.ai
 
 import android.content.Context
 
-class AiProviderRegistry(private val context: Context) {
-    private val prefs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+/**
+ * All AI runs on this device. There is no cloud provider and no API key — the only backend is a
+ * local model file the user imports themselves.
+ */
+class AiProviderRegistry(context: Context) {
 
-    val cloudProvider = GeminiCloudProvider {
-        val userKey = prefs.getString("gemini_api_key", "") ?: ""
-        if (userKey.isNotBlank()) userKey else com.example.BuildConfig.GEMINI_API_KEY
-    }
     val localProvider = MediaPipeLocalProvider(context)
 
-    val providers = listOf(cloudProvider, localProvider)
+    val providers: List<AiProvider> = listOf(localProvider)
 
-    fun getProvider(id: String): AiProvider {
-        return providers.find { it.id == id } ?: cloudProvider
-    }
+    fun getProvider(id: String): AiProvider = localProvider
 
-    suspend fun getActiveProviderForTask(preferredId: String, requiresJson: Boolean): AiProvider {
-        val preferred = getProvider(preferredId)
-        
-        // 1. Check if preferred is available
-        if (preferred.isAvailable()) {
-            return preferred
-        }
-
-        // 2. Fallbacks
-        if (localProvider.isAvailable()) {
-            return localProvider
-        }
-        
-        // Default to cloud
-        return cloudProvider
-    }
+    /**
+     * Kept for source compatibility with existing call sites. There is nothing to select between,
+     * so the parameters are ignored.
+     */
+    suspend fun getActiveProviderForTask(preferredId: String, requiresJson: Boolean): AiProvider =
+        localProvider
 }

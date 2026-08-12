@@ -11,7 +11,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,7 +21,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.viewmodel.MainViewModel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,9 +30,11 @@ fun DiscoverScreen(
     modifier: Modifier = Modifier
 ) {
     var queryText by remember { mutableStateOf("") }
-    val downloadStatus by viewModel.modelManager.downloadStatus.collectAsState()
     var gemmaExists by remember { mutableStateOf(viewModel.modelManager.checkModelExists()) }
-    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        gemmaExists = viewModel.modelManager.checkModelExists()
+    }
 
     LazyColumn(
         modifier = modifier
@@ -72,7 +73,7 @@ fun DiscoverScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = "Enter any genres, keywords, or plot tropes to generate tailored light novel recommendations offline or online.",
+                            text = "Enter any genres, keywords, or plot tropes to generate tailored light novel recommendations completely offline.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
@@ -81,11 +82,8 @@ fun DiscoverScreen(
             }
         }
 
-        // AI Provider Status Indicator Chips
+        // Provider & Status Chips
         item {
-            val activeProvider = viewModel.aiRegistry.providers.find { it.id == viewModel.activeAiProviderId }
-            val providerName = activeProvider?.displayName ?: "Unknown Provider"
-            
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -105,21 +103,21 @@ fun DiscoverScreen(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = "Active Provider",
+                            imageVector = if (gemmaExists) Icons.Default.CheckCircle else Icons.Default.Info,
+                            contentDescription = "Engine Status",
                             modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = if (gemmaExists) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Engine: $providerName",
+                            text = if (gemmaExists) "On-Device Gemma" else "Offline Catalog Matcher",
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-                
+
                 Surface(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(8.dp),
@@ -133,177 +131,17 @@ fun DiscoverScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Check,
-                            contentDescription = "Bypass Scraper",
+                            contentDescription = "Catalog Status",
                             modifier = Modifier.size(14.dp),
                             tint = MaterialTheme.colorScheme.secondary
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Bypass Catalog Ready",
+                            text = "Built-in Catalog Ready",
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                    }
-                }
-            }
-        }
-
-        // Simple On-Device AI Model Downloader Section
-        item {
-            if (!gemmaExists) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 4.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CloudDownload,
-                                contentDescription = "Download Model",
-                                tint = MaterialTheme.colorScheme.secondary
-                            )
-                            Text(
-                                text = "Local AI Model (Gemma) Missing",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                        }
-                        Text(
-                            text = "To run recommendations offline without internet and preserve your privacy, download the lightweight 2B Gemma model.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                        )
-                        
-                        when (downloadStatus) {
-                            is com.example.data.ai.DownloadStatus.Idle -> {
-                                Button(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            viewModel.modelManager.downloadModel()
-                                            gemmaExists = viewModel.modelManager.checkModelExists()
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondary
-                                    )
-                                ) {
-                                    Text("Download Local Model Now", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            is com.example.data.ai.DownloadStatus.Progress -> {
-                                val percentage = (downloadStatus as com.example.data.ai.DownloadStatus.Progress).percentage
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Text(
-                                        text = "Downloading Local Model: $percentage%",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    LinearProgressIndicator(
-                                        progress = percentage / 100f,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        color = MaterialTheme.colorScheme.secondary
-                                    )
-                                }
-                            }
-                            is com.example.data.ai.DownloadStatus.Success -> {
-                                LaunchedEffect(Unit) {
-                                    gemmaExists = viewModel.modelManager.checkModelExists()
-                                }
-                                Text(
-                                    text = "Download complete! Ready to use offline.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            is com.example.data.ai.DownloadStatus.Error -> {
-                                val msg = (downloadStatus as com.example.data.ai.DownloadStatus.Error).message
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(
-                                        text = "Error: $msg",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                    Button(
-                                        onClick = {
-                                            coroutineScope.launch {
-                                                viewModel.modelManager.downloadModel()
-                                                gemmaExists = viewModel.modelManager.checkModelExists()
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text("Retry Download")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 4.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Model Loaded",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column {
-                                Text(
-                                    text = "Local AI Model (Gemma) Loaded",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Running 100% offline & private.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        TextButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    viewModel.modelManager.deleteModel()
-                                    gemmaExists = viewModel.modelManager.checkModelExists()
-                                }
-                            }
-                        ) {
-                            Text("Delete", color = MaterialTheme.colorScheme.error)
-                        }
                     }
                 }
             }
@@ -366,7 +204,7 @@ fun DiscoverScreen(
                         CircularProgressIndicator()
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Consulting AI Assistant...",
+                            text = "Finding recommendations...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -437,7 +275,7 @@ fun DiscoverScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
-                        
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End
