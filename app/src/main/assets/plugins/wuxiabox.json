@@ -1,0 +1,28 @@
+{
+  "id": "wuxiabox",
+  "name": "WuxiaBox",
+  "version": "1.0.0",
+  "baseUrl": "wuxiabox.com",
+  "extraHosts": [],
+  "author": "Built-in",
+  "description": "Machine-translated web novels. Chapter list is paginated.",
+
+  "titleSelector": ".novel-info .novel-title, h1.novel-title, h1",
+  "authorSelector": ".novel-info .author span[itemprop='author'], .author a, .author span",
+  "synopsisSelector": ".summary .content, .description, meta[property='og:description']",
+  "coverSelector": "#novel figure.cover img, .cover img, meta[property='og:image']",
+
+  "chapterListSelector": "ul.chapter-list li a",
+  "chapterTitleSelector": ".chapter-title, h1.chapter-title, h1",
+  "chapterBodySelector": ".chapter-content, #chapter-content, .content",
+  "chapterReadySelector": ".chapter-content",
+
+  "tocPaginationMode": "query",
+  "tocPageParam": "page",
+  "tocFirstPage": 1,
+  "tocLastPageSelector": ".pagination a, ul.pagination li a, .paging a",
+  "tocMaxPages": 200,
+
+  "requestDelayMs": 2000,
+  "isEnabled": true
+}

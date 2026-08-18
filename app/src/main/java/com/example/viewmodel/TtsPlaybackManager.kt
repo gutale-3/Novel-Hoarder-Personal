@@ -615,9 +615,13 @@ class TtsPlaybackManager(
     }
 
     fun initTts(onReady: (() -> Unit)? = null) {
-        if (tts != null) {
+        if (tts != null && isTtsReady) {
             onReady?.invoke()
             return
+        }
+        if (tts != null && !isTtsReady) {
+            try { tts?.shutdown() } catch (_: Exception) {}
+            tts = null
         }
         addLog("Initializing TextToSpeech engine...")
         tts = TextToSpeech(application) { status ->
@@ -674,6 +678,9 @@ class TtsPlaybackManager(
                 addLog("TTS successfully initialized with ${ttsVoices.size} voices.")
                 onReady?.invoke()
             } else {
+                isTtsReady = false
+                try { tts?.shutdown() } catch (_: Exception) {}
+                tts = null
                 addLog("ERROR: Failed to initialize TextToSpeech engine!")
             }
         }

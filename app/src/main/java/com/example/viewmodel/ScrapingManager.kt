@@ -95,9 +95,16 @@ class ScrapingManager(
     var captchaUrl by mutableStateOf("")
     private var captchaContinuation: CancellableContinuation<Unit>? = null
 
+    init {
+        com.example.data.plugin.PluginExecutionEngine.progressListener = { count ->
+            scrapingStatus = "● Fetching TOC (Found $count chapters...)"
+            addLog("TOC live progress: Found $count chapters...")
+        }
+    }
+
     // Manual Interactive Browser variables
     var showManualBrowser by mutableStateOf(false)
-    var manualBrowserUrl by mutableStateOf(settings.lastBrowserUrl.ifBlank { "https://tomatomtl.com" })
+    var manualBrowserUrl by mutableStateOf(settings.lastBrowserUrl.ifBlank { "https://www.google.com" })
 
     fun grabInfoFromWebView(webView: WebView, onResult: (String) -> Unit) {
         manualCapture?.grabInfoFromCurrentPage(webView, onResult) ?: onResult("Manual capture unavailable")
@@ -120,6 +127,7 @@ class ScrapingManager(
     }
 
     fun saveBrowserUrl(url: String) {
+        manualBrowserUrl = url
         settings.updateLastBrowserUrl(url)
     }
 
@@ -190,11 +198,16 @@ class ScrapingManager(
     }
 
     fun launchInteractiveBrowser() {
-        val url = scrapeUrl.trim()
-        manualBrowserUrl = if (url.isNotEmpty() && (url.startsWith("http://") || url.startsWith("https://"))) {
-            url
+        val lastUrl = settings.lastBrowserUrl.trim()
+        manualBrowserUrl = if (lastUrl.isNotEmpty() && (lastUrl.startsWith("http://") || lastUrl.startsWith("https://"))) {
+            lastUrl
         } else {
-            "https://tomatomtl.com"
+            val url = scrapeUrl.trim()
+            if (url.isNotEmpty() && (url.startsWith("http://") || url.startsWith("https://"))) {
+                url
+            } else {
+                "https://www.google.com"
+            }
         }
         showManualBrowser = true
         addLog("Launching Interactive Browser to solve Cloudflare / Log in: $manualBrowserUrl")
@@ -842,7 +855,9 @@ class ScrapingManager(
 
                 // Simple delay to respect scraping etiquette and rate limits based on user settings
                 if (isScraping && index < chaptersToProcess.size - 1) {
-                    val delayTime = settings.requestDelayMs.toLong().coerceAtLeast(300L)
+                    val source = SourceManager.getSourceForUrl(chapterUrl, pluginManager)
+                    val siteDelay = (source as? com.example.data.plugin.PluginExecutionEngine)?.config?.requestDelayMs ?: 0
+                    val delayTime = (if (siteDelay > 0) siteDelay.toLong() else settings.requestDelayMs.toLong()).coerceAtLeast(300L)
                     delay(delayTime)
                 }
             }
@@ -981,7 +996,10 @@ class ScrapingManager(
                 val res = downloadSingleChapter(ch)
                 if (res.isSuccess) success++ else fail++
                 if (idx < pending.size - 1) {
-                    delay(settings.requestDelayMs.toLong().coerceAtLeast(300L))
+                    val source = SourceManager.getSourceForUrl(ch.url, pluginManager)
+                    val siteDelay = (source as? com.example.data.plugin.PluginExecutionEngine)?.config?.requestDelayMs ?: 0
+                    val delayTime = (if (siteDelay > 0) siteDelay.toLong() else settings.requestDelayMs.toLong()).coerceAtLeast(300L)
+                    delay(delayTime)
                 }
             }
             withContext(Dispatchers.Main) {

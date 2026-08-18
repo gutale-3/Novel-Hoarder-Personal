@@ -18,6 +18,7 @@ object SourceManager {
     fun getSourceForUrl(url: String, pluginManager: PluginManager? = null): NovelSource {
         val lowerUrl = url.lowercase()
 
+        // TomatoMTL is hand-tuned and must beat both plugins and the generic fallback.
         if (lowerUrl.contains("tomatomtl") || lowerUrl.contains("tomatoy") || lowerUrl.contains("tomato")) {
             return TomatoScraper
         }

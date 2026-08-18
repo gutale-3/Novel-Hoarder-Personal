@@ -318,13 +318,7 @@ fun LibraryScreen(
                                     onClick = {
                                         showImportBackupMenu = false
                                         importLauncher.launch(
-                                            arrayOf(
-                                                "application/epub+zip",
-                                                "application/zip",
-                                                "text/plain",
-                                                "text/html",
-                                                "application/octet-stream"
-                                            )
+                                            arrayOf("*/*")
                                         )
                                     },
                                     leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) }

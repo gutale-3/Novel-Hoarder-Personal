@@ -216,6 +216,16 @@ fun ReaderScreen(
     var showAutoArchiveSettingDialog by remember { mutableStateOf(false) }
     val archivedChapters by viewModel.progress.getArchivedChaptersFlow(bookId).collectAsState(emptyList())
 
+    var showAddSingleChapterDialog by remember { mutableStateOf(false) }
+    var addChTitle by remember { mutableStateOf("") }
+    var addChContent by remember { mutableStateOf("") }
+    var addChNumberStr by remember { mutableStateOf("") }
+    var addChInsertPosition by remember { mutableStateOf(-1) } // -1 = end, 0 = beginning, >0 = after that index
+
+    var showResequenceDialog by remember { mutableStateOf(false) }
+    var resequencePrefix by remember { mutableStateOf("Chapter") }
+    var resequenceStartNumberStr by remember { mutableStateOf("1") }
+
     var showBookmarkDialog by remember { mutableStateOf(false) }
     var selectedParaIndexForBookmark by remember { mutableStateOf<Int?>(null) }
     var selectedParaTextForBookmark by remember { mutableStateOf("") }
@@ -393,6 +403,16 @@ fun ReaderScreen(
                                     Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel Multi-select")
                                 }
                             } else {
+                                IconButton(onClick = {
+                                    showAddSingleChapterDialog = true
+                                }) {
+                                    Icon(imageVector = Icons.Default.PostAdd, contentDescription = "Add Single Chapter", tint = MaterialTheme.colorScheme.primary)
+                                }
+                                IconButton(onClick = {
+                                    showResequenceDialog = true
+                                }) {
+                                    Icon(imageVector = Icons.Default.List, contentDescription = "Auto-Resequence Chapters", tint = MaterialTheme.colorScheme.primary)
+                                }
                                 IconButton(onClick = {
                                     showAutoArchiveSettingDialog = true
                                 }) {
@@ -1913,6 +1933,120 @@ fun ReaderScreen(
 
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)
 
+                    // Content Editing / Cleaning Section
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Ad & Content Cleaning",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.error
+                        )
+
+                        // Action 3: Truncate this chapter from here
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    scope.launch {
+                                        val activeCh = activeChapter
+                                        if (activeCh != null && selectedParaTextForBookmark != null) {
+                                            val lines = activeCh.content.split("\n")
+                                            val indexInLines = lines.indexOfFirst { it.trim() == selectedParaTextForBookmark.trim() }
+                                            if (indexInLines != -1) {
+                                                val newContent = lines.subList(0, indexInLines).joinToString("\n").trim()
+                                                viewModel.repository.updateChapterContent(activeCh.id, newContent)
+                                            }
+                                        }
+                                        showBookmarkDialog = false
+                                    }
+                                }
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteSweep,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Truncate Chapter From Here",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Text(
+                                    text = "Delete this line and everything after it in this chapter",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+
+                        // Action 4: Truncate matching lines and after in ALL chapters
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    scope.launch {
+                                        val query = selectedParaTextForBookmark?.trim().orEmpty()
+                                        if (query.isNotEmpty()) {
+                                            val allChaps = viewModel.repository.getChapters(bookId)
+                                            var countUpdated = 0
+                                            for (chap in allChaps) {
+                                                val lines = chap.content.split("\n")
+                                                val matchIdx = lines.indexOfFirst { 
+                                                    it.contains(query, ignoreCase = true) 
+                                                }
+                                                if (matchIdx != -1) {
+                                                    val newContent = lines.subList(0, matchIdx).joinToString("\n").trim()
+                                                    viewModel.repository.updateChapterContent(chap.id, newContent)
+                                                    countUpdated++
+                                                }
+                                            }
+                                            if (countUpdated > 0) {
+                                                android.widget.Toast.makeText(
+                                                    context, 
+                                                    "Successfully cleaned and truncated $countUpdated chapters!", 
+                                                    android.widget.Toast.LENGTH_LONG
+                                                ).show()
+                                            }
+                                        }
+                                        showBookmarkDialog = false
+                                    }
+                                }
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteForever,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Truncate All Chapters Matching This",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Text(
+                                    text = "Scan all chapters, deleting from any line containing this text to the end (e.g. for recurring end ads)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                    }
+
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             text = "Bookmark / Highlight Note",
@@ -1971,6 +2105,237 @@ fun ReaderScreen(
                     TextButton(onClick = { showBookmarkDialog = false }) {
                         Text("Cancel")
                     }
+                }
+            }
+        )
+    }
+
+    if (showAddSingleChapterDialog) {
+        val sortedActiveChs = remember(chapters) { chapters.sortedBy { it.chapterNumber } }
+        var isDropdownExpanded by remember { mutableStateOf(false) }
+        
+        AlertDialog(
+            onDismissRequest = { showAddSingleChapterDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.PostAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("Add Single Chapter", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedTextField(
+                        value = addChTitle,
+                        onValueChange = { addChTitle = it },
+                        label = { Text("Chapter Title") },
+                        placeholder = { Text("e.g. Chapter 4.5: Extra Story") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+
+                    // Position selection
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = when (addChInsertPosition) {
+                                -1 -> "At the very end"
+                                0 -> "At the very beginning"
+                                else -> {
+                                    val targetCh = sortedActiveChs.getOrNull(addChInsertPosition - 1)
+                                    if (targetCh != null) "After: ${targetCh.title}" else "At the very end"
+                                }
+                            },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Insert Position") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            trailingIcon = {
+                                IconButton(onClick = { isDropdownExpanded = true }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Position")
+                                }
+                            }
+                        )
+                        DropdownMenu(
+                            expanded = isDropdownExpanded,
+                            onDismissRequest = { isDropdownExpanded = false },
+                            modifier = Modifier.fillMaxWidth(0.9f).heightIn(max = 250.dp)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("At the very beginning (Chapter 1)") },
+                                onClick = {
+                                    addChInsertPosition = 0
+                                    addChNumberStr = "1"
+                                    isDropdownExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("At the very end") },
+                                onClick = {
+                                    addChInsertPosition = -1
+                                    val nextNum = (sortedActiveChs.lastOrNull()?.chapterNumber ?: 0) + 1
+                                    addChNumberStr = nextNum.toString()
+                                    isDropdownExpanded = false
+                                }
+                            )
+                            sortedActiveChs.forEachIndexed { idx, ch ->
+                                DropdownMenuItem(
+                                    text = { Text("After: ${ch.title} (No. ${ch.chapterNumber})") },
+                                    onClick = {
+                                        addChInsertPosition = idx + 1 // 1-based offset
+                                        addChNumberStr = (ch.chapterNumber + 1).toString()
+                                        isDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = addChNumberStr,
+                        onValueChange = { addChNumberStr = it },
+                        label = { Text("Assign Chapter Number") },
+                        placeholder = { Text("e.g. 5") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = addChContent,
+                        onValueChange = { addChContent = it },
+                        label = { Text("Chapter Content") },
+                        placeholder = { Text("Paste chapter text here...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        minLines = 5,
+                        maxLines = 10
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val num = addChNumberStr.toIntOrNull() ?: ((sortedActiveChs.lastOrNull()?.chapterNumber ?: 0) + 1)
+                        viewModel.library.addSingleChapter(
+                            bookId = bookId,
+                            title = addChTitle.ifBlank { "Chapter $num" },
+                            chapterNumber = num,
+                            content = addChContent,
+                            onComplete = {
+                                showAddSingleChapterDialog = false
+                                addChTitle = ""
+                                addChContent = ""
+                                addChNumberStr = ""
+                                addChInsertPosition = -1
+                                android.widget.Toast.makeText(context, "Chapter added successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                ) {
+                    Text("Add Chapter")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSingleChapterDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showResequenceDialog) {
+        val startNum = resequenceStartNumberStr.toIntOrNull() ?: 1
+        val previewTitle1 = if (resequencePrefix.trim().isEmpty()) "$startNum" else "${resequencePrefix.trim()} $startNum"
+        val previewTitle2 = if (resequencePrefix.trim().isEmpty()) "${startNum + 1}" else "${resequencePrefix.trim()} ${startNum + 1}"
+        
+        AlertDialog(
+            onDismissRequest = { showResequenceDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.List, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("Auto-Resequence Chapters", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "This will automatically re-number and rename all chapters sequentially in their current reading order.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    OutlinedTextField(
+                        value = resequencePrefix,
+                        onValueChange = { resequencePrefix = it },
+                        label = { Text("Word / Prefix (Optional)") },
+                        placeholder = { Text("e.g. Chapter, Novel, Volume, Section") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+
+                    OutlinedTextField(
+                        value = resequenceStartNumberStr,
+                        onValueChange = { resequenceStartNumberStr = it },
+                        label = { Text("Starting Number") },
+                        placeholder = { Text("e.g. 1, 1000") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        )
+                    )
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Sequence Preview:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Text("1. $previewTitle1", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("2. $previewTitle2", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("3. ...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val num = resequenceStartNumberStr.toIntOrNull() ?: 1
+                        viewModel.library.resequenceChapters(
+                            bookId = bookId,
+                            prefix = resequencePrefix,
+                            startNumber = num,
+                            onComplete = { count ->
+                                showResequenceDialog = false
+                                android.widget.Toast.makeText(context, "Successfully re-sequenced $count chapters!", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                ) {
+                    Text("Resequence All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResequenceDialog = false }) {
+                    Text("Cancel")
                 }
             }
         )

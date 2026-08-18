@@ -9,6 +9,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -184,6 +186,20 @@ fun ScrapeScreen(
                             }
                         }
                     )
+
+                    if (viewModel.scrapeUrl.isNotEmpty()) {
+                        val sourceName = remember(viewModel.scrapeUrl) {
+                            com.example.data.scraper.SourceManager.getSourceForUrl(viewModel.scrapeUrl, viewModel.pluginManager).sourceName
+                        }
+                        Text(
+                            text = "Will use: $sourceName",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                        )
+                    }
 
                     // Book Name Entry
                     OutlinedTextField(
@@ -793,16 +809,17 @@ fun ScrapeScreen(
             onDismissRequest = { viewModel.showManualBrowser = false },
             properties = DialogProperties(
                 usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = true
+                decorFitsSystemWindows = false
             )
         ) {
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
                     // Streamlined Navigation & Full Width Address Bar
                     Surface(
                         tonalElevation = 3.dp,
@@ -817,70 +834,148 @@ fun ScrapeScreen(
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            // Row 1: Action buttons
+                            val manualCapture = viewModel.manualCapture
+
+                            // Row 1: Action buttons (Scrollable horizontally)
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 IconButton(
                                     onClick = { viewModel.showManualBrowser = false },
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         Icons.Default.Close,
                                         contentDescription = "Close Browser",
-                                        tint = MaterialTheme.colorScheme.onSurface
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
 
                                 IconButton(
                                     onClick = { webViewInstance?.goBack() },
                                     enabled = canGoBack,
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.ArrowBack,
                                         contentDescription = "Back",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
 
                                 IconButton(
                                     onClick = { webViewInstance?.goForward() },
                                     enabled = canGoForward,
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.ArrowForward,
                                         contentDescription = "Forward",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
 
                                 IconButton(
                                     onClick = { webViewInstance?.reload() },
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         Icons.Default.Refresh,
                                         contentDescription = "Refresh",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
 
                                 IconButton(
-                                    onClick = { webViewInstance?.loadUrl("https://tomatomtl.com") },
-                                    modifier = Modifier.size(36.dp)
+                                    onClick = {
+                                        currentWebUrl = "https://www.google.com"
+                                        webViewInstance?.loadUrl("https://www.google.com")
+                                    },
+                                    modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         Icons.Default.Home,
                                         contentDescription = "Home",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.weight(1f))
+                                // Interactive Grab Novel Info Button (In Between)
+                                Button(
+                                    onClick = {
+                                        webViewInstance?.let { webView ->
+                                            viewModel.scraping.grabInfoFromWebView(webView) { msg ->
+                                                coroutineScope.launch {
+                                                    snackbarHostState.showSnackbar(msg)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    enabled = !manualCapture.isCapturing,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .testTag("scrape_grab_info_btn"),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MenuBook,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (manualCapture.isCapturing) "Saving…" else "Grab Info",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                // Interactive Save Chapter Button (In Between)
+                                Button(
+                                    onClick = {
+                                        webViewInstance?.let { webView ->
+                                            viewModel.scraping.grabChapterFromWebView(webView) { msg ->
+                                                coroutineScope.launch {
+                                                    snackbarHostState.showSnackbar(msg)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    enabled = !manualCapture.isCapturing,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .testTag("scrape_save_chapter_btn"),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bookmark,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (manualCapture.isCapturing) "Saving…" else "Save Chap",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
 
                                 Button(
                                     onClick = {
@@ -888,14 +983,57 @@ fun ScrapeScreen(
                                         viewModel.scraping.addLog("Synced manual browser cookies with the scraper.")
                                         viewModel.showManualBrowser = false
                                     },
-                                    shape = RoundedCornerShape(20.dp),
+                                    shape = RoundedCornerShape(16.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.primary
                                     ),
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(36.dp)
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
                                 ) {
-                                    Text("Done", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("Done", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                }
+                            }
+
+                            if (manualCapture.isCapturing) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            // Optional Row 3: Active Capture Session Title and Session Reset
+                            if (!manualCapture.captureBookTitle.isNullOrBlank()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Session: ${manualCapture.captureBookTitle} (${manualCapture.captureChapterCount} chapters)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick = { manualCapture.startNewBrowserSession() },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Text(
+                                            text = "New Session",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
 
@@ -1009,144 +1147,6 @@ fun ScrapeScreen(
                             modifier = Modifier.fillMaxSize()
                         )
                     }
-
-                    // --- Manual Capture Bottom Action Bar ---
-                    val manualCapture = viewModel.manualCapture
-                    val narrow = isNarrowScreen()
-                    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-
-                    Surface(
-                        tonalElevation = 6.dp,
-                        shadowElevation = 8.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .imePadding()
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (manualCapture.isCapturing) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(3.dp),
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (!manualCapture.captureBookTitle.isNullOrBlank()) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Session: ${manualCapture.captureBookTitle} (${manualCapture.captureChapterCount} chapters)",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        TextButton(
-                                            onClick = { manualCapture.startNewBrowserSession() },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = "New Session",
-                                                fontSize = 12.sp,
-                                                maxLines = 1,
-                                                softWrap = false,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
-                                }
-
-                                @Composable
-                                fun GrabInfoButton(btnModifier: Modifier) {
-                                    Button(
-                                        onClick = {
-                                            webViewInstance?.let { webView ->
-                                                viewModel.scraping.grabInfoFromWebView(webView) { msg ->
-                                                    coroutineScope.launch {
-                                                        snackbarHostState.showSnackbar(msg)
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        enabled = !manualCapture.isCapturing,
-                                        modifier = btnModifier
-                                            .defaultMinSize(minHeight = MinTouchTarget)
-                                            .testTag("scrape_grab_info_btn"),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Text(
-                                            text = if (manualCapture.isCapturing) "Saving…" else if (narrow) "Grab Info" else "Grab Novel Info",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-
-                                @Composable
-                                fun SaveChapterButton(btnModifier: Modifier) {
-                                    Button(
-                                        onClick = {
-                                            webViewInstance?.let { webView ->
-                                                viewModel.scraping.grabChapterFromWebView(webView) { msg ->
-                                                    coroutineScope.launch {
-                                                        snackbarHostState.showSnackbar(msg)
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        enabled = !manualCapture.isCapturing,
-                                        modifier = btnModifier
-                                            .defaultMinSize(minHeight = MinTouchTarget)
-                                            .testTag("scrape_save_chapter_btn"),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Text(
-                                            text = if (manualCapture.isCapturing) "Saving…" else if (narrow) "Save Chapter" else "Save This Chapter",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-
-                                if (screenWidthDp < 320) {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        GrabInfoButton(Modifier.fillMaxWidth())
-                                        SaveChapterButton(Modifier.fillMaxWidth())
-                                    }
-                                } else {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        GrabInfoButton(Modifier.weight(1f))
-                                        SaveChapterButton(Modifier.weight(1f))
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
 
                 SnackbarHost(
@@ -1156,6 +1156,7 @@ fun ScrapeScreen(
                         .padding(16.dp)
                 )
             }
+        }
         }
     }
 

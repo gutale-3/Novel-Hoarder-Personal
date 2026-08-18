@@ -1,12 +1,21 @@
 package com.example.ui.screens
 
+import android.content.Context
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -14,9 +23,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.plugin.PluginConfig
 import com.example.data.plugin.PluginManager
 import com.example.ui.theme.MinTouchTarget
@@ -39,6 +52,28 @@ fun PluginManagementScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var pluginToDelete by remember { mutableStateOf<PluginConfig?>(null) }
     var showHelpCard by remember { mutableStateOf(false) }
+
+    // Inspect Page tool state
+    var showInspectDialog by remember { mutableStateOf(false) }
+    var inspectUrl by remember { mutableStateOf("https://wtr-lab.com") }
+    var isInspecting by remember { mutableStateOf(false) }
+    var inspectResultText by remember { mutableStateOf("") }
+    var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+
+    val builtInIds = remember {
+        try {
+            context.assets.list("plugins").orEmpty()
+                .filter { it.endsWith(".json") }
+                .map { it.removeSuffix(".json") }
+                .toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+    }
+
+    // Partition plugins
+    val builtInPlugins = plugins.filter { builtInIds.contains(it.id) }
+    val myPlugins = plugins.filter { !builtInIds.contains(it.id) }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -72,6 +107,12 @@ fun PluginManagementScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showInspectDialog = true },
+                        modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
+                    ) {
+                        Icon(Icons.Default.BugReport, contentDescription = "Inspect Page")
+                    }
                     IconButton(
                         onClick = { filePicker.launch(arrayOf("application/json", "text/plain")) },
                         modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
@@ -179,23 +220,150 @@ fun PluginManagementScreen(
                 }
             }
 
-            if (plugins.isEmpty()) {
+            // Built-in Sites Section
+            item {
+                Text(
+                    "Built-in Sites",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+
+            if (builtInPlugins.isEmpty()) {
+                item {
+                    Text(
+                        "No built-in plugins found.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+            } else {
+                items(builtInPlugins, key = { it.id }) { plugin ->
+                    val isForked = !plugin.isBuiltIn
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        plugin.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextDefaults.OVERFLOW
+                                    )
+                                    if (isForked) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        SuggestionChip(
+                                            onClick = { },
+                                            label = { Text("Edited", fontSize = 10.sp) },
+                                            modifier = Modifier.height(20.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    "Base URL: ${plugin.baseUrl} | v${plugin.version} by ${plugin.author}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (plugin.description.isNotBlank()) {
+                                    Text(
+                                        plugin.description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (isForked) {
+                                        TextButton(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    pluginManager.deletePlugin(plugin.id)
+                                                    Toast.makeText(context, "Restored original ${plugin.name}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(Icons.Default.Undo, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Restore original", fontSize = 12.sp)
+                                        }
+                                    } else {
+                                        TextButton(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    pluginManager.forkBuiltIn(plugin.id)
+                                                        .onSuccess {
+                                                            Toast.makeText(context, "Created editable copy of ${plugin.name}", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                        .onFailure {
+                                                            errorMessage = "Fork failed: ${it.message}"
+                                                        }
+                                                }
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Edit a copy", fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Switch(
+                                checked = plugin.isEnabled,
+                                onCheckedChange = { enabled ->
+                                    coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // My Sites Section
+            item {
+                Text(
+                    "My Sites",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                )
+            }
+
+            if (myPlugins.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(32.dp),
+                            .padding(vertical = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "No custom plugins installed. Tap + or the file icon above to add one.",
+                            "No custom sites installed.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             } else {
-                items(plugins, key = { it.id }) { plugin ->
+                items(myPlugins, key = { it.id }) { plugin ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -222,7 +390,8 @@ fun PluginManagementScreen(
                                 if (plugin.description.isNotBlank()) {
                                     Text(
                                         plugin.description,
-                                        style = MaterialTheme.typography.bodySmall
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
@@ -309,6 +478,156 @@ fun PluginManagementScreen(
             dismissButton = {
                 TextButton(onClick = { pluginToDelete = null }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Inspect Page Debug Tool Dialog
+    if (showInspectDialog) {
+        AlertDialog(
+            onDismissRequest = { showInspectDialog = false },
+            title = { Text("Inspect WTR Lab / SPA Metadata") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Enter the WTR Lab book URL below to run the Next.js '__NEXT_DATA__' inspector tool.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = inspectUrl,
+                        onValueChange = { inspectUrl = it },
+                        label = { Text("URL to inspect") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (isInspecting) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(150.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator()
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Loading page & extracting...", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    } else if (inspectResultText.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Inspector Output:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    Text(
+                                        text = inspectResultText,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Hidden WebView to perform the actual load and JavaScript execution
+                    Box(modifier = Modifier.size(1.dp)) {
+                        AndroidView(
+                            factory = { ctx ->
+                                WebView(ctx).apply {
+                                    settings.javaScriptEnabled = true
+                                    settings.domStorageEnabled = true
+                                    webViewClient = object : WebViewClient() {
+                                        override fun onPageFinished(view: WebView?, url: String?) {
+                                            val inspectScript = """
+                                                (() => {
+                                                  const el = document.getElementById('__NEXT_DATA__');
+                                                  if (!el) return JSON.stringify({ found: false, reason: 'no __NEXT_DATA__ script tag' });
+                                                  let data;
+                                                  try { data = JSON.parse(el.textContent); }
+                                                  catch (e) { return JSON.stringify({ found: false, reason: 'not valid JSON' }); }
+
+                                                  const hits = [];
+                                                  const walk = (node, path, depth) => {
+                                                    if (depth > 8 || node === null || typeof node !== 'object') return;
+                                                    for (const k of Object.keys(node)) {
+                                                      const v = node[k];
+                                                      const p = path + '.' + k;
+                                                      if (/^(raw_id|rawId|serie_id|serieId|id|slug)$/.test(k) &&
+                                                          (typeof v === 'number' || typeof v === 'string')) {
+                                                        hits.push(p + ' = ' + v);
+                                                      }
+                                                      if (Array.isArray(v) && v.length && typeof v[0] === 'object' &&
+                                                          v[0] !== null && ('order' in v[0] || 'title' in v[0] || 'name' in v[0])) {
+                                                        hits.push(p + ' [] len=' + v.length + ' keys=' + Object.keys(v[0]).join(','));
+                                                      }
+                                                      walk(v, p, depth + 1);
+                                                    }
+                                                  };
+                                                  walk(data, '$', 0);
+                                                  return JSON.stringify({ found: true, path: location.pathname, hits: hits.slice(0, 60) });
+                                                })()
+                                            """.trimIndent()
+
+                                            view?.evaluateJavascript(inspectScript) { evalResult ->
+                                                coroutineScope.launch {
+                                                    isInspecting = false
+                                                    inspectResultText = if (evalResult.isNullOrBlank() || evalResult == "null") {
+                                                        "Error: Returned empty or null output."
+                                                    } else {
+                                                        // Pretty format
+                                                        evalResult.replace("\\n", "\n")
+                                                            .replace("\\\"", "\"")
+                                                            .trim('\"')
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    webViewInstance = this
+                                }
+                            },
+                            update = { /* handled dynamically */ }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isInspecting = true
+                        inspectResultText = ""
+                        webViewInstance?.loadUrl(inspectUrl)
+                    },
+                    enabled = !isInspecting && inspectUrl.isNotBlank()
+                ) {
+                    Text("Inspect")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showInspectDialog = false
+                        isInspecting = false
+                        inspectResultText = ""
+                    }
+                ) {
+                    Text("Close")
                 }
             }
         )

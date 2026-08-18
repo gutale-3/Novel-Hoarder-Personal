@@ -91,7 +91,17 @@ class ManualCaptureManager(
                 val cover = jsonObj?.optString("cover") ?: ""
                 val pageUrl = currentUrl(webView).ifBlank { "manual://capture" }
 
-                val bookId = captureBookId ?: ("manual_" + pageUrl.hashCode())
+                // Check if we should start a new session because of a different novel title or different host/domain
+                val isDifferentBook = captureBookId != null && captureBookTitle.isNotEmpty() &&
+                    cleanTitle.lowercase() != captureBookTitle.lowercase() &&
+                    !cleanTitle.contains(captureBookTitle, ignoreCase = true) && 
+                    !captureBookTitle.contains(cleanTitle, ignoreCase = true)
+
+                val bookId = if (isDifferentBook) {
+                    "manual_" + pageUrl.hashCode()
+                } else {
+                    captureBookId ?: ("manual_" + pageUrl.hashCode())
+                }
 
                 val book = BookEntity(
                     id = bookId,

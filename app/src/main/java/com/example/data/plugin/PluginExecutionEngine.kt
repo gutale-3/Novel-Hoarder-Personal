@@ -18,6 +18,11 @@ import kotlin.coroutines.resume
 
 class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
 
+    companion object {
+        @Volatile
+        var progressListener: ((Int) -> Unit)? = null
+    }
+
     override val sourceName: String = config.name
 
     override fun parseBookId(url: String): String? {
@@ -70,25 +75,35 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         )
     }
 
-    override suspend fun scrapeChapterList(webView: WebView, bookUrl: String): List<String> = withContext(Dispatchers.Main) {
-        loadUrlAndWait(webView, bookUrl)
+    override suspend fun scrapeChapterList(webView: WebView, bookUrl: String): List<String> =
+        withContext(Dispatchers.Main) {
+            loadUrlAndWait(webView, bookUrl)
 
-        val script = buildChapterListScript()
-        var jsonResult: String? = null
-        val startTime = System.currentTimeMillis()
+            val script = config.customTocJs?.takeIf { it.isNotBlank() }
+                ?: buildPaginatedTocScript()
 
-        while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
-            val eval = evaluateJs(webView, script)
-            if (JsResultParser.isReady(eval)) {
-                jsonResult = eval
-                break
+            // A custom script may fetch many pages itself, so allow far longer than a DOM read needs.
+            val timeoutMs = if (config.customTocJs.isNullOrBlank()) 30_000L else 120_000L
+            var jsonResult: String? = null
+            val startTime = System.currentTimeMillis()
+
+            while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < timeoutMs) {
+                val eval = evaluateJs(webView, script)
+                if (JsResultParser.isReady(eval)) { jsonResult = eval; break }
+
+                val progressScript = "(() => { return window.__nhTocProgress || window.__nhWtrProgress || 0; })()"
+                val progressVal = evaluateJs(webView, progressScript)
+                val count = try { progressVal?.replace("\"", "")?.trim()?.toIntOrNull() ?: 0 } catch (e: Exception) { 0 }
+                if (count > 0) {
+                    progressListener?.invoke(count)
+                }
+
+                delay(500)
             }
-            delay(500)
-        }
 
-        val entries = GenericScraper.parseTocEntries(jsonResult)
-        GenericScraper.buildChapterList(entries)
-    }
+            val entries = GenericScraper.parseTocEntries(jsonResult)
+            GenericScraper.buildChapterList(entries)
+        }
 
     override suspend fun scrapeChapterContent(
         webView: WebView,
@@ -98,7 +113,7 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         evaluateJs(webView, PageExtractors.MARK_PREVIOUS_CONTENT_JS)
         loadUrlAndWait(webView, chapterUrl)
 
-        val script = buildChapterContentScript()
+        val script = config.customChapterJs?.takeIf { it.isNotBlank() } ?: buildChapterContentScript()
         var jsonResult: String? = null
         val startTime = System.currentTimeMillis()
 
@@ -156,24 +171,108 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         """.trimIndent()
     }
 
-    private fun buildChapterListScript(): String {
+    /**
+     * Collects the chapter list across a paginated table of contents.
+     *
+     * Fetches the remaining pages rather than navigating to them: navigation would cost a full page
+     * load each, and would also destroy the WebView state we are polling from. Runs the fetches in
+     * small groups with a pause between, so we never open a hundred connections at once.
+     */
+    private fun buildPaginatedTocScript(): String {
         val listSel = JsResultParser.jsLiteral(config.chapterListSelector)
+        val pagerSel = JsResultParser.jsLiteral(config.tocLastPageSelector)
+        val pageParam = JsResultParser.jsLiteral(config.tocPageParam)
+        val firstPage = config.tocFirstPage
+        // When tocPaginationMode is "none", skip the pagination entirely (MAX_PAGES = FIRST_PAGE)
+        val maxPages = if (config.tocPaginationMode == "none") config.tocFirstPage else config.tocMaxPages
+
         return """
             (() => {
-                const results = [];
-                const sel = $listSel;
-                if (!sel) return { ready: false, count: 0 };
-                
-                document.querySelectorAll(sel).forEach(a => {
+                if (window.__nhTocState === 'running') return { ready: false };
+                if (window.__nhTocResult) return window.__nhTocResult;
+                window.__nhTocState = 'running';
+
+                const LIST_SEL = $listSel;
+                const PAGER_SEL = $pagerSel;
+                const PAGE_PARAM = $pageParam;
+                const FIRST_PAGE = $firstPage;
+                const MAX_PAGES = $maxPages;
+
+                const collect = (root) => {
+                    const out = [];
+                    root.querySelectorAll(LIST_SEL).forEach(a => {
+                        try {
+                            const href = a.getAttribute('href');
+                            if (!href) return;
+                            const u = new URL(href, location.href);
+                            if (u.origin !== location.origin) return;
+                            const text = (a.innerText || a.textContent || '').trim();
+                            out.push({ href: u.href, text: text.slice(0, 160) });
+                        } catch (e) {}
+                    });
+                    return out;
+                };
+
+                const lastPage = () => {
+                    let max = FIRST_PAGE;
+                    document.querySelectorAll(PAGER_SEL).forEach(a => {
+                        const fromText = parseInt((a.innerText || '').trim(), 10);
+                        if (!isNaN(fromText) && fromText > max) max = fromText;
+                        const href = a.getAttribute('href') || '';
+                        const m = href.match(new RegExp(PAGE_PARAM + '=(\\\\d+)'));
+                        if (m) { const n = parseInt(m[1], 10); if (!isNaN(n) && n > max) max = n; }
+                    });
+                    return Math.min(max, MAX_PAGES);
+                };
+
+                const pageUrl = (n) => {
+                    const u = new URL(location.href);
+                    u.searchParams.set(PAGE_PARAM, String(n));
+                    return u.href;
+                };
+
+                (async () => {
                     try {
-                        const href = a.getAttribute('href');
-                        if (!href) return;
-                        const u = new URL(href, location.href);
-                        const text = (a.innerText || a.textContent || '').trim();
-                        results.push({ href: u.href, text: text });
-                    } catch(e) {}
-                });
-                return results;
+                        const seen = new Set();
+                        const all = [];
+                        const add = (items) => items.forEach(it => {
+                            if (!seen.has(it.href)) { seen.add(it.href); all.push(it); }
+                        });
+
+                        add(collect(document));
+
+                        const last = lastPage();
+                        const parser = new DOMParser();
+                        const GROUP = 4;
+
+                        for (let p = FIRST_PAGE + 1; p <= last; p += GROUP) {
+                            const batch = [];
+                            for (let i = p; i < p + GROUP && i <= last; i++) batch.push(i);
+
+                            const docs = await Promise.all(batch.map(n =>
+                                fetch(pageUrl(n), { credentials: 'same-origin' })
+                                    .then(r => r.ok ? r.text() : '')
+                                    .catch(() => '')
+                            ));
+
+                            docs.forEach(html => {
+                                if (!html) return;
+                                add(collect(parser.parseFromString(html, 'text/html')));
+                            });
+
+                            window.__nhTocProgress = all.length;
+                            await new Promise(r => setTimeout(r, 400));
+                        }
+
+                        window.__nhTocResult = all;
+                    } catch (e) {
+                        window.__nhTocResult = [];
+                    } finally {
+                        window.__nhTocState = 'done';
+                    }
+                })();
+
+                return { ready: false };
             })()
         """.trimIndent()
     }
@@ -181,35 +280,46 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
     private fun buildChapterContentScript(): String {
         val tSel = JsResultParser.jsLiteral(config.chapterTitleSelector)
         val bSel = JsResultParser.jsLiteral(config.chapterBodySelector)
+        val readySel = JsResultParser.jsLiteral(config.chapterReadySelector)
 
         return """
             (() => {
+                const READY_SEL = $readySel;
+                if (READY_SEL) {
+                    const gate = document.querySelector(READY_SEL);
+                    if (!gate) return { ready: false };
+                    const gateText = (gate.innerText || gate.textContent || '').trim();
+                    if (gateText.length < 200) return { ready: false };
+                }
+
                 let title = "";
-                if ($tSel) {
-                    const h = document.querySelector($tSel);
-                    if (h) title = (h.innerText || h.textContent || '').trim();
-                }
-                if (!title) title = document.title || "";
+                const h = document.querySelector($tSel);
+                if (h) title = (h.innerText || h.textContent || '').trim();
+                if (!title) title = (document.title || '').split('|')[0].trim();
 
-                let text = "";
-                if ($bSel) {
-                    const b = document.querySelector($bSel);
-                    if (b) {
-                        const clone = b.cloneNode(true);
-                        clone.querySelectorAll('br').forEach(br => {
-                            if (br.parentNode) br.parentNode.replaceChild(document.createTextNode('\n'), br);
-                        });
-                        clone.querySelectorAll('p, div, article, section, li, blockquote').forEach(el => {
-                            el.appendChild(document.createTextNode('\n\n'));
-                        });
-                        text = (clone.textContent || '').replace(/ /g, ' ').split('\n').map(s=>s.trim()).filter(s=>s.length>0).join('\n\n');
-                    }
-                }
-                if (!text && document.body) {
-                    text = (document.body.innerText || '').trim();
-                }
+                const body = document.querySelector($bSel);
+                if (!body) return { ready: false };
 
-                return { ready: text.length > 100, title: title, content: text };
+                const clone = body.cloneNode(true);
+                clone.querySelectorAll(
+                    'script, style, noscript, nav, header, footer, iframe, form, button, ' +
+                    'select, textarea, .ad, .ads, .advertisement, .comments, #comments, ' +
+                    '.share, .social, .chapter-nav, .nav-links, .toolbar'
+                ).forEach(el => el.remove());
+
+                // A cloned node is detached, so innerText is unavailable and every read silently falls
+                // through to textContent — which drops all line breaks. Turn the breaks into text nodes
+                // first, then read the tree once.
+                clone.querySelectorAll('br').forEach(br => {
+                    if (br.parentNode) br.parentNode.replaceChild(document.createTextNode('\n'), br);
+                });
+                clone.querySelectorAll('p, div, li, blockquote, h1, h2, h3, h4, h5, h6')
+                     .forEach(el => el.appendChild(document.createTextNode('\n\n')));
+
+                const text = (clone.textContent || '')
+                    .split('\n').map(s => s.trim()).filter(s => s.length > 0).join('\n\n');
+
+                return { ready: text.length > 200, title: title || "Chapter", content: text };
             })()
         """.trimIndent()
     }

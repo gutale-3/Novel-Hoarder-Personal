@@ -73,10 +73,29 @@ object EpubImporter {
             return@withContext null
         }
 
-        val isZip = header[0] == 0x50.toByte() &&
+        var filename = ""
+        try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIdx != -1 && cursor.moveToFirst()) {
+                    filename = cursor.getString(nameIdx).orEmpty()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        if (filename.isEmpty()) {
+            filename = uri.lastPathSegment.orEmpty()
+        }
+
+        val hasEpubExtension = filename.endsWith(".epub", ignoreCase = true) || filename.endsWith(".zip", ignoreCase = true)
+        val mimeType = contentResolver.getType(uri).orEmpty()
+        val hasEpubMime = mimeType.contains("epub", ignoreCase = true) || mimeType.contains("zip", ignoreCase = true)
+
+        val isZip = (header[0] == 0x50.toByte() &&
                 header[1] == 0x4B.toByte() &&
                 header[2] == 0x03.toByte() &&
-                header[3] == 0x04.toByte()
+                header[3] == 0x04.toByte()) || hasEpubExtension || hasEpubMime
 
         if (isZip) {
             val result = importEpubInternal(context, uri, onProgress)
@@ -214,8 +233,68 @@ object EpubImporter {
             }
 
             if (opfFile == null || !opfFile.exists()) {
-                warnings.add("No OPF metadata file found in EPUB archive.")
-                return@withContext null
+                warnings.add("No OPF metadata file found in EPUB archive. Using fallback extraction...")
+                var fallbackFilenameTitle = "Imported Zip"
+                try {
+                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIdx != -1 && cursor.moveToFirst()) {
+                            val name = cursor.getString(nameIdx)
+                            fallbackFilenameTitle = name.replace(Regex("(?i)\\.(epub|zip)$"), "")
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                val htmlFiles = tempDir.walk()
+                    .filter { it.extension.lowercase() in listOf("html", "xhtml", "htm", "txt") }
+                    .sortedWith(Comparator { f1, f2 -> naturalCompare(f1.name, f2.name) })
+                    .toList()
+                
+                if (htmlFiles.isEmpty()) {
+                    return@withContext null
+                }
+                
+                val bookTitle = fallbackFilenameTitle.ifEmpty { "Imported Zip" }
+                val bookId = "epub_${bookTitle.hashCode()}"
+                val book = BookEntity(
+                    id = bookId,
+                    url = "local://$bookId",
+                    title = bookTitle,
+                    author = "Unknown Author",
+                    synopsis = "Imported from Zip/EPUB archive.",
+                    coverUrl = "",
+                    coverLocalPath = null,
+                    lastReadChapterId = null,
+                    totalChapters = htmlFiles.size
+                )
+                
+                val chapters = htmlFiles.mapIndexed { index, file ->
+                    val rawText = file.readText()
+                    val cleanText = if (file.extension.lowercase() in listOf("html", "xhtml", "htm")) {
+                        Jsoup.parse(rawText).text()
+                    } else {
+                        rawText
+                    }
+                    val normalized = normalizeText(cleanText)
+                    val title = file.nameWithoutExtension.replace("_", " ").replace("-", " ")
+                        .split(' ')
+                        .joinToString(" ") { it.replaceFirstChar { char -> if (char.isLowerCase()) char.titlecase() else char.toString() } }
+                    val chapterId = "${bookId}_ch_${index + 1}"
+                    ChapterEntity(
+                        id = chapterId,
+                        bookId = bookId,
+                        chapterId = "ch_${index + 1}",
+                        chapterNumber = index + 1,
+                        title = title,
+                        url = "local://$bookId/ch/${index + 1}",
+                        content = normalized,
+                        hash = md5(normalized)
+                    )
+                }
+                
+                return@withContext ImportResult(book, chapters, coverBytes = null, warnings = warnings)
             }
 
             val opfDir = opfFile.parentFile ?: tempDir
@@ -382,17 +461,9 @@ object EpubImporter {
                     else -> ""
                 }
 
-                // Front matter check
-                val isFrontPattern = resolvedTitle.matches(
-                    Regex("(?i)^(cover|title\\s*page|copyright|colophon|about the (author|publisher)|dedication|acknowledge?ments|table of contents|contents|toc|imprint|also by)")
-                ) || file.name.matches(Regex("(?i).*(cover|copyright|title).*"))
-
-                val isShortBoundary = text.length < 400 && (index < 3 || index >= totalSpine - 3)
-                val noPunctuation = !text.contains(Regex("[.!?。！？]"))
-
-                if (isFrontPattern || (isShortBoundary && noPunctuation)) {
-                    val skipName = resolvedTitle.ifEmpty { file.name }
-                    warnings.add("Skipped front matter: $skipName")
+                // Ensure we don't import completely blank files
+                if (text.isBlank()) {
+                    warnings.add("Skipped empty file: ${file.name}")
                     return@forEachIndexed
                 }
 
@@ -404,23 +475,8 @@ object EpubImporter {
                 return@withContext null
             }
 
-            // Merge split chapters & Build Chapter Entities
-            val mergedChapters = mutableListOf<RawChapter>()
-            for (raw in rawChapters) {
-                if (mergedChapters.isNotEmpty()) {
-                    val prev = mergedChapters.last()
-                    val sameTitle = raw.title.isNotEmpty() && raw.title.equals(prev.title, ignoreCase = true)
-                    val noTitleInRaw = raw.title.isEmpty() && prev.title.isNotEmpty()
-
-                    if (sameTitle || noTitleInRaw) {
-                        mergedChapters[mergedChapters.size - 1] = prev.copy(
-                            content = prev.content + "\n\n" + raw.content
-                        )
-                        continue
-                    }
-                }
-                mergedChapters.add(raw)
-            }
+            // Do not merge split chapters to ensure no chapters are skipped or bundled incorrectly
+            val mergedChapters = rawChapters
 
             val bookId = "epub_$timestamp"
             val chapters = mergedChapters.mapIndexed { idx, raw ->
@@ -709,7 +765,8 @@ object EpubImporter {
     }
 
     private fun normalizeText(text: String): String {
-        return text
+        val sanitized = TomatoScraper.sanitizeText(text, aggressive = false)
+        return sanitized
             .replace("\u00A0", " ")
             .replace("ﬀ", "ff")
             .replace("ﬁ", "fi")

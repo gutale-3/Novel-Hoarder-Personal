@@ -58,7 +58,57 @@ object TomatoScraper : NovelSource {
     }
 
     fun sanitizeText(rawText: String, aggressive: Boolean): String {
-        var clean = rawText
+        // Line-by-line cleaning and footer truncation
+        val lines = rawText.split("\n")
+        val keptLines = mutableListOf<String>()
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                keptLines.add("")
+                continue
+            }
+            val lower = trimmed.lowercase()
+
+            // Detect definitive footer / promotional sections that mark the end of chapter text
+            if (lower.contains("by taboola") ||
+                lower.contains("you may like") ||
+                lower.contains("you'll also like") ||
+                lower.contains("sponsored links") ||
+                lower.contains("promoted links") ||
+                lower.contains("ads by pubfuture") ||
+                lower.contains("chevron_left") ||
+                lower.contains("chevron_right") ||
+                lower.contains("tap the screen to use advanced tools") ||
+                lower.contains("you can use left and right keyboard keys") ||
+                lower.contains("sponsoredsponsored") ||
+                (lower.contains("ads by") && !lower.contains("shadows") && !lower.contains("reads"))
+            ) {
+                // We've hit the footer, truncate everything from here onwards
+                break
+            }
+
+            // Filter out individual advertisement lines or recommendation updates
+            if (lower.contains("kwikbet") ||
+                lower.contains("pangani:") ||
+                lower.contains("joint pain") ||
+                lower.contains("stiffnesslearn") ||
+                lower.contains("bp exercises") ||
+                lower.contains("5minstory.com") ||
+                lower.contains("sponsored") ||
+                lower.contains("sportsbook") ||
+                lower.contains("pubfuture") ||
+                lower.matches(Regex(".*\\d+\\s+hours?\\s+ago.*")) ||
+                lower.matches(Regex(".*\\d+\\s+mins?\\s+ago.*")) ||
+                lower.matches(Regex(".*\\d+\\s+days?\\s+ago.*"))
+            ) {
+                continue
+            }
+
+            keptLines.add(line)
+        }
+
+        var clean = keptLines.joinToString("\n")
+
         for (pattern in AD_PATTERNS) {
             clean = pattern.matcher(clean).replaceAll("")
         }

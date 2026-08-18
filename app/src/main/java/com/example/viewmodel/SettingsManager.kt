@@ -51,7 +51,7 @@ class SettingsManager(val application: Application) {
     var librarySort by mutableStateOf("recently_read") // "recently_read", "recently_updated", "title", "author", "unread_count", "progress"
     var libraryView by mutableStateOf("grid") // "grid", "list"
     var aggressiveCleanDefault by mutableStateOf(false)
-    var lastBrowserUrl by mutableStateOf("https://tomatoy.com")
+    var lastBrowserUrl by mutableStateOf("https://www.google.com")
 
     // --- Customizable AI Prompts & Translation ---
     var glossaryPrompt by mutableStateOf("")
@@ -91,7 +91,7 @@ class SettingsManager(val application: Application) {
         librarySort = prefs.getString("library_sort", "recently_read") ?: "recently_read"
         libraryView = prefs.getString("library_view", "grid") ?: "grid"
         aggressiveCleanDefault = prefs.getBoolean("aggressive_clean_default", false)
-        lastBrowserUrl = prefs.getString("last_browser_url", "https://tomatoy.com") ?: "https://tomatoy.com"
+        lastBrowserUrl = prefs.getString("last_browser_url", "https://www.google.com") ?: "https://www.google.com"
 
         glossaryPrompt = prefs.getString("glossary_prompt", "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary.") ?: "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary."
         polishPrompt = prefs.getString("polish_prompt", "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.") ?: "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."

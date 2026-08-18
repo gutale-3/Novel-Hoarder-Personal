@@ -162,6 +162,86 @@ class LibraryManager(
         }
     }
 
+    private fun md5(input: String): String {
+        try {
+            val md = java.security.MessageDigest.getInstance("MD5")
+            val bytes = md.digest(input.toByteArray(Charsets.UTF_8))
+            return bytes.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            return input.hashCode().toString()
+        }
+    }
+
+    fun addSingleChapter(
+        bookId: String,
+        title: String,
+        chapterNumber: Int,
+        content: String,
+        onComplete: () -> Unit
+    ) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val allChapters = repository.getChapters(bookId).sortedBy { it.chapterNumber }
+            
+            val newChId = "${bookId}_ch_manual_${System.currentTimeMillis()}"
+            val newChapter = ChapterEntity(
+                id = newChId,
+                bookId = bookId,
+                chapterId = "manual_${System.currentTimeMillis()}",
+                chapterNumber = chapterNumber,
+                title = title.trim(),
+                url = "local://$bookId/ch/manual_${System.currentTimeMillis()}",
+                content = content,
+                hash = md5(content),
+                isRead = false,
+                isArchived = false,
+                isDeleted = false
+            )
+            
+            // Shift any chapters that have >= chapterNumber to avoid duplicates
+            for (ch in allChapters) {
+                if (ch.chapterNumber >= chapterNumber) {
+                    repository.insertChapter(ch.copy(chapterNumber = ch.chapterNumber + 1))
+                }
+            }
+            
+            // Insert the new chapter
+            repository.insertChapter(newChapter)
+            
+            withContext(Dispatchers.Main) {
+                onComplete()
+            }
+        }
+    }
+
+    fun resequenceChapters(
+        bookId: String,
+        prefix: String,
+        startNumber: Int,
+        onComplete: (Int) -> Unit
+    ) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val activeChapters = repository.getChapters(bookId)
+            val archivedChapters = repository.getArchivedChapters(bookId)
+            val allChapters = (activeChapters + archivedChapters).sortedBy { it.chapterNumber }
+            
+            var currentNum = startNumber
+            for (ch in allChapters) {
+                val newTitle = if (prefix.trim().isEmpty()) {
+                    "$currentNum"
+                } else {
+                    "${prefix.trim()} $currentNum"
+                }
+                
+                repository.insertChapter(ch.copy(title = newTitle, chapterNumber = currentNum))
+                currentNum++
+            }
+            
+            withContext(Dispatchers.Main) {
+                onComplete(allChapters.size)
+            }
+        }
+    }
+
     fun compileFormat(book: BookEntity, format: String, onFinished: (Boolean, String) -> Unit) {
         coroutineScope.launch(Dispatchers.IO) {
             val context = application.applicationContext
