@@ -350,8 +350,8 @@ object EpubImporter {
                 }
 
                 if (!coverHref.isNullOrEmpty()) {
-                    val resolvedCover = File(opfDir, coverHref)
-                    if (resolvedCover.exists()) {
+                    val resolvedCover = resolveEpubFile(opfDir, coverHref, tempDir)
+                    if (resolvedCover != null && resolvedCover.exists()) {
                         coverBytes = resolvedCover.readBytes()
                     }
                 }
@@ -359,7 +359,7 @@ object EpubImporter {
                 warnings.add("Failed to extract cover image: ${e.message}")
             }
 
-            // Step 5 — Build Reading Order (Spine)
+            // Step 5 — Build Reading Order (Spine + Manifest Fallback)
             val manifestMap = mutableMapOf<String, String>() // id -> href
             opfDoc.select("manifest > item").forEach { item ->
                 val id = item.attr("id")
@@ -378,18 +378,42 @@ object EpubImporter {
                 }
             }
 
-            val spineFiles = if (spineHrefs.isNotEmpty()) {
-                spineHrefs.mapNotNull { href ->
-                    val file = File(opfDir, href.substringBefore("#"))
-                    if (file.exists()) Pair(href, file) else null
+            val spineFiles = mutableListOf<Pair<String, File>>()
+            val seenCanonicalPaths = mutableSetOf<String>()
+
+            if (spineHrefs.isNotEmpty()) {
+                for (href in spineHrefs) {
+                    val resolved = resolveEpubFile(opfDir, href, tempDir)
+                    if (resolved != null && resolved.exists() && seenCanonicalPaths.add(resolved.canonicalPath)) {
+                        spineFiles.add(Pair(href, resolved))
+                    }
                 }
-            } else {
-                // Fallback to natural numeric-aware filename sorting
+            }
+
+            // Include any readable manifest HTML/XHTML items that might be missing from spine
+            val manifestHtmlHrefs = manifestMap.values.filter { href ->
+                val clean = href.substringBefore("#").substringBefore("?")
+                val ext = clean.substringAfterLast('.', "").lowercase()
+                ext in listOf("html", "xhtml", "htm", "xml")
+            }
+
+            for (href in manifestHtmlHrefs) {
+                val resolved = resolveEpubFile(opfDir, href, tempDir)
+                if (resolved != null && resolved.exists() && seenCanonicalPaths.add(resolved.canonicalPath)) {
+                    spineFiles.add(Pair(href, resolved))
+                }
+            }
+
+            // If spine and manifest both yielded nothing, fall back to natural numeric-aware filename sorting of all unzipped HTML files
+            if (spineFiles.isEmpty()) {
                 tempDir.walk()
-                    .filter { it.extension.lowercase() in listOf("html", "xhtml", "htm") }
+                    .filter { it.isFile && it.extension.lowercase() in listOf("html", "xhtml", "htm") }
                     .sortedWith(Comparator { f1, f2 -> naturalCompare(f1.name, f2.name) })
-                    .map { Pair(it.name, it) }
-                    .toList()
+                    .forEach { file ->
+                        if (seenCanonicalPaths.add(file.canonicalPath)) {
+                            spineFiles.add(Pair(file.name, file))
+                        }
+                    }
             }
 
             // Step 6 — Get Real Chapter Titles from Nav / NCX
@@ -399,8 +423,8 @@ object EpubImporter {
                     ?: opfDoc.select("manifest > item[media-type*=ncx], manifest > item[href$=.ncx]").first()
 
                 if (navItem != null) {
-                    val navFile = File(opfDir, navItem.attr("href"))
-                    if (navFile.exists()) {
+                    val navFile = resolveEpubFile(opfDir, navItem.attr("href"), tempDir)
+                    if (navFile != null && navFile.exists()) {
                         if (navFile.extension.equals("ncx", ignoreCase = true)) {
                             val ncxDoc = Jsoup.parse(navFile, "UTF-8", "", Parser.xmlParser())
                             ncxDoc.select("navPoint").forEach { point ->
@@ -410,6 +434,7 @@ object EpubImporter {
                                     val relPath = File(navFile.parentFile, src).relativeToOrSelf(opfDir).path
                                     tocMap[relPath] = text
                                     tocMap[src] = text
+                                    tocMap[File(src).name] = text
                                 }
                             }
                         } else {
@@ -422,6 +447,7 @@ object EpubImporter {
                                     val relPath = File(navFile.parentFile, href).relativeToOrSelf(opfDir).path
                                     tocMap[relPath] = text
                                     tocMap[href] = text
+                                    tocMap[File(href).name] = text
                                 }
                             }
                         }
@@ -431,7 +457,7 @@ object EpubImporter {
                 warnings.add("Failed to parse EPUB navigation document: ${e.message}")
             }
 
-            // Step 7, 8, 9 — Extract Text, Drop Front Matter, Merge Split Chapters
+            // Step 7, 8, 9 — Extract Text, Drop Front Matter, Build Chapters
             val rawChapters = mutableListOf<RawChapter>()
             val totalSpine = spineFiles.size
 
@@ -439,13 +465,27 @@ object EpubImporter {
                 onProgress(ImportProgress.Parsing(index + 1, totalSpine))
 
                 val doc = Jsoup.parse(file, "UTF-8")
-                doc.select("script, style, nav, header, footer, .toc, #toc, svg, img, figure").remove()
+                doc.select("script, style, noscript").remove()
+                doc.select("nav[epub\\:type=toc], nav[type=toc]").remove()
 
                 doc.select("br").after("\n")
-                doc.select("p, div, li, blockquote, h1, h2, h3, h4, h5, h6, tr").after("\n\n")
+                doc.select("p, div, li, blockquote, h1, h2, h3, h4, h5, h6, tr, section, article, dd, dt").after("\n\n")
 
-                val rawText = doc.body()?.wholeText().orEmpty()
-                val text = normalizeText(rawText)
+                var rawText = doc.body()?.wholeText().orEmpty()
+                if (rawText.isBlank()) {
+                    rawText = doc.body()?.text().orEmpty()
+                }
+                if (rawText.isBlank()) {
+                    rawText = doc.text().orEmpty()
+                }
+                var text = normalizeText(rawText)
+
+                if (text.isBlank()) {
+                    val hasImg = doc.select("img, image").isNotEmpty()
+                    if (hasImg) {
+                        text = "[Illustration / Image Page]"
+                    }
+                }
 
                 // Chapter title resolution
                 val relPath = file.relativeToOrSelf(opfDir).path
@@ -461,13 +501,11 @@ object EpubImporter {
                     else -> ""
                 }
 
-                // Ensure we don't import completely blank files
-                if (text.isBlank()) {
+                if (text.isNotBlank()) {
+                    rawChapters.add(RawChapter(title = resolvedTitle, content = text))
+                } else {
                     warnings.add("Skipped empty file: ${file.name}")
-                    return@forEachIndexed
                 }
-
-                rawChapters.add(RawChapter(title = resolvedTitle, content = text))
             }
 
             if (rawChapters.isEmpty()) {
@@ -717,6 +755,37 @@ object EpubImporter {
 
     // --- Helpers ---
 
+    private fun resolveEpubFile(opfDir: File, rawHref: String, tempDir: File): File? {
+        val cleanHref = rawHref.substringBefore("#").substringBefore("?")
+        val decodedHref = try {
+            java.net.URLDecoder.decode(cleanHref, "UTF-8")
+        } catch (e: Exception) {
+            cleanHref
+        }
+
+        val candidates = listOf(
+            File(opfDir, decodedHref),
+            File(opfDir, cleanHref),
+            File(tempDir, decodedHref),
+            File(tempDir, cleanHref),
+            File(tempDir, "OEBPS/$decodedHref"),
+            File(tempDir, "OEBPS/$cleanHref"),
+            File(tempDir, "OPS/$decodedHref"),
+            File(tempDir, "OPS/$cleanHref")
+        )
+        for (cand in candidates) {
+            if (cand.exists() && cand.isFile) return cand
+        }
+
+        // Search recursively by filename in tempDir
+        val simpleName = File(decodedHref).name
+        val matchByName = tempDir.walk().firstOrNull { it.isFile && it.name.equals(simpleName, ignoreCase = true) }
+        if (matchByName != null) return matchByName
+
+        val nameNoExt = File(decodedHref).nameWithoutExtension
+        return tempDir.walk().firstOrNull { it.isFile && it.nameWithoutExtension.equals(nameNoExt, ignoreCase = true) }
+    }
+
     private fun decodeTextBytes(bytes: ByteArray): String {
         // Check BOM
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
@@ -765,7 +834,7 @@ object EpubImporter {
     }
 
     private fun normalizeText(text: String): String {
-        val sanitized = TomatoScraper.sanitizeText(text, aggressive = false)
+        val sanitized = GenericScraper.sanitizeText(text, aggressive = false)
         return sanitized
             .replace("\u00A0", " ")
             .replace("ﬀ", "ff")

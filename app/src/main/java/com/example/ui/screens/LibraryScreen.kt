@@ -32,6 +32,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BookEntity
 import com.example.data.local.GlossaryEntity
+import com.example.ui.components.*
 import com.example.viewmodel.MainViewModel
 import java.io.File
 import coil.compose.AsyncImage
@@ -193,6 +194,11 @@ fun LibraryScreen(
     var rescrapeResultMessage by remember { mutableStateOf("") }
     var showRescrapeResultDialog by remember { mutableStateOf(false) }
 
+    // Reading Stats & Source Migration dialog state
+    var showGlobalStatsDialog by remember { mutableStateOf(false) }
+    var activeSourceMigrationBook by remember { mutableStateOf<BookEntity?>(null) }
+    var showSourceMigrationDialog by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -291,6 +297,16 @@ fun LibraryScreen(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (viewModel.settings.enableReadingStats) {
+                            IconButton(onClick = { showGlobalStatsDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.BarChart,
+                                    contentDescription = "Reading Stats & Insights",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
                         IconButton(
                             onClick = { 
                                 isBatchMode = !isBatchMode 
@@ -546,6 +562,10 @@ fun LibraryScreen(
                         },
                         unreadCount = unreadCounts[book.id] ?: 0,
                         downloadedCount = downloadedCounts[book.id] ?: 0,
+                        onMigrateSource = {
+                            activeSourceMigrationBook = book
+                            showSourceMigrationDialog = true
+                        },
                         onEditDetails = {
                             activeEditBook = book
                             editTitle = book.title
@@ -1182,6 +1202,23 @@ fun LibraryScreen(
             }
         )
     }
+
+    // --- Reading Stats Dialog ---
+    if (showGlobalStatsDialog && viewModel.settings.enableReadingStats) {
+        ReadingStatsDialog(
+            viewModel = viewModel,
+            onDismiss = { showGlobalStatsDialog = false }
+        )
+    }
+
+    // --- Source Migration Dialog ---
+    if (showSourceMigrationDialog && activeSourceMigrationBook != null) {
+        SourceMigrationDialog(
+            book = activeSourceMigrationBook!!,
+            viewModel = viewModel,
+            onDismiss = { showSourceMigrationDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -1204,6 +1241,7 @@ fun LibraryBookItem(
     onToggleSelect: () -> Unit = {},
     unreadCount: Int = 0,
     downloadedCount: Int = 0,
+    onMigrateSource: () -> Unit = {},
     onEditDetails: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1402,6 +1440,16 @@ fun LibraryBookItem(
                                     },
                                     leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) }
                                 )
+                                if (!book.url.startsWith("local://")) {
+                                    DropdownMenuItem(
+                                        text = { Text("Switch / Migrate Source") },
+                                        onClick = {
+                                            expandedMenu = false
+                                            onMigrateSource()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) }
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Edit Novel Details") },
                                     onClick = {

@@ -65,6 +65,18 @@ class AppContainer(val application: Application) {
         ReadingProgressManager(application, repository, tts, appScope)
     }
 
+    val stats by lazy {
+        ReadingStatsManager(application, repository, appScope)
+    }
+
+    val textRules by lazy {
+        TextReplacementManager(repository, appScope)
+    }
+
+    val sourceMigration by lazy {
+        SourceMigrationManager(application, repository, appScope)
+    }
+
     init {
         SourceManager.pluginManagerProvider = { pluginManager }
     }
@@ -83,6 +95,7 @@ class NovelHoarderApp : Application(), Configuration.Provider {
         super.onCreate()
         instance = this
         container = AppContainer(this)
+        com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(this)
     }
 
     companion object {

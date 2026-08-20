@@ -38,6 +38,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val tts: TtsPlaybackManager get() = container.tts
     val library: LibraryManager get() = container.library
     val progress: ReadingProgressManager get() = container.progress
+    val stats: ReadingStatsManager get() = container.stats
+    val textRules: TextReplacementManager get() = container.textRules
+    val sourceMigration: SourceMigrationManager get() = container.sourceMigration
     val manualCapture: ManualCaptureManager get() = container.manualCapture
 
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)

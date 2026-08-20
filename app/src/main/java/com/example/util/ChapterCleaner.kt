@@ -53,7 +53,15 @@ object ChapterCleaner {
         Regex("(?i)^(google|bing|deepl|gemini|papago|yandex)$"),
         Regex("(?i)^(source|translation)$"),
         Regex("(?i)^✓$"),
-        Regex("(?i)^ner detects")
+        Regex("(?i)^ner detects"),
+        Regex("(?i)^read\\s+(latest|more)\\s+chapters?\\s+(at|on)\\s+"),
+        Regex("(?i)^visit\\s+.*\\s+for\\s+(more|faster|latest)\\s+chapters?"),
+        Regex("(?i)^(this\\s+chapter\\s+was\\s+)?translated\\s+by\\s+.*"),
+        Regex("(?i)^support\\s+(the\\s+author|the\\s+translator|us)\\s+(on|at)\\s+(patreon|ko-fi|paypal)"),
+        Regex("(?i)^join\\s+our\\s+discord\\s*(server)?:?\\s*https?://"),
+        Regex("(?i)^find\\s+authorized\\s+novels\\s+in\\s+"),
+        Regex("(?i)^chapter\\s+updated\\s+on\\s+"),
+        Regex("(?i)^published\\s+(on|at)\\s+https?://")
     )
 
     private val UI_FRAGMENTS = listOf(
@@ -63,7 +71,13 @@ object ChapterCleaner {
         "named entities (person, location, organization)",
         "according to your preference",
         "not entire paragraphs",
-        "choose entity types above"
+        "choose entity types above",
+        "patreon.com/",
+        "ko-fi.com/",
+        "discord.gg/",
+        "paypal.me/",
+        "read novel online free",
+        "all rights reserved"
     )
 
     fun normalizeText(text: String): String {

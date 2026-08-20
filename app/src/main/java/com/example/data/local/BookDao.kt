@@ -264,4 +264,66 @@ interface BookDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBookmarks(bookmarks: List<BookmarkEntity>)
+
+    // --- Reading Sessions & Stats ---
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertReadingSession(session: ReadingSessionEntity)
+
+    @Query("SELECT * FROM reading_sessions ORDER BY timestamp DESC")
+    fun getAllReadingSessionsFlow(): Flow<List<ReadingSessionEntity>>
+
+    @Query("SELECT * FROM reading_sessions ORDER BY timestamp DESC")
+    suspend fun getAllReadingSessions(): List<ReadingSessionEntity>
+
+    @Query("SELECT * FROM reading_sessions WHERE bookId = :bookId ORDER BY timestamp DESC")
+    fun getReadingSessionsForBookFlow(bookId: String): Flow<List<ReadingSessionEntity>>
+
+    @Query("SELECT COALESCE(SUM(durationSeconds), 0) FROM reading_sessions")
+    suspend fun getTotalReadingTimeSeconds(): Long
+
+    @Query("SELECT COALESCE(SUM(durationSeconds), 0) FROM reading_sessions")
+    fun getTotalReadingTimeSecondsFlow(): Flow<Long>
+
+    @Query("SELECT COALESCE(SUM(wordsRead), 0) FROM reading_sessions")
+    suspend fun getTotalWordsRead(): Long
+
+    @Query("SELECT COALESCE(SUM(wordsRead), 0) FROM reading_sessions")
+    fun getTotalWordsReadFlow(): Flow<Long>
+
+    @Query("SELECT DISTINCT date FROM reading_sessions ORDER BY date DESC")
+    suspend fun getDistinctReadingDates(): List<String>
+
+    @Query("DELETE FROM reading_sessions WHERE bookId = :bookId")
+    suspend fun deleteReadingSessionsForBook(bookId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertReadingSessions(sessions: List<ReadingSessionEntity>)
+
+    // --- Text Replacement Rules ---
+    @Query("SELECT * FROM replacement_rules ORDER BY createdAt DESC")
+    fun getAllReplacementRulesFlow(): Flow<List<TextReplacementRuleEntity>>
+
+    @Query("SELECT * FROM replacement_rules ORDER BY createdAt DESC")
+    suspend fun getAllReplacementRules(): List<TextReplacementRuleEntity>
+
+    @Query("SELECT * FROM replacement_rules WHERE bookId IS NULL OR bookId = :bookId ORDER BY createdAt DESC")
+    fun getReplacementRulesForBookFlow(bookId: String): Flow<List<TextReplacementRuleEntity>>
+
+    @Query("SELECT * FROM replacement_rules WHERE bookId IS NULL OR bookId = :bookId ORDER BY createdAt DESC")
+    suspend fun getReplacementRulesForBook(bookId: String): List<TextReplacementRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertReplacementRule(rule: TextReplacementRuleEntity): Long
+
+    @Update
+    suspend fun updateReplacementRule(rule: TextReplacementRuleEntity)
+
+    @Delete
+    suspend fun deleteReplacementRule(rule: TextReplacementRuleEntity)
+
+    @Query("DELETE FROM replacement_rules WHERE id = :id")
+    suspend fun deleteReplacementRuleById(id: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertReplacementRules(rules: List<TextReplacementRuleEntity>)
 }

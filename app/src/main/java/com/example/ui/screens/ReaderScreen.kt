@@ -51,6 +51,10 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.onSizeChanged
+import com.example.ui.components.*
+import com.example.util.BionicReadingHelper
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -234,6 +238,43 @@ fun ReaderScreen(
 
     var showDeleteChaptersConfirmDialog by remember { mutableStateOf(false) }
     var chaptersToDelete by remember { mutableStateOf(emptyList<String>()) }
+
+    // --- 7 Feature Modals & State Variables ---
+    var showStatsDialog by remember { mutableStateOf(false) }
+    var showRsvpModal by remember { mutableStateOf(false) }
+    var showTextRulesDialog by remember { mutableStateOf(false) }
+    var showSourceMigrationDialog by remember { mutableStateOf(false) }
+    var showTapZonesDialog by remember { mutableStateOf(false) }
+    val textReplacementRules by viewModel.textRules.getRulesForBookFlow(bookId).collectAsState(emptyList())
+    var sessionStartTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val chapterParagraphs = remember(activeChapter?.content) {
+        (activeChapter?.content ?: "").split("\n").filter { it.trim().isNotEmpty() }
+    }
+
+    val currentParagraphIndex by remember {
+        derivedStateOf {
+            if (viewModel.ttsIsPlaying && viewModel.ttsPlayingChapter?.id == activeChapter?.id) {
+                (viewModel.ttsActiveParagraphIndex ?: -1).coerceIn(0, (chapterParagraphs.size - 1).coerceAtLeast(0))
+            } else {
+                if (chapterParagraphs.isNotEmpty()) {
+                    (lazyListState.firstVisibleItemIndex - READER_HEADER_ITEMS).coerceIn(0, chapterParagraphs.size - 1)
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    val currentParagraphText by remember {
+        derivedStateOf {
+            if (chapterParagraphs.isNotEmpty() && currentParagraphIndex in chapterParagraphs.indices) {
+                chapterParagraphs[currentParagraphIndex]
+            } else {
+                ""
+            }
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -791,6 +832,30 @@ fun ReaderScreen(
                                     Icon(imageVector = Icons.Default.TextFormat, contentDescription = "Font settings")
                                 }
 
+                                if (viewModel.settings.enableRsvpSpeedReading) {
+                                    IconButton(onClick = { showRsvpModal = true }) {
+                                        Icon(imageVector = Icons.Default.Bolt, contentDescription = "RSVP Speed Reader")
+                                    }
+                                }
+
+                                if (viewModel.settings.enableBionicReading) {
+                                    IconButton(onClick = {
+                                        viewModel.settings.updateBionicReadingActiveInReader(!viewModel.settings.bionicReadingActiveInReader)
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Default.FormatBold,
+                                            contentDescription = "Toggle Bionic Reading",
+                                            tint = if (viewModel.settings.bionicReadingActiveInReader) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                if (viewModel.settings.enableReadingStats) {
+                                    IconButton(onClick = { showStatsDialog = true }) {
+                                        Icon(imageVector = Icons.Default.Insights, contentDescription = "Reading Stats")
+                                    }
+                                }
+
                                 // Rescrape Current Chapter (Visible on larger screens)
                                 IconButton(onClick = {
                                     val activeCh = activeChapter
@@ -810,53 +875,120 @@ fun ReaderScreen(
                                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Rescrape Chapter")
                                     }
                                 }
-                            } else {
-                                // Dropdown/Overflow Menu (Visible on compact mobile screens)
-                                Box {
-                                    IconButton(onClick = { showMenu = true }) {
-                                        Icon(imageVector = Icons.Default.MoreVert, contentDescription = "More options")
-                                    }
-                                    DropdownMenu(
-                                        expanded = showMenu,
-                                        onDismissRequest = { showMenu = false }
-                                    ) {
+                            }
+
+                            // Dropdown/Overflow Menu
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(imageVector = Icons.Default.MoreVert, contentDescription = "More options")
+                                }
+                                DropdownMenu(
+                                    expanded = showMenu,
+                                    onDismissRequest = { showMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Font & Reader Settings") },
+                                        leadingIcon = { Icon(Icons.Default.TextFormat, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showMenu = false
+                                            showSettingsDialog = true
+                                        }
+                                    )
+
+                                    if (viewModel.settings.enableRsvpSpeedReading) {
                                         DropdownMenuItem(
-                                            text = { Text("Font Settings") },
-                                            leadingIcon = { Icon(Icons.Default.TextFormat, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                            text = { Text("RSVP Speed Reader") },
+                                            leadingIcon = { Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) },
                                             onClick = {
                                                 showMenu = false
-                                                showSettingsDialog = true
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = {
-                                                if (viewModel.rescrapingChapterId == activeChapter?.id) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        CircularProgressIndicator(
-                                                            modifier = Modifier.size(16.dp),
-                                                            strokeWidth = 2.dp,
-                                                            color = MaterialTheme.colorScheme.primary
-                                                        )
-                                                        Spacer(modifier = Modifier.width(8.dp))
-                                                        Text("Rescraping...")
-                                                    }
-                                                } else {
-                                                    Text("Rescrape Chapter")
-                                                }
-                                            },
-                                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                                            enabled = viewModel.rescrapingChapterId != activeChapter?.id,
-                                            onClick = {
-                                                showMenu = false
-                                                val activeCh = activeChapter
-                                                if (activeCh != null) {
-                                                    viewModel.scraping.rescrapeSingleChapter(activeCh) { success, msg ->
-                                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
+                                                showRsvpModal = true
                                             }
                                         )
                                     }
+
+                                    if (viewModel.settings.enableBionicReading) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (viewModel.settings.bionicReadingActiveInReader) "Disable Bionic Reading" else "Enable Bionic Reading") },
+                                            leadingIcon = { Icon(Icons.Default.FormatBold, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                            onClick = {
+                                                showMenu = false
+                                                viewModel.settings.updateBionicReadingActiveInReader(!viewModel.settings.bionicReadingActiveInReader)
+                                            }
+                                        )
+                                    }
+
+                                    if (viewModel.settings.enableReadingStats) {
+                                        DropdownMenuItem(
+                                            text = { Text("Reading Stats & Insights") },
+                                            leadingIcon = { Icon(Icons.Default.Insights, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                            onClick = {
+                                                showMenu = false
+                                                showStatsDialog = true
+                                            }
+                                        )
+                                    }
+
+                                    if (viewModel.settings.enableAutoApplyTextRules) {
+                                        DropdownMenuItem(
+                                            text = { Text("Text Replacement Rules") },
+                                            leadingIcon = { Icon(Icons.Default.FindReplace, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                            onClick = {
+                                                showMenu = false
+                                                showTextRulesDialog = true
+                                            }
+                                        )
+                                    }
+
+                                    if (viewModel.settings.enableTapZonesCustomization) {
+                                        DropdownMenuItem(
+                                            text = { Text("Customize Tap Zones") },
+                                            leadingIcon = { Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                            onClick = {
+                                                showMenu = false
+                                                showTapZonesDialog = true
+                                            }
+                                        )
+                                    }
+
+                                    if (viewModel.settings.enableSourceMigration && bookState != null) {
+                                        DropdownMenuItem(
+                                            text = { Text("Switch Novel Source") },
+                                            leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                            onClick = {
+                                                showMenu = false
+                                                showSourceMigrationDialog = true
+                                            }
+                                        )
+                                    }
+
+                                    DropdownMenuItem(
+                                        text = {
+                                            if (viewModel.rescrapingChapterId == activeChapter?.id) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(16.dp),
+                                                        strokeWidth = 2.dp,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text("Rescraping...")
+                                                }
+                                            } else {
+                                                Text("Rescrape Chapter")
+                                            }
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                        enabled = viewModel.rescrapingChapterId != activeChapter?.id,
+                                        onClick = {
+                                            showMenu = false
+                                            val activeCh = activeChapter
+                                            if (activeCh != null) {
+                                                viewModel.scraping.rescrapeSingleChapter(activeCh) { success, msg ->
+                                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }
+                                    )
                                 }
                             }
                         },
@@ -944,14 +1076,86 @@ fun ReaderScreen(
                 }
             }
         ) { innerPadding ->
+            var canvasSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(readerBgColor)
                     .padding(innerPadding)
-                    .pointerInput(Unit) {
+                    .onSizeChanged { canvasSize = it }
+                    .pointerInput(viewModel.settings.enableTapZonesCustomization, currentParagraphIndex) {
                         detectTapGestures(
-                            onTap = { showControls = !showControls }
+                            onTap = { offset ->
+                                if (viewModel.settings.enableTapZonesCustomization && canvasSize.width > 0 && canvasSize.height > 0) {
+                                    val xRatio = offset.x / canvasSize.width.toFloat()
+                                    val yRatio = offset.y / canvasSize.height.toFloat()
+
+                                    val row = when {
+                                        yRatio < 0.33f -> "t"
+                                        yRatio < 0.66f -> "m"
+                                        else -> "b"
+                                    }
+                                    val col = when {
+                                        xRatio < 0.33f -> "l"
+                                        xRatio < 0.66f -> "c"
+                                        else -> "r"
+                                    }
+                                    val zoneKey = "$row$col"
+                                    val action = when (zoneKey) {
+                                        "tl" -> viewModel.settings.tapZoneTopLeftAction
+                                        "tc" -> viewModel.settings.tapZoneTopCenterAction
+                                        "tr" -> viewModel.settings.tapZoneTopRightAction
+                                        "ml" -> viewModel.settings.tapZoneMidLeftAction
+                                        "mc" -> viewModel.settings.tapZoneMidCenterAction
+                                        "mr" -> viewModel.settings.tapZoneMidRightAction
+                                        "bl" -> viewModel.settings.tapZoneBottomLeftAction
+                                        "bc" -> viewModel.settings.tapZoneBottomCenterAction
+                                        "br" -> viewModel.settings.tapZoneBottomRightAction
+                                        else -> "TOGGLE_CONTROLS"
+                                    }
+
+                                    when (action) {
+                                        "PREV_PAGE" -> {
+                                            scope.launch {
+                                                val target = (lazyListState.firstVisibleItemIndex - 4).coerceAtLeast(0)
+                                                lazyListState.animateScrollToItem(target)
+                                            }
+                                        }
+                                        "NEXT_PAGE" -> {
+                                            scope.launch {
+                                                val target = lazyListState.firstVisibleItemIndex + 4
+                                                lazyListState.animateScrollToItem(target)
+                                            }
+                                        }
+                                        "TOGGLE_CONTROLS" -> showControls = !showControls
+                                        "QUICK_BOOKMARK" -> {
+                                            if (currentParagraphIndex >= 0 && activeChapter != null) {
+                                                scope.launch {
+                                                    viewModel.repository.insertBookmark(
+                                                        com.example.data.local.BookmarkEntity(
+                                                            id = "${bookId}_${activeChapter.id}_$currentParagraphIndex",
+                                                            bookId = bookId,
+                                                            chapterId = activeChapter.id,
+                                                            paragraphIndex = currentParagraphIndex,
+                                                            text = currentParagraphText.take(120),
+                                                            note = "Quick Bookmark",
+                                                            timestamp = System.currentTimeMillis()
+                                                        )
+                                                    )
+                                                }
+                                                android.widget.Toast.makeText(context, "Quick Bookmark Added", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                        "TOGGLE_RSVP" -> showRsvpModal = true
+                                        "TOGGLE_AUTOSCROLL" -> viewModel.ttsAutoScrollEnabled = !viewModel.ttsAutoScrollEnabled
+                                        "TOGGLE_BIONIC" -> viewModel.settings.updateBionicReadingActiveInReader(!viewModel.settings.bionicReadingActiveInReader)
+                                        else -> {}
+                                    }
+                                } else {
+                                    showControls = !showControls
+                                }
+                            }
                         )
                     }
                     .testTag("reader_canvas")
@@ -1028,37 +1232,9 @@ fun ReaderScreen(
                         }
                     }
 
-                    val chapterTextToRender = activeChapter.content
-                    val paragraphs = remember(chapterTextToRender) {
-                        chapterTextToRender.split("\n").filter { it.trim().isNotEmpty() }
-                    }
+                    val paragraphs = chapterParagraphs
 
-                    // Real-time memory tracking of current paragraph being read or listened to
-                    val currentParagraphIndex by remember {
-                        derivedStateOf {
-                            if (viewModel.ttsIsPlaying && viewModel.ttsPlayingChapter?.id == activeChapter.id) {
-                                (viewModel.ttsActiveParagraphIndex ?: -1).coerceIn(0, paragraphs.size - 1)
-                            } else {
-                                if (paragraphs.isNotEmpty()) {
-                                    (lazyListState.firstVisibleItemIndex - READER_HEADER_ITEMS).coerceIn(0, paragraphs.size - 1)
-                                } else {
-                                    0
-                                }
-                            }
-                        }
-                    }
-
-                    val currentParagraphText by remember {
-                        derivedStateOf {
-                            if (currentParagraphIndex in paragraphs.indices) {
-                                paragraphs[currentParagraphIndex]
-                            } else {
-                                ""
-                            }
-                        }
-                    }
-
-                    // Auto-save reading progress and create bookmark when user leaves the novel or switches off phone
+                    // Auto-save reading progress, bookmark, and reading stats when user leaves the novel or switches off phone
                     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
                     DisposableEffect(lifecycleOwner, activeChapter.id, currentChapterId) {
                         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -1070,6 +1246,12 @@ fun ReaderScreen(
                                         paragraphIndex = currentParagraphIndex,
                                         paragraphText = currentParagraphText
                                     )
+                                }
+                                val durationSec = ((System.currentTimeMillis() - sessionStartTime) / 1000)
+                                if (viewModel.settings.enableReadingStats && durationSec >= 5) {
+                                    val wordsInSession = paragraphs.take(currentParagraphIndex + 1).sumOf { it.split("\\s+".toRegex()).size }.coerceAtLeast(10)
+                                    viewModel.stats.recordReadingSession(bookId, activeChapter.id, durationSec, wordsInSession)
+                                    sessionStartTime = System.currentTimeMillis()
                                 }
                             }
                         }
@@ -1083,6 +1265,11 @@ fun ReaderScreen(
                                     paragraphIndex = currentParagraphIndex,
                                     paragraphText = currentParagraphText
                                 )
+                            }
+                            val durationSec = ((System.currentTimeMillis() - sessionStartTime) / 1000)
+                            if (viewModel.settings.enableReadingStats && durationSec >= 5) {
+                                val wordsInSession = paragraphs.take(currentParagraphIndex + 1).sumOf { it.split("\\s+".toRegex()).size }.coerceAtLeast(10)
+                                viewModel.stats.recordReadingSession(bookId, activeChapter.id, durationSec, wordsInSession)
                             }
                         }
                     }
@@ -1256,7 +1443,13 @@ fun ReaderScreen(
 
                         // Paragraphs
                         items(paragraphs.size) { idx ->
-                            val para = paragraphs[idx]
+                            val rawPara = paragraphs[idx]
+                            val para = if (viewModel.settings.enableAutoApplyTextRules && textReplacementRules.isNotEmpty()) {
+                                viewModel.repository.applyReplacementRules(rawPara, textReplacementRules)
+                            } else {
+                                rawPara
+                            }
+
                             val isReadingThisPara = (viewModel.ttsIsPlaying || viewModel.ttsIsPaused) &&
                                     viewModel.ttsPlayingBook?.id == bookState?.id &&
                                     viewModel.ttsPlayingChapter?.id == activeChapter.id &&
@@ -1305,12 +1498,22 @@ fun ReaderScreen(
 
                             val hyphenatedText = softHyphenateText(para.trim(), viewModel.readerHyphenationEnabled)
 
-                            Text(
-                                text = highlightGlossaryTerms(
+                            val annotatedText = if (viewModel.settings.enableBionicReading && viewModel.settings.bionicReadingActiveInReader) {
+                                BionicReadingHelper.formatBionicText(
+                                    text = "      " + hyphenatedText,
+                                    baseColor = paragraphTextColor.copy(alpha = paragraphAlpha),
+                                    boldColor = if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary.copy(alpha = paragraphAlpha)
+                                )
+                            } else {
+                                highlightGlossaryTerms(
                                     text = "      " + hyphenatedText,
                                     glossaries = glossaries,
                                     highlightColor = if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary
-                                ),
+                                )
+                            }
+
+                            Text(
+                                text = annotatedText,
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = viewModel.readerFontSize.sp,
                                     lineHeight = (viewModel.readerFontSize * viewModel.readerLineHeight).sp,
@@ -1323,6 +1526,24 @@ fun ReaderScreen(
                                 modifier = textAndStyleModifier
                             )
                         }
+                    }
+
+                    // Reading Focus Guide Overlay
+                    if (viewModel.settings.enableReadingGuide) {
+                        val guideColor = when (viewModel.settings.readingGuideColor) {
+                            "amber" -> Color(0xFFFFB300)
+                            "cyan" -> Color(0xFF00E5FF)
+                            "green" -> Color(0xFF00E676)
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(viewModel.settings.readingGuideHeight.dp)
+                                .align(Alignment.Center)
+                                .background(guideColor.copy(alpha = viewModel.settings.readingGuideOpacity))
+                                .border(1.dp, guideColor.copy(alpha = 0.4f))
+                        )
                     }
 
                     // Floating "Resume auto-scroll" chip when auto-follow is temporarily suspended by user manual drag
@@ -1665,27 +1886,90 @@ fun ReaderScreen(
                         )
                     }
 
-                    // 11. Auto-Scroll Toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Auto-Follow Spoken Text",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                            )
-                            Text(
-                                text = "Automatically scroll page to active sentence",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    // 12. Bionic Reading Toggle
+                    if (viewModel.settings.enableBionicReading) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Bionic Reading",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    text = "Bold first fixation letters of words for faster comprehension",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = viewModel.settings.bionicReadingActiveInReader,
+                                onCheckedChange = { viewModel.settings.updateBionicReadingActiveInReader(it) }
                             )
                         }
-                        Switch(
-                            checked = viewModel.ttsAutoScrollEnabled,
-                            onCheckedChange = { viewModel.tts.toggleTtsAutoScroll() }
-                        )
+                    }
+
+                    // 13. Reading Focus Guide Toggle
+                    if (viewModel.settings.enableReadingGuide) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Reading Focus Guide",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    text = "Highlight bar to anchor eye tracking on the page",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = viewModel.settings.enableReadingGuide,
+                                onCheckedChange = { viewModel.settings.updateEnableReadingGuide(it) }
+                            )
+                        }
+                    }
+
+                    // 14. Quick Action Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (viewModel.settings.enableAutoApplyTextRules) {
+                            OutlinedButton(
+                                onClick = {
+                                    showSettingsDialog = false
+                                    showTextRulesDialog = true
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.FindReplace, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Text Rules", fontSize = 12.sp)
+                            }
+                        }
+
+                        if (viewModel.settings.enableTapZonesCustomization) {
+                            OutlinedButton(
+                                onClick = {
+                                    showSettingsDialog = false
+                                    showTapZonesDialog = true
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Tap Zones", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             },
@@ -1944,7 +2228,7 @@ fun ReaderScreen(
                             color = MaterialTheme.colorScheme.error
                         )
 
-                        // Action 3: Truncate this chapter from here
+                        // Action 3A: Delete strictly after this line (keep current line)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1956,8 +2240,53 @@ fun ReaderScreen(
                                             val lines = activeCh.content.split("\n")
                                             val indexInLines = lines.indexOfFirst { it.trim() == selectedParaTextForBookmark.trim() }
                                             if (indexInLines != -1) {
+                                                val newContent = lines.subList(0, indexInLines + 1).joinToString("\n").trim()
+                                                viewModel.repository.updateChapterContent(activeCh.id, newContent)
+                                                android.widget.Toast.makeText(context, "Deleted all content after this line.", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                        showBookmarkDialog = false
+                                    }
+                                }
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCut,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Delete After This Line",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Text(
+                                    text = "Keep this line and delete all following lines in this chapter",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+
+                        // Action 3B: Delete from this line (delete this line and all following lines)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.22f), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    scope.launch {
+                                        val activeCh = activeChapter
+                                        if (activeCh != null && selectedParaTextForBookmark != null) {
+                                            val lines = activeCh.content.split("\n")
+                                            val indexInLines = lines.indexOfFirst { it.trim() == selectedParaTextForBookmark.trim() }
+                                            if (indexInLines != -1) {
                                                 val newContent = lines.subList(0, indexInLines).joinToString("\n").trim()
                                                 viewModel.repository.updateChapterContent(activeCh.id, newContent)
+                                                android.widget.Toast.makeText(context, "Deleted this line and following content.", android.widget.Toast.LENGTH_SHORT).show()
                                             }
                                         }
                                         showBookmarkDialog = false
@@ -1975,12 +2304,12 @@ fun ReaderScreen(
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Truncate Chapter From Here",
+                                    text = "Delete This Line and Everything After",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
                                 Text(
-                                    text = "Delete this line and everything after it in this chapter",
+                                    text = "Delete this line and all following lines in this chapter",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
                                 )
@@ -2338,6 +2667,61 @@ fun ReaderScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    // --- Non-AI Extra Features Dialogs ---
+    if (showStatsDialog && viewModel.settings.enableReadingStats) {
+        ReadingStatsDialog(
+            viewModel = viewModel,
+            onDismiss = { showStatsDialog = false }
+        )
+    }
+
+    if (showRsvpModal && viewModel.settings.enableRsvpSpeedReading) {
+        val chapterWords = remember(activeChapter?.content) {
+            activeChapter?.content ?: ""
+        }
+        val approxWordStart = remember(currentParagraphIndex) {
+            (currentParagraphIndex * 40).coerceAtLeast(0)
+        }
+        RsvpSpeedReaderModal(
+            chapterTitle = activeChapter?.title ?: "Chapter",
+            rawText = chapterWords,
+            initialWordIndex = approxWordStart,
+            viewModel = viewModel,
+            onDismiss = { lastWordIdx ->
+                val approxPara = if (chapterParagraphs.isNotEmpty()) {
+                    (lastWordIdx / 40).coerceIn(0, chapterParagraphs.size - 1)
+                } else 0
+                scope.launch {
+                    lazyListState.scrollToItem(approxPara + READER_HEADER_ITEMS)
+                }
+                showRsvpModal = false
+            }
+        )
+    }
+
+    if (showTextRulesDialog && viewModel.settings.enableAutoApplyTextRules) {
+        TextReplacementDialog(
+            bookId = bookId,
+            viewModel = viewModel,
+            onDismiss = { showTextRulesDialog = false }
+        )
+    }
+
+    if (showTapZonesDialog && viewModel.settings.enableTapZonesCustomization) {
+        TapZonesConfigDialog(
+            viewModel = viewModel,
+            onDismiss = { showTapZonesDialog = false }
+        )
+    }
+
+    if (showSourceMigrationDialog && viewModel.settings.enableSourceMigration && bookState != null) {
+        SourceMigrationDialog(
+            book = bookState!!,
+            viewModel = viewModel,
+            onDismiss = { showSourceMigrationDialog = false }
         )
     }
 }

@@ -407,7 +407,9 @@ class AiFeaturesManager(
                                 scraper.scrapeChapterContent(webView, nextUrl) { false }
                             }
                             val title = rawContent.first
-                            var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveCleanProvider())
+                            var cleanedBody = com.example.viewmodel.cleanScrapedBody(
+                                scraper, rawContent.second, aggressiveCleanProvider()
+                            )
 
                             if (glossaries.isNotEmpty()) {
                                 cleanedBody = repository.applyGlossary(cleanedBody, glossaries)

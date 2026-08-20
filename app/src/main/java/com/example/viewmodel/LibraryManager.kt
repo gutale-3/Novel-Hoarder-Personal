@@ -207,6 +207,14 @@ class LibraryManager(
             // Insert the new chapter
             repository.insertChapter(newChapter)
             
+            // Update book total count
+            val totalCount = repository.getChapterCount(bookId)
+            repository.getBook(bookId)?.let { currentBook ->
+                if (totalCount > currentBook.totalChapters) {
+                    repository.insertBook(currentBook.copy(totalChapters = totalCount))
+                }
+            }
+            
             withContext(Dispatchers.Main) {
                 onComplete()
             }
@@ -286,9 +294,7 @@ class LibraryManager(
                 try {
                     val scraper = SourceManager.getSourceForUrl(book.url)
                     val urls = withContext(Dispatchers.Main) {
-                        val webView = WebView(application.applicationContext).apply {
-                            settings.javaScriptEnabled = true
-                        }
+                        val webView = com.example.util.WebViewFactory.create(application.applicationContext, null)
                         try {
                             scraper.scrapeChapterList(webView, book.url)
                         } finally {

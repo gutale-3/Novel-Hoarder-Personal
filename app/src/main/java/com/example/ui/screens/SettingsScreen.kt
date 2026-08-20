@@ -56,6 +56,9 @@ fun SettingsScreen(
         }
     }
 
+    var isBackingUp by remember { mutableStateOf(false) }
+    var isRestoring by remember { mutableStateOf(false) }
+
     // Export metadata launcher
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -90,6 +93,56 @@ fun SettingsScreen(
                 } catch (e: Exception) {
                     Toast.makeText(context, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+    }
+
+    // Full ZIP Archive Export Launcher
+    val fullZipExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                isBackingUp = true
+                val result = com.example.util.BackupRestoreManager.createFullBackupZip(
+                    context = context,
+                    repository = viewModel.repository,
+                    outputUri = uri
+                )
+                isBackingUp = false
+                result.fold(
+                    onSuccess = { count ->
+                        Toast.makeText(context, "Full archive created ($count novels packaged)", Toast.LENGTH_LONG).show()
+                    },
+                    onFailure = { err ->
+                        Toast.makeText(context, "Backup failed: ${err.message}", Toast.LENGTH_LONG).show()
+                    }
+                )
+            }
+        }
+    }
+
+    // Full ZIP Archive Import Launcher
+    val fullZipImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                isRestoring = true
+                val result = com.example.util.BackupRestoreManager.restoreFullBackupZip(
+                    context = context,
+                    repository = viewModel.repository,
+                    inputUri = uri
+                )
+                isRestoring = false
+                result.fold(
+                    onSuccess = { count ->
+                        Toast.makeText(context, "Successfully restored $count novels & database archive!", Toast.LENGTH_LONG).show()
+                    },
+                    onFailure = { err ->
+                        Toast.makeText(context, "Restore failed: ${err.message}", Toast.LENGTH_LONG).show()
+                    }
+                )
             }
         }
     }
@@ -313,6 +366,32 @@ fun SettingsScreen(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
+                Text("Chapter Numbering Default", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = settingsManager.chapterNumberingMode == "site",
+                        onClick = { settingsManager.updateChapterNumberingMode("site") },
+                        label = { Text("Site / Source Numbering", softWrap = false) }
+                    )
+                    FilterChip(
+                        selected = settingsManager.chapterNumberingMode == "sequential",
+                        onClick = { settingsManager.updateChapterNumberingMode("sequential") },
+                        label = { Text("Sequential (1, 2, 3...)", softWrap = false) }
+                    )
+                }
+                Text(
+                    text = if (settingsManager.chapterNumberingMode == "sequential")
+                        "New chapters will be numbered sequentially (1, 2, 3...)."
+                    else
+                        "Retain the chapter numbering provided by the source novel site.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = onNavigateToPlugins,
                     modifier = Modifier.fillMaxWidth()
@@ -348,32 +427,268 @@ fun SettingsScreen(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
             }
 
-            // --- 6. Your Data ---
+            // --- 6. Advanced Tools & Reading Features (Non-AI) ---
+            item {
+                SectionHeader("Reading & Automation Features (Non-AI)")
+                Text(
+                    "All features are modular and run locally on your device. Everything is on by default and can be toggled to your preference.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                // 1. Reading Stats
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Reading Statistics & Insights", style = MaterialTheme.typography.bodyMedium)
+                        Text("Track daily reading time, speed (WPM), streaks, and progress heatmaps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableReadingStats,
+                        onCheckedChange = { settingsManager.updateEnableReadingStats(it) }
+                    )
+                }
+
+                // 2. Text Replacement Rules
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Automated Text Replacement & Regex Rules", style = MaterialTheme.typography.bodyMedium)
+                        Text("Clean recurring typos, names, or translation artifacts across downloaded chapters", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableAutoApplyTextRules,
+                        onCheckedChange = { settingsManager.updateEnableAutoApplyTextRules(it) }
+                    )
+                }
+
+                // 3. Bionic Reading
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Bionic Reading Fixation", style = MaterialTheme.typography.bodyMedium)
+                        Text("Bold the initial fixation characters of words to guide the eye and improve reading speed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableBionicReading,
+                        onCheckedChange = { settingsManager.updateEnableBionicReading(it) }
+                    )
+                }
+
+                // 4. RSVP Speed Reading
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("RSVP Speed Reading Mode", style = MaterialTheme.typography.bodyMedium)
+                        Text("Rapid Serial Visual Presentation with optimal recognition point highlighting", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableRsvpSpeedReading,
+                        onCheckedChange = { settingsManager.updateEnableRsvpSpeedReading(it) }
+                    )
+                }
+
+                // 5. Background Chapter Updates
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Background Chapter Updates Checker", style = MaterialTheme.typography.bodyMedium)
+                        Text("Periodically query library sources in background for newly released chapters", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableBackgroundChapterUpdates,
+                        onCheckedChange = {
+                            settingsManager.updateEnableBackgroundChapterUpdates(it)
+                            com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(context)
+                        }
+                    )
+                }
+
+                if (settingsManager.enableBackgroundChapterUpdates) {
+                    Column(modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 8.dp)) {
+                        Text("Check Frequency", style = MaterialTheme.typography.labelMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(1, 3, 6, 12, 24).forEach { hours ->
+                                FilterChip(
+                                    selected = settingsManager.chapterUpdateIntervalHours == hours,
+                                    onClick = {
+                                        settingsManager.updateChapterUpdateIntervalHours(hours)
+                                        com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(context)
+                                    },
+                                    label = { Text("${hours}h", softWrap = false) }
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Only on Unmetered Wi-Fi", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            Switch(
+                                checked = settingsManager.chapterUpdatesOnlyWifi,
+                                onCheckedChange = {
+                                    settingsManager.updateChapterUpdatesOnlyWifi(it)
+                                    com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(context)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // 6. Source Migration
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Multi-Source Migration & Switcher", style = MaterialTheme.typography.bodyMedium)
+                        Text("Seamlessly switch novel scraping source while preserving bookmarks, notes, and progress", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableSourceMigration,
+                        onCheckedChange = { settingsManager.updateEnableSourceMigration(it) }
+                    )
+                }
+
+                // 7. Custom Tap Zones
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Custom 9-Zone Reader Tap Zones", style = MaterialTheme.typography.bodyMedium)
+                        Text("Map any screen grid sector to page turns, bookmarks, speed reader, or controls", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableTapZonesCustomization,
+                        onCheckedChange = { settingsManager.updateEnableTapZonesCustomization(it) }
+                    )
+                }
+
+                // 8. Volume Keys Navigation
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Volume Keys Page Turn", style = MaterialTheme.typography.bodyMedium)
+                        Text("Use hardware Volume Up/Down buttons to navigate pages in reader", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableVolumeKeysNavigation,
+                        onCheckedChange = { settingsManager.updateEnableVolumeKeysNavigation(it) }
+                    )
+                }
+
+                // 9. Reading Guide
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Reading Focus Guide Overlay", style = MaterialTheme.typography.bodyMedium)
+                        Text("Visual horizontal focus bar to guide tracking and reduce dyslexia or eye strain", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.enableReadingGuide,
+                        onCheckedChange = { settingsManager.updateEnableReadingGuide(it) }
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            }
+
+            // --- 7. Your Data & Full Backup ---
             item {
                 SectionHeader("Your Data & Backup")
 
+                Text(
+                    "Create full offline zip archives of your entire library, downloaded chapters, bookmarks, glossaries, reading stats, and covers, or export light metadata.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                // Full Archive Buttons
                 Row(
                     modifier = Modifier.padding(vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = { exportLauncher.launch("novel_hoarder_backup.json") },
-                        modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
+                        onClick = { fullZipExportLauncher.launch("novel_hoarder_full_backup.zip") },
+                        enabled = !isBackingUp && !isRestoring,
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = MinTouchTarget)
+                    ) {
+                        if (isBackingUp) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Archiving...")
+                        } else {
+                            Icon(Icons.Default.Archive, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Full ZIP Archive", softWrap = false)
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = { fullZipImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        enabled = !isBackingUp && !isRestoring,
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = MinTouchTarget)
+                    ) {
+                        if (isRestoring) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Restoring...")
+                        } else {
+                            Icon(Icons.Default.Unarchive, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Restore ZIP", softWrap = false)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Light Metadata Export Buttons
+                Row(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { exportLauncher.launch("novel_hoarder_metadata.json") },
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = MinTouchTarget)
                     ) {
                         Icon(Icons.Default.Upload, contentDescription = null)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Export Metadata JSON", softWrap = false)
+                        Text("Export JSON", softWrap = false)
                     }
 
                     OutlinedButton(
                         onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
-                        modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = MinTouchTarget)
                     ) {
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Import Backup", softWrap = false)
+                        Text("Import JSON", softWrap = false)
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedButton(
                     onClick = { showClearDataDialog = true },
@@ -388,7 +703,7 @@ fun SettingsScreen(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
             }
 
-            // --- 7. About ---
+            // --- 8. About ---
             item {
                 SectionHeader("About")
 

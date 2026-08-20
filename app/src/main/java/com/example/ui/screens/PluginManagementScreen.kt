@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -32,10 +33,16 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.plugin.PluginConfig
 import com.example.data.plugin.PluginManager
+import com.example.data.scraper.SourceManager
 import com.example.ui.theme.MinTouchTarget
 import com.example.ui.theme.TextDefaults
 import com.example.ui.theme.screenContentPadding
+import com.example.util.WebViewFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,6 +66,12 @@ fun PluginManagementScreen(
     var isInspecting by remember { mutableStateOf(false) }
     var inspectResultText by remember { mutableStateOf("") }
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+
+    // Diagnostic Site Tester state
+    var diagnosticUrl by remember { mutableStateOf("") }
+    var isRunningDiagnostic by remember { mutableStateOf(false) }
+    var diagnosticOutput by remember { mutableStateOf("") }
+    var diagnosticJob by remember { mutableStateOf<Job?>(null) }
 
     val builtInIds = remember {
         try {
@@ -186,6 +199,220 @@ fun PluginManagementScreen(
                                     fontFamily = FontFamily.Monospace,
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Speed, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Site Diagnostic Tester",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Test any novel URL to check scraper detection, metadata, chapter list, and first chapter extraction without saving anything to the library.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = diagnosticUrl,
+                            onValueChange = { diagnosticUrl = it },
+                            label = { Text("Novel or Chapter URL") },
+                            placeholder = { Text("https://example.com/novel/...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = {
+                                    val url = diagnosticUrl.trim()
+                                    if (url.isBlank()) return@Button
+                                    isRunningDiagnostic = true
+                                    diagnosticOutput = "=== STARTING SITE DIAGNOSTIC ===\nTarget URL: $url\n"
+                                    
+                                    diagnosticJob?.cancel()
+                                    diagnosticJob = coroutineScope.launch(Dispatchers.IO) {
+                                        var testWebView: WebView? = null
+                                        try {
+                                            withTimeout(180_000L) { // 3-minute overall timeout
+                                                // 1. Resolve source
+                                                val scraper = SourceManager.getSourceForUrl(url, pluginManager)
+                                                val scraperType = when (scraper) {
+                                                    is com.example.util.TomatoScraper -> "TomatoMTL"
+                                                    is com.example.data.plugin.PluginExecutionEngine -> "Plugin (${scraper.config.name})"
+                                                    else -> "Universal Web Scraper"
+                                                }
+                                                withContext(Dispatchers.Main) {
+                                                    diagnosticOutput += "\n[STEP 1] Source Resolution:\n  Scraper Chosen: $scraperType\n  Source Name: ${scraper.sourceName}\n"
+                                                }
+
+                                                // 2. Create WebView & scrapeBookInfo
+                                                withContext(Dispatchers.Main) {
+                                                    diagnosticOutput += "\n[STEP 2] Scraping Book Metadata...\n"
+                                                }
+                                                testWebView = withContext(Dispatchers.Main) {
+                                                    WebViewFactory.create(context)
+                                                }
+                                                val bookInfo = scraper.scrapeBookInfo(testWebView!!, url)
+                                                val hasCover = !bookInfo.coverUrl.isNullOrBlank()
+                                                withContext(Dispatchers.Main) {
+                                                    diagnosticOutput += "  Title: ${bookInfo.title}\n  Author: ${bookInfo.author}\n  Cover URL Found: $hasCover (${bookInfo.coverUrl ?: "none"})\n  Parsed Book ID: ${bookInfo.id}\n"
+                                                }
+
+                                                // 3. scrapeChapterList
+                                                withContext(Dispatchers.Main) {
+                                                    diagnosticOutput += "\n[STEP 3] Scraping Chapter List (TOC)...\n"
+                                                }
+                                                val chapterUrls = scraper.scrapeChapterList(testWebView!!, url)
+                                                withContext(Dispatchers.Main) {
+                                                    diagnosticOutput += "  Total Chapter URLs: ${chapterUrls.size}\n"
+                                                    if (chapterUrls.isNotEmpty()) {
+                                                        diagnosticOutput += "  First up to 3 URLs:\n"
+                                                        chapterUrls.take(3).forEachIndexed { i, u ->
+                                                            diagnosticOutput += "    [${i + 1}] $u\n"
+                                                        }
+                                                        if (chapterUrls.size > 3) {
+                                                            diagnosticOutput += "  Last up to 3 URLs:\n"
+                                                            val lastThree = chapterUrls.takeLast(3)
+                                                            val startIdx = chapterUrls.size - lastThree.size + 1
+                                                            lastThree.forEachIndexed { i, u ->
+                                                                diagnosticOutput += "    [${startIdx + i}] $u\n"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // 4. scrapeChapterContent on first chapter
+                                                if (chapterUrls.isNotEmpty()) {
+                                                    val firstChapUrl = chapterUrls.first()
+                                                    withContext(Dispatchers.Main) {
+                                                        diagnosticOutput += "\n[STEP 4] Scraping First Chapter Content ($firstChapUrl)...\n"
+                                                    }
+                                                    val rawContent = scraper.scrapeChapterContent(testWebView!!, firstChapUrl) { false }
+                                                    val chapTitle = rawContent.first
+                                                    val chapBody = rawContent.second
+                                                    val preview = chapBody.take(300)
+                                                    withContext(Dispatchers.Main) {
+                                                        diagnosticOutput += "  Chapter Title: $chapTitle\n"
+                                                        diagnosticOutput += "  Body Length: ${chapBody.length} characters\n"
+                                                        diagnosticOutput += "  Body Preview (First 300 chars):\n----------------------------------------\n$preview\n----------------------------------------\n"
+                                                        diagnosticOutput += "\n=== DIAGNOSTIC FINISHED SUCCESSFULLY ==="
+                                                    }
+                                                } else {
+                                                    withContext(Dispatchers.Main) {
+                                                        diagnosticOutput += "\n[STEP 4] Skipped (No chapters returned from TOC)\n"
+                                                        diagnosticOutput += "\n=== DIAGNOSTIC FINISHED ==="
+                                                    }
+                                                }
+                                            }
+                                        } catch (e: Exception) {
+                                            val exClass = e::class.qualifiedName ?: e::class.java.name
+                                            val exMsg = e.message ?: "No error message"
+                                            withContext(Dispatchers.Main) {
+                                                diagnosticOutput += "\n[DIAGNOSTIC ERROR / EXCEPTION]\nClass: $exClass\nMessage: $exMsg\n"
+                                                e.cause?.let { cause ->
+                                                    diagnosticOutput += "Cause: ${cause::class.qualifiedName ?: cause::class.java.name}: ${cause.message}\n"
+                                                }
+                                                diagnosticOutput += "\n=== DIAGNOSTIC TERMINATED WITH ERROR ==="
+                                            }
+                                        } finally {
+                                            withContext(Dispatchers.Main) {
+                                                try {
+                                                    testWebView?.stopLoading()
+                                                    testWebView?.destroy()
+                                                } catch (_: Exception) {}
+                                                isRunningDiagnostic = false
+                                            }
+                                        }
+                                    }
+                                },
+                                enabled = !isRunningDiagnostic && diagnosticUrl.isNotBlank()
+                            ) {
+                                if (isRunningDiagnostic) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Testing...")
+                                } else {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Test this site")
+                                }
+                            }
+
+                            if (isRunningDiagnostic) {
+                                OutlinedButton(
+                                    onClick = {
+                                        diagnosticJob?.cancel()
+                                        isRunningDiagnostic = false
+                                        diagnosticOutput += "\n[CANCELLED BY USER]\n"
+                                    }
+                                ) {
+                                    Text("Cancel")
+                                }
+                            } else if (diagnosticOutput.isNotBlank()) {
+                                TextButton(
+                                    onClick = { diagnosticOutput = "" }
+                                ) {
+                                    Text("Clear Output")
+                                }
+                            }
+                        }
+
+                        if (diagnosticOutput.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                "Diagnostic Results (Selectable):",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 120.dp, max = 320.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    SelectionContainer {
+                                        Text(
+                                            text = diagnosticOutput,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            lineHeight = 16.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

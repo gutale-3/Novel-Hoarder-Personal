@@ -16,10 +16,15 @@ object SourceManager {
     var pluginManagerProvider: (() -> PluginManager?)? = null
 
     fun getSourceForUrl(url: String, pluginManager: PluginManager? = null): NovelSource {
-        val lowerUrl = url.lowercase()
+        val host = try {
+            java.net.URI(url).host?.lowercase()?.removePrefix("www.")
+        } catch (e: Exception) {
+            null
+        }
 
         // TomatoMTL is hand-tuned and must beat both plugins and the generic fallback.
-        if (lowerUrl.contains("tomatomtl") || lowerUrl.contains("tomatoy") || lowerUrl.contains("tomato")) {
+        val tomatoHosts = listOf("tomatomtl.com", "tomatoy.com")
+        if (host != null && tomatoHosts.any { host == it || host.endsWith(".$it") }) {
             return TomatoScraper
         }
 

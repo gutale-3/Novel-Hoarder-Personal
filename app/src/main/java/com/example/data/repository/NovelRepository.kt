@@ -162,12 +162,67 @@ class NovelRepository(private val bookDao: BookDao) {
     suspend fun insertGlossaries(glossaries: List<GlossaryEntity>) = bookDao.insertGlossaries(glossaries)
     suspend fun insertBookmarks(bookmarks: List<BookmarkEntity>) = bookDao.insertBookmarks(bookmarks)
 
-    // --- Glossary application helper ---
+    // --- Reading Sessions & Stats ---
+    suspend fun recordReadingSession(bookId: String, chapterId: String, durationSeconds: Long, wordsRead: Int) {
+        if (durationSeconds <= 0 && wordsRead <= 0) return
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val todayStr = dateFormat.format(java.util.Date())
+        val session = ReadingSessionEntity(
+            bookId = bookId,
+            chapterId = chapterId,
+            date = todayStr,
+            durationSeconds = durationSeconds,
+            wordsRead = wordsRead,
+            timestamp = System.currentTimeMillis()
+        )
+        bookDao.insertReadingSession(session)
+    }
+
+    fun getAllReadingSessionsFlow(): Flow<List<ReadingSessionEntity>> = bookDao.getAllReadingSessionsFlow()
+    suspend fun getAllReadingSessions(): List<ReadingSessionEntity> = bookDao.getAllReadingSessions()
+    fun getReadingSessionsForBookFlow(bookId: String): Flow<List<ReadingSessionEntity>> = bookDao.getReadingSessionsForBookFlow(bookId)
+    suspend fun getTotalReadingTimeSeconds(): Long = bookDao.getTotalReadingTimeSeconds()
+    fun getTotalReadingTimeSecondsFlow(): Flow<Long> = bookDao.getTotalReadingTimeSecondsFlow()
+    suspend fun getTotalWordsRead(): Long = bookDao.getTotalWordsRead()
+    fun getTotalWordsReadFlow(): Flow<Long> = bookDao.getTotalWordsReadFlow()
+    suspend fun getDistinctReadingDates(): List<String> = bookDao.getDistinctReadingDates()
+    suspend fun insertReadingSessions(sessions: List<ReadingSessionEntity>) = bookDao.insertReadingSessions(sessions)
+
+    // --- Text Replacement Rules ---
+    fun getAllReplacementRulesFlow(): Flow<List<TextReplacementRuleEntity>> = bookDao.getAllReplacementRulesFlow()
+    suspend fun getAllReplacementRules(): List<TextReplacementRuleEntity> = bookDao.getAllReplacementRules()
+    fun getReplacementRulesForBookFlow(bookId: String): Flow<List<TextReplacementRuleEntity>> = bookDao.getReplacementRulesForBookFlow(bookId)
+    suspend fun getReplacementRulesForBook(bookId: String): List<TextReplacementRuleEntity> = bookDao.getReplacementRulesForBook(bookId)
+    suspend fun insertReplacementRule(rule: TextReplacementRuleEntity): Long = bookDao.insertReplacementRule(rule)
+    suspend fun updateReplacementRule(rule: TextReplacementRuleEntity) = bookDao.updateReplacementRule(rule)
+    suspend fun deleteReplacementRule(rule: TextReplacementRuleEntity) = bookDao.deleteReplacementRule(rule)
+    suspend fun deleteReplacementRuleById(id: Long) = bookDao.deleteReplacementRuleById(id)
+    suspend fun insertReplacementRules(rules: List<TextReplacementRuleEntity>) = bookDao.insertReplacementRules(rules)
+
+    // --- Glossary & Text Rule application helpers ---
     fun applyGlossary(text: String, glossary: List<GlossaryEntity>): String {
         var cleanText = text
         for (item in glossary) {
             if (item.originalText.isNotEmpty()) {
                 cleanText = cleanText.replace(item.originalText, item.replacementText, ignoreCase = true)
+            }
+        }
+        return cleanText
+    }
+
+    fun applyReplacementRules(text: String, rules: List<TextReplacementRuleEntity>): String {
+        var cleanText = text
+        for (rule in rules) {
+            if (!rule.isEnabled || rule.pattern.isEmpty()) continue
+            try {
+                if (rule.isRegex) {
+                    val regexOption = if (rule.isCaseSensitive) setOf() else setOf(RegexOption.IGNORE_CASE)
+                    cleanText = cleanText.replace(Regex(rule.pattern, regexOption), rule.replacement)
+                } else {
+                    cleanText = cleanText.replace(rule.pattern, rule.replacement, ignoreCase = !rule.isCaseSensitive)
+                }
+            } catch (e: Exception) {
+                // If regex pattern is invalid or execution fails, preserve original text gracefully
             }
         }
         return cleanText

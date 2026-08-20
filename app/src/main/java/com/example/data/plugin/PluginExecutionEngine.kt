@@ -101,6 +101,10 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
                 delay(500)
             }
 
+            if (jsonResult == null && config.customTocJs.isNullOrBlank()) {
+                jsonResult = evaluateJs(webView, PageExtractors.TOC_EXTRACT_JS)
+            }
+
             val entries = GenericScraper.parseTocEntries(jsonResult)
             GenericScraper.buildChapterList(entries)
         }
@@ -132,6 +136,16 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         val rawContent = jsonObj?.optString("content") ?: ""
 
         val cleanBody = GenericScraper.sanitizeText(rawContent, aggressive = false)
+
+        // Fail loudly rather than saving a blank chapter: the caller retries on an exception
+        // but treats a successful empty return as a finished download.
+        if (cleanBody.length < 200) {
+            throw java.io.IOException(
+                "${config.name}: chapter body was empty or too short (" +
+                "${cleanBody.length} chars) at $chapterUrl"
+            )
+        }
+
         Pair(title, cleanBody)
     }
 
@@ -319,7 +333,22 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
                 const text = (clone.textContent || '')
                     .split('\n').map(s => s.trim()).filter(s => s.length > 0).join('\n\n');
 
-                return { ready: text.length > 200, title: title || "Chapter", content: text };
+                // Guard against single-page-app readers that swap chapter text in place:
+                // require the text to differ from the previous chapter AND to be stable across
+                // two consecutive polls before accepting it.
+                const fp = text.length + ':' + text.replace(/\s+/g, ' ').trim().slice(0, 200);
+                const prev = window.__nhPrevFp;
+                const last = window.__nhLastPluginFp;
+                window.__nhLastPluginFp = fp;
+
+                const changed = !prev || fp !== prev;
+                const stable = last === fp;
+
+                return {
+                    ready: text.length > 200 && changed && stable,
+                    title: title || "Chapter",
+                    content: text
+                };
             })()
         """.trimIndent()
     }

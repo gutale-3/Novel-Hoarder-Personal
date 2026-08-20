@@ -92,7 +92,7 @@ object GenericScraper : NovelSource {
         var jsonResult: String? = null
         val startTime = System.currentTimeMillis()
 
-        while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
+        while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 45000) {
             val eval = evaluateJs(webView, PageExtractors.TOC_READY_JS)
             if (JsResultParser.isReady(eval)) {
                 jsonResult = evaluateJs(webView, PageExtractors.TOC_EXTRACT_JS)
@@ -101,6 +101,11 @@ object GenericScraper : NovelSource {
             delay(500)
         }
 
+        // The readiness probe requires the chapter-link count to stop changing. If it never
+        // settles, extract what is on the page rather than reporting an empty book.
+        if (jsonResult == null) {
+            jsonResult = evaluateJs(webView, PageExtractors.TOC_EXTRACT_JS)
+        }
         val entries = parseTocEntries(jsonResult)
         buildChapterList(entries)
     }

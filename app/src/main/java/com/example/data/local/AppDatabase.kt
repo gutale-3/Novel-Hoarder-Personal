@@ -14,9 +14,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GlossaryEntity::class,
         PolishedChapterEntity::class,
         ChapterRecapEntity::class,
-        BookmarkEntity::class
+        BookmarkEntity::class,
+        ReadingSessionEntity::class,
+        TextReplacementRuleEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 /**
@@ -105,6 +107,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `reading_sessions` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`bookId` TEXT NOT NULL, " +
+                    "`chapterId` TEXT NOT NULL, " +
+                    "`date` TEXT NOT NULL, " +
+                    "`durationSeconds` INTEGER NOT NULL, " +
+                    "`wordsRead` INTEGER NOT NULL, " +
+                    "`timestamp` INTEGER NOT NULL" +
+                    ")"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `replacement_rules` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`bookId` TEXT, " +
+                    "`pattern` TEXT NOT NULL, " +
+                    "`replacement` TEXT NOT NULL, " +
+                    "`isRegex` INTEGER NOT NULL DEFAULT 0, " +
+                    "`isCaseSensitive` INTEGER NOT NULL DEFAULT 0, " +
+                    "`isEnabled` INTEGER NOT NULL DEFAULT 1, " +
+                    "`createdAt` INTEGER NOT NULL" +
+                    ")"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -112,7 +142,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "novel_hoarder_db"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { INSTANCE = it }

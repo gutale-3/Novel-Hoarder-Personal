@@ -36,6 +36,21 @@ data class MissingChapter(
     val chapterNumber: Int
 )
 
+/**
+ * Applies the cleaner that belongs to the source the text came from.
+ * TomatoScraper's cleaner truncates on TomatoMTL-specific page furniture, so it must
+ * never run on text scraped from another site.
+ */
+internal fun cleanScrapedBody(
+    scraper: com.example.data.scraper.NovelSource,
+    raw: String,
+    aggressive: Boolean
+): String = if (scraper === com.example.util.TomatoScraper) {
+    com.example.util.TomatoScraper.sanitizeText(raw, aggressive)
+} else {
+    com.example.util.GenericScraper.sanitizeText(raw, aggressive)
+}
+
 class ScrapingManager(
     private val application: Application,
     private val repository: NovelRepository,
@@ -44,6 +59,29 @@ class ScrapingManager(
     val pluginManager: com.example.data.plugin.PluginManager? = null,
     val manualCapture: ManualCaptureManager? = null
 ) {
+    /**
+     * Normalises a book URL to its canonical form for the site it came from.
+     * Only TomatoMTL needs rewriting; every other source is left exactly as the user typed it.
+     */
+    private fun canonicalBookUrl(rawUrl: String, scraper: com.example.data.scraper.NovelSource): String {
+        if (scraper !== com.example.util.TomatoScraper) return rawUrl
+        val idx = rawUrl.indexOf("/book/")
+        if (idx < 0) return rawUrl
+        val segments = rawUrl.substring(idx).split("/").filter { it.isNotEmpty() }
+        return if (segments.size >= 2) "https://tomatomtl.com/book/${segments[1]}" else rawUrl
+    }
+
+    /**
+     * A plugin with its own TOC script may page through a site API and legitimately needs
+     * minutes, not seconds. The plugin engine's own internal budget is 120 s; this must be
+     * larger than that or it cancels the work it is supposed to be waiting for.
+     */
+    private fun tocTimeoutMs(scraper: com.example.data.scraper.NovelSource): Long {
+        val engine = scraper as? com.example.data.plugin.PluginExecutionEngine
+        return if (engine != null && !engine.config.customTocJs.isNullOrBlank()) 150_000L
+        else 60_000L
+    }
+
     // --- Scraper State ---
     var scrapeUrl by mutableStateOf("")
     var scrapeBookName by mutableStateOf("")
@@ -99,6 +137,7 @@ class ScrapingManager(
         com.example.data.plugin.PluginExecutionEngine.progressListener = { count ->
             scrapingStatus = "● Fetching TOC (Found $count chapters...)"
             addLog("TOC live progress: Found $count chapters...")
+            notifyProgressMade()
         }
     }
 
@@ -153,8 +192,8 @@ class ScrapingManager(
                 delay(5000L)
                 if (isScraping && !isScrapePaused && !showCaptchaDialog && !showManualBrowser) {
                     val elapsed = System.currentTimeMillis() - lastProgressTimestamp
-                    if (elapsed >= 60_000L) {
-                        addLog("[WATCHDOG] Scraper progress stalled in limbo for ${elapsed / 1000}s (>60s)! Triggering automatic stop-clear-restart cycle...")
+                    if (elapsed >= 180_000L) {
+                        addLog("[WATCHDOG] Scraper progress stalled in limbo for ${elapsed / 1000}s (>180s)! Triggering automatic stop-clear-restart cycle...")
                         lastProgressTimestamp = System.currentTimeMillis()
                         
                         withContext(Dispatchers.Main) {
@@ -306,14 +345,7 @@ class ScrapingManager(
             val scraper = SourceManager.getSourceForUrl(url, pluginManager)
             addLog("Using source: ${scraper.sourceName}")
             val bookId = scraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
-            val bookUrl = if (url.contains("/book/")) {
-                val idx = url.indexOf("/book/")
-                val bookPart = url.substring(idx)
-                val segments = bookPart.split("/").filter { it.isNotEmpty() }
-                if (segments.size >= 2) {
-                    "https://tomatomtl.com/book/${segments[1]}"
-                } else url
-            } else url
+            val bookUrl = canonicalBookUrl(url, scraper)
 
             addLog("Initializing WebView to fetch Table of Contents...")
             var webView = createFreshWebView()
@@ -324,7 +356,7 @@ class ScrapingManager(
                 var tries = 0
                 while (chapterUrls.isEmpty() && tries < 3) {
                     try {
-                        chapterUrls = withTimeoutOrNull(35_000L) {
+                        chapterUrls = withTimeoutOrNull(tocTimeoutMs(scraper)) {
                             scraper.scrapeChapterList(webView, bookUrl)
                         } ?: emptyList()
 
@@ -333,7 +365,7 @@ class ScrapingManager(
                                 webView.loadUrl(bookUrl)
                             }
                             delay(5000)
-                            chapterUrls = withTimeoutOrNull(35_000L) {
+                            chapterUrls = withTimeoutOrNull(tocTimeoutMs(scraper)) {
                                 scraper.scrapeChapterList(webView, bookUrl)
                             } ?: emptyList()
                         }
@@ -409,39 +441,35 @@ class ScrapingManager(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
-                val bookUrl = if (book.url.contains("/book/")) {
-                    val idx = book.url.indexOf("/book/")
-                    val bookPart = book.url.substring(idx)
-                    val segments = bookPart.split("/").filter { it.isNotEmpty() }
-                    if (segments.size >= 2) {
-                        "https://tomatomtl.com/book/${segments[1]}"
-                    } else book.url
-                } else book.url
+                val bookUrl = canonicalBookUrl(book.url, scraper)
 
-                val webView = withContext(Dispatchers.Main) {
-                    WebView(application.applicationContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.userAgentString = defaultUserAgent
-                    }
-                }
+                val webView = createFreshWebView()
 
                 var chapterUrls = emptyList<String>()
                 var tries = 0
-                while (chapterUrls.isEmpty() && tries < 3) {
-                    try {
-                        chapterUrls = scraper.scrapeChapterList(webView, bookUrl)
-                        if (chapterUrls.isEmpty()) {
-                            withContext(Dispatchers.Main) {
-                                webView.loadUrl(bookUrl)
+                try {
+                    while (chapterUrls.isEmpty() && tries < 3) {
+                        try {
+                            chapterUrls = withTimeoutOrNull(tocTimeoutMs(scraper)) {
+                                scraper.scrapeChapterList(webView, bookUrl)
+                            } ?: emptyList()
+                            if (chapterUrls.isEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    webView.loadUrl(bookUrl)
+                                }
+                                delay(5000)
+                                chapterUrls = withTimeoutOrNull(tocTimeoutMs(scraper)) {
+                                    scraper.scrapeChapterList(webView, bookUrl)
+                                } ?: emptyList()
                             }
-                            delay(5000)
-                            chapterUrls = scraper.scrapeChapterList(webView, bookUrl)
+                        } catch (e: Exception) {
+                            tries++
+                            delay(2000)
                         }
-                    } catch (e: Exception) {
-                        tries++
-                        delay(2000)
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        try { webView.destroy() } catch (_: Exception) {}
                     }
                 }
 
@@ -604,12 +632,7 @@ class ScrapingManager(
     }
 
     private suspend fun createFreshWebView(): WebView = withContext(Dispatchers.Main) {
-        WebView(application.applicationContext).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.databaseEnabled = true
-            settings.userAgentString = defaultUserAgent
-        }
+        com.example.util.WebViewFactory.create(application.applicationContext, defaultUserAgent)
     }
 
     private suspend fun runScraperLoop(
@@ -620,14 +643,7 @@ class ScrapingManager(
         val scraper = SourceManager.getSourceForUrl(url, pluginManager)
         addLog("Using source: ${scraper.sourceName}")
         val bookId = scraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
-        val bookUrl = if (url.contains("/book/")) {
-            val idx = url.indexOf("/book/")
-            val bookPart = url.substring(idx)
-            val segments = bookPart.split("/").filter { it.isNotEmpty() }
-            if (segments.size >= 2) {
-                "https://tomatomtl.com/book/${segments[1]}"
-            } else url
-        } else url
+        val bookUrl = canonicalBookUrl(url, scraper)
 
         addLog("Initializing scraping WebView on Main thread...")
         var webView = createFreshWebView()
@@ -688,7 +704,7 @@ class ScrapingManager(
             addLog("Extracting Table of Contents...")
             var chapterUrls = emptyList<String>()
             try {
-                chapterUrls = withTimeoutOrNull(35_000L) {
+                chapterUrls = withTimeoutOrNull(tocTimeoutMs(scraper)) {
                     scraper.scrapeChapterList(webView, bookUrl)
                 } ?: emptyList()
             } catch (e: Exception) {
@@ -792,7 +808,7 @@ class ScrapingManager(
                         } ?: throw IOException("Chapter download timed out (Limbo detected)")
 
                         val title = rawContent.first
-                        var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                        var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
 
                         // Apply customized glossaries if any exist
                         if (glossaries.isNotEmpty()) {
@@ -948,18 +964,11 @@ class ScrapingManager(
                 return@runCatching
             }
             val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
-            val webView = withContext(Dispatchers.Main) {
-                WebView(application.applicationContext).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.databaseEnabled = true
-                    settings.userAgentString = defaultUserAgent
-                }
-            }
+            val webView = createFreshWebView()
             try {
                 val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
                 val title = rawContent.first
-                var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
 
                 val glossaries = repository.getGlossary(chapter.bookId)
                 if (glossaries.isNotEmpty()) {
@@ -1026,17 +1035,12 @@ class ScrapingManager(
                 }
 
                 val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
-                val webView = withContext(Dispatchers.Main) {
-                    WebView(application.applicationContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.userAgentString = defaultUserAgent
-                    }
-                }
+                val webView = createFreshWebView()
 
                 val chapterUrls = try {
-                    scraper.scrapeChapterList(webView, book.url)
+                    withTimeoutOrNull(tocTimeoutMs(scraper)) {
+                        scraper.scrapeChapterList(webView, book.url)
+                    } ?: emptyList()
                 } finally {
                     withContext(Dispatchers.Main) {
                         try { webView.destroy() } catch (_: Exception) {}
@@ -1098,19 +1102,12 @@ class ScrapingManager(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
-                val webView = withContext(Dispatchers.Main) {
-                    WebView(application.applicationContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.userAgentString = defaultUserAgent
-                    }
-                }
+                val webView = createFreshWebView()
                 
                 try {
                     val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
                     val title = rawContent.first
-                    var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                    var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
                     
                     // Apply customized glossaries if any exist
                     val glossaries = repository.getGlossary(chapter.bookId)
@@ -1209,14 +1206,7 @@ class ScrapingManager(
                 }
                 
                 val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
-                val webView = withContext(Dispatchers.Main) {
-                    WebView(application.applicationContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.userAgentString = defaultUserAgent
-                    }
-                }
+                val webView = createFreshWebView()
                 
                 var successCount = 0
                 val glossaries = repository.getGlossary(bookId)
@@ -1226,7 +1216,7 @@ class ScrapingManager(
                         try {
                             val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
                             val title = rawContent.first
-                            var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                            var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
                             
                             if (glossaries.isNotEmpty()) {
                                 cleanedBody = repository.applyGlossary(cleanedBody, glossaries)

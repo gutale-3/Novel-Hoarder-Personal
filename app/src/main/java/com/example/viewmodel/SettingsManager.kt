@@ -51,6 +51,7 @@ class SettingsManager(val application: Application) {
     var librarySort by mutableStateOf("recently_read") // "recently_read", "recently_updated", "title", "author", "unread_count", "progress"
     var libraryView by mutableStateOf("grid") // "grid", "list"
     var aggressiveCleanDefault by mutableStateOf(false)
+    var chapterNumberingMode by mutableStateOf("site") // "site" (keep original), "sequential" (1, 2, 3...)
     var lastBrowserUrl by mutableStateOf("https://www.google.com")
 
     // --- Customizable AI Prompts & Translation ---
@@ -58,6 +59,46 @@ class SettingsManager(val application: Application) {
     var polishPrompt by mutableStateOf("")
     var recapPrompt by mutableStateOf("")
     var translationRequireWifi by mutableStateOf(true)
+
+    // --- 7 Core Non-AI Feature Toggles & Preferences (On by default) ---
+    var enableReadingStats by mutableStateOf(true)
+    var userReadingWpm by mutableStateOf(240)
+
+    var enableBionicReading by mutableStateOf(true)
+    var bionicReadingActiveInReader by mutableStateOf(false)
+
+    var enableRsvpSpeedReading by mutableStateOf(true)
+    var rsvpWpm by mutableStateOf(300)
+
+    var enableVolumeKeysNavigation by mutableStateOf(true)
+
+    var enableTapZonesCustomization by mutableStateOf(true)
+    var tapZoneTopLeftAction by mutableStateOf("PREV_PAGE")
+    var tapZoneTopCenterAction by mutableStateOf("TOGGLE_CONTROLS")
+    var tapZoneTopRightAction by mutableStateOf("NEXT_PAGE")
+    var tapZoneMidLeftAction by mutableStateOf("PREV_PAGE")
+    var tapZoneMidCenterAction by mutableStateOf("TOGGLE_CONTROLS")
+    var tapZoneMidRightAction by mutableStateOf("NEXT_PAGE")
+    var tapZoneBottomLeftAction by mutableStateOf("PREV_PAGE")
+    var tapZoneBottomCenterAction by mutableStateOf("TOGGLE_CONTROLS")
+    var tapZoneBottomRightAction by mutableStateOf("NEXT_PAGE")
+
+    var enableReadingGuide by mutableStateOf(false)
+    var readingGuideHeight by mutableStateOf(80)
+    var readingGuideColor by mutableStateOf("amber")
+    var readingGuideOpacity by mutableStateOf(0.15f)
+
+    var enableAutoCheckUpdates by mutableStateOf(true)
+    var updateCheckIntervalHours by mutableStateOf(12) // 6, 12, 24
+    var updateCheckWifiOnly by mutableStateOf(true)
+
+    val enableBackgroundChapterUpdates get() = enableAutoCheckUpdates
+    val chapterUpdateIntervalHours get() = updateCheckIntervalHours
+    val chapterUpdatesOnlyWifi get() = updateCheckWifiOnly
+
+    var enableAutoApplyTextRules by mutableStateOf(true)
+    var enableFullBackupRestore by mutableStateOf(true)
+    var enableSourceMigration by mutableStateOf(true)
 
     init {
         val themeName = prefs.getString("selected_theme", AppTheme.CLASSIC_LIGHT.name)
@@ -91,12 +132,47 @@ class SettingsManager(val application: Application) {
         librarySort = prefs.getString("library_sort", "recently_read") ?: "recently_read"
         libraryView = prefs.getString("library_view", "grid") ?: "grid"
         aggressiveCleanDefault = prefs.getBoolean("aggressive_clean_default", false)
+        chapterNumberingMode = prefs.getString("chapter_numbering_mode", "site") ?: "site"
         lastBrowserUrl = prefs.getString("last_browser_url", "https://www.google.com") ?: "https://www.google.com"
 
         glossaryPrompt = prefs.getString("glossary_prompt", "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary.") ?: "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary."
         polishPrompt = prefs.getString("polish_prompt", "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.") ?: "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
         recapPrompt = prefs.getString("recap_prompt", "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding.") ?: "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding."
         translationRequireWifi = prefs.getBoolean("translation_require_wifi", true)
+
+        // Load 7 features
+        enableReadingStats = prefs.getBoolean("enable_reading_stats", true)
+        userReadingWpm = prefs.getInt("user_reading_wpm", 240)
+
+        enableBionicReading = prefs.getBoolean("enable_bionic_reading", true)
+        bionicReadingActiveInReader = prefs.getBoolean("bionic_reading_active", false)
+
+        enableRsvpSpeedReading = prefs.getBoolean("enable_rsvp_speed_reading", true)
+        rsvpWpm = prefs.getInt("rsvp_wpm", 300)
+
+        enableVolumeKeysNavigation = prefs.getBoolean("enable_volume_keys_nav", true)
+
+        enableTapZonesCustomization = prefs.getBoolean("enable_tap_zones_custom", true)
+        tapZoneTopLeftAction = prefs.getString("tap_zone_tl", "PREV_PAGE") ?: "PREV_PAGE"
+        tapZoneTopCenterAction = prefs.getString("tap_zone_tc", "TOGGLE_CONTROLS") ?: "TOGGLE_CONTROLS"
+        tapZoneTopRightAction = prefs.getString("tap_zone_tr", "NEXT_PAGE") ?: "NEXT_PAGE"
+        tapZoneMidLeftAction = prefs.getString("tap_zone_ml", "PREV_PAGE") ?: "PREV_PAGE"
+        tapZoneMidCenterAction = prefs.getString("tap_zone_mc", "TOGGLE_CONTROLS") ?: "TOGGLE_CONTROLS"
+        tapZoneMidRightAction = prefs.getString("tap_zone_mr", "NEXT_PAGE") ?: "NEXT_PAGE"
+        tapZoneBottomLeftAction = prefs.getString("tap_zone_bl", "PREV_PAGE") ?: "PREV_PAGE"
+        tapZoneBottomCenterAction = prefs.getString("tap_zone_bc", "TOGGLE_CONTROLS") ?: "TOGGLE_CONTROLS"
+        tapZoneBottomRightAction = prefs.getString("tap_zone_br", "NEXT_PAGE") ?: "NEXT_PAGE"
+
+        enableReadingGuide = prefs.getBoolean("enable_reading_guide", false)
+        readingGuideHeight = prefs.getInt("reading_guide_height", 80)
+
+        enableAutoCheckUpdates = prefs.getBoolean("enable_auto_check_updates", true)
+        updateCheckIntervalHours = prefs.getInt("update_check_interval_hours", 12)
+        updateCheckWifiOnly = prefs.getBoolean("update_check_wifi_only", true)
+
+        enableAutoApplyTextRules = prefs.getBoolean("enable_auto_apply_text_rules", true)
+        enableFullBackupRestore = prefs.getBoolean("enable_full_backup_restore", true)
+        enableSourceMigration = prefs.getBoolean("enable_source_migration", true)
     }
 
     fun updateTheme(theme: AppTheme) {
@@ -193,6 +269,11 @@ class SettingsManager(val application: Application) {
         prefs.edit().putBoolean("aggressive_clean_default", enabled).apply()
     }
 
+    fun updateChapterNumberingMode(mode: String) {
+        chapterNumberingMode = mode
+        prefs.edit().putString("chapter_numbering_mode", mode).apply()
+    }
+
     fun updateLastBrowserUrl(url: String) {
         lastBrowserUrl = url
         prefs.edit().putString("last_browser_url", url).apply()
@@ -273,6 +354,117 @@ class SettingsManager(val application: Application) {
     fun updateTranslationRequireWifi(requireWifi: Boolean) {
         translationRequireWifi = requireWifi
         prefs.edit().putBoolean("translation_require_wifi", requireWifi).apply()
+    }
+
+    // --- 7 Feature Toggles & Preferences Updaters ---
+    fun updateEnableReadingStats(enabled: Boolean) {
+        enableReadingStats = enabled
+        prefs.edit().putBoolean("enable_reading_stats", enabled).apply()
+    }
+
+    fun updateUserReadingWpm(wpm: Int) {
+        userReadingWpm = wpm.coerceIn(100, 1000)
+        prefs.edit().putInt("user_reading_wpm", userReadingWpm).apply()
+    }
+
+    fun updateEnableBionicReading(enabled: Boolean) {
+        enableBionicReading = enabled
+        prefs.edit().putBoolean("enable_bionic_reading", enabled).apply()
+    }
+
+    fun updateBionicReadingActiveInReader(active: Boolean) {
+        bionicReadingActiveInReader = active
+        prefs.edit().putBoolean("bionic_reading_active", active).apply()
+    }
+
+    fun updateEnableRsvpSpeedReading(enabled: Boolean) {
+        enableRsvpSpeedReading = enabled
+        prefs.edit().putBoolean("enable_rsvp_speed_reading", enabled).apply()
+    }
+
+    fun updateRsvpWpm(wpm: Int) {
+        rsvpWpm = wpm.coerceIn(100, 1000)
+        prefs.edit().putInt("rsvp_wpm", rsvpWpm).apply()
+    }
+
+    fun updateEnableVolumeKeysNavigation(enabled: Boolean) {
+        enableVolumeKeysNavigation = enabled
+        prefs.edit().putBoolean("enable_volume_keys_nav", enabled).apply()
+    }
+
+    fun updateEnableTapZonesCustomization(enabled: Boolean) {
+        enableTapZonesCustomization = enabled
+        prefs.edit().putBoolean("enable_tap_zones_custom", enabled).apply()
+    }
+
+    fun updateTapZoneAction(zoneKey: String, action: String) {
+        when (zoneKey) {
+            "tl" -> { tapZoneTopLeftAction = action; prefs.edit().putString("tap_zone_tl", action).apply() }
+            "tc" -> { tapZoneTopCenterAction = action; prefs.edit().putString("tap_zone_tc", action).apply() }
+            "tr" -> { tapZoneTopRightAction = action; prefs.edit().putString("tap_zone_tr", action).apply() }
+            "ml" -> { tapZoneMidLeftAction = action; prefs.edit().putString("tap_zone_ml", action).apply() }
+            "mc" -> { tapZoneMidCenterAction = action; prefs.edit().putString("tap_zone_mc", action).apply() }
+            "mr" -> { tapZoneMidRightAction = action; prefs.edit().putString("tap_zone_mr", action).apply() }
+            "bl" -> { tapZoneBottomLeftAction = action; prefs.edit().putString("tap_zone_bl", action).apply() }
+            "bc" -> { tapZoneBottomCenterAction = action; prefs.edit().putString("tap_zone_bc", action).apply() }
+            "br" -> { tapZoneBottomRightAction = action; prefs.edit().putString("tap_zone_br", action).apply() }
+        }
+    }
+
+    fun updateEnableReadingGuide(enabled: Boolean) {
+        enableReadingGuide = enabled
+        prefs.edit().putBoolean("enable_reading_guide", enabled).apply()
+    }
+
+    fun updateReadingGuideHeight(height: Int) {
+        readingGuideHeight = height.coerceIn(40, 200)
+        prefs.edit().putInt("reading_guide_height", readingGuideHeight).apply()
+    }
+
+    fun updateReadingGuideColor(color: String) {
+        readingGuideColor = color
+        prefs.edit().putString("reading_guide_color", color).apply()
+    }
+
+    fun updateReadingGuideOpacity(opacity: Float) {
+        readingGuideOpacity = opacity.coerceIn(0.05f, 0.5f)
+        prefs.edit().putFloat("reading_guide_opacity", readingGuideOpacity).apply()
+    }
+
+    fun updateEnableAutoCheckUpdates(enabled: Boolean) {
+        enableAutoCheckUpdates = enabled
+        prefs.edit().putBoolean("enable_auto_check_updates", enabled).apply()
+    }
+
+    fun updateEnableBackgroundChapterUpdates(enabled: Boolean) = updateEnableAutoCheckUpdates(enabled)
+
+    fun updateCheckIntervalHours(hours: Int) {
+        updateCheckIntervalHours = hours
+        prefs.edit().putInt("update_check_interval_hours", hours).apply()
+    }
+
+    fun updateChapterUpdateIntervalHours(hours: Int) = updateCheckIntervalHours(hours)
+
+    fun updateCheckWifiOnly(wifiOnly: Boolean) {
+        updateCheckWifiOnly = wifiOnly
+        prefs.edit().putBoolean("update_check_wifi_only", wifiOnly).apply()
+    }
+
+    fun updateChapterUpdatesOnlyWifi(wifiOnly: Boolean) = updateCheckWifiOnly(wifiOnly)
+
+    fun updateEnableAutoApplyTextRules(enabled: Boolean) {
+        enableAutoApplyTextRules = enabled
+        prefs.edit().putBoolean("enable_auto_apply_text_rules", enabled).apply()
+    }
+
+    fun updateEnableFullBackupRestore(enabled: Boolean) {
+        enableFullBackupRestore = enabled
+        prefs.edit().putBoolean("enable_full_backup_restore", enabled).apply()
+    }
+
+    fun updateEnableSourceMigration(enabled: Boolean) {
+        enableSourceMigration = enabled
+        prefs.edit().putBoolean("enable_source_migration", enabled).apply()
     }
 
     fun resetReaderDefaults() {

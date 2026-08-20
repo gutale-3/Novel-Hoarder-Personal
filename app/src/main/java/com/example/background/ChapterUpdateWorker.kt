@@ -22,11 +22,50 @@ class ChapterUpdateWorker(
 ) : CoroutineWorker(context, params) {
 
     companion object {
+        const val WORK_NAME = "novel_chapter_update_worker"
         const val CHANNEL_ID = "chapter_updates_channel"
         const val NOTIFICATION_ID_BASE = 2000
+
+        fun schedulePeriodicUpdates(context: Context) {
+            val prefs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+            val isEnabled = prefs.getBoolean("enable_auto_check_updates", true)
+            val workManager = androidx.work.WorkManager.getInstance(context)
+
+            if (!isEnabled) {
+                workManager.cancelUniqueWork(WORK_NAME)
+                return
+            }
+
+            val intervalHours = prefs.getInt("update_check_interval_hours", 12).toLong().coerceIn(4L, 48L)
+            val wifiOnly = prefs.getBoolean("update_check_wifi_only", true)
+
+            val constraints = androidx.work.Constraints.Builder()
+                .setRequiredNetworkType(
+                    if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED
+                )
+                .build()
+
+            val updateRequest = androidx.work.PeriodicWorkRequestBuilder<ChapterUpdateWorker>(
+                intervalHours, java.util.concurrent.TimeUnit.HOURS
+            )
+                .setConstraints(constraints)
+                .build()
+
+            workManager.enqueueUniquePeriodicWork(
+                WORK_NAME,
+                androidx.work.ExistingPeriodicWorkPolicy.UPDATE,
+                updateRequest
+            )
+        }
     }
 
     override suspend fun doWork(): Result {
+        val prefs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+        val isEnabled = prefs.getBoolean("enable_auto_check_updates", true)
+        if (!isEnabled) {
+            return Result.success()
+        }
+
         val database = AppDatabase.getDatabase(context)
         val bookDao = database.bookDao()
 
@@ -54,12 +93,7 @@ class ChapterUpdateWorker(
                 val bookUrl = book.url
 
                 val chapterUrls = withContext(Dispatchers.Main) {
-                    val webView = WebView(context).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        @Suppress("DEPRECATION")
-                        settings.databaseEnabled = true
-                    }
+                    val webView = com.example.util.WebViewFactory.create(context, null)
                     var urls = emptyList<String>()
                     try {
                         urls = scraper.scrapeChapterList(webView, bookUrl)
