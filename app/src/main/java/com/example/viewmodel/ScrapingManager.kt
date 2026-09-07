@@ -377,8 +377,7 @@ class ScrapingManager(
                         addLog("TOC fetch retry $tries/3: ${e.message}")
                         addLog("Auto-recovering: Refreshing background web session...")
                         withContext(Dispatchers.Main) {
-                            try { webView.stopLoading() } catch (ignored: Exception) {}
-                            try { webView.destroy() } catch (ignored: Exception) {}
+                            com.example.util.WebViewFactory.destroySafely(webView)
                         }
                         webView = createFreshWebView()
                         delay(2000)
@@ -426,6 +425,10 @@ class ScrapingManager(
                     isSearchingMissing = false
                     missingChaptersSummary = "Error during search: ${e.message}"
                 }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    com.example.util.WebViewFactory.destroySafely(webView)
+                }
             }
         }
     }
@@ -469,7 +472,7 @@ class ScrapingManager(
                     }
                 } finally {
                     withContext(Dispatchers.Main) {
-                        try { webView.destroy() } catch (_: Exception) {}
+                        com.example.util.WebViewFactory.destroySafely(webView)
                     }
                 }
 
@@ -677,8 +680,7 @@ class ScrapingManager(
                     addLog("TOC Connection retry $retryCount/3 due to: ${e.message}")
                     addLog("Auto-recovering: Refreshing background web session...")
                     withContext(Dispatchers.Main) {
-                        try { webView.stopLoading() } catch (ignored: Exception) {}
-                        try { webView.destroy() } catch (ignored: Exception) {}
+                        com.example.util.WebViewFactory.destroySafely(webView)
                     }
                     webView = createFreshWebView()
                     delay(2000)
@@ -855,8 +857,7 @@ class ScrapingManager(
                         addLog("Stall/Limbo on chapter $currentChapterNum, retry $tries/3: ${e.message}")
                         addLog("Auto-recovering: Refreshing web session & restarting WebView...")
                         withContext(Dispatchers.Main) {
-                            try { webView.stopLoading() } catch (ignored: Exception) {}
-                            try { webView.destroy() } catch (ignored: Exception) {}
+                            com.example.util.WebViewFactory.destroySafely(webView)
                         }
                         webView = createFreshWebView()
                         delay(2000)
@@ -927,11 +928,7 @@ class ScrapingManager(
             addLog("Scrape Session completed! Successfully processed all targeted chapters.")
         } finally {
             withContext(Dispatchers.Main) {
-                try {
-                    webView.destroy()
-                } catch (e: Exception) {
-                    // ignore
-                }
+                com.example.util.WebViewFactory.destroySafely(webView)
             }
         }
     }
@@ -1247,11 +1244,7 @@ class ScrapingManager(
                     }
                 } finally {
                     withContext(Dispatchers.Main) {
-                        try {
-                            webView.destroy()
-                        } catch (e: Exception) {
-                            // ignore
-                        }
+                        com.example.util.WebViewFactory.destroySafely(webView)
                     }
                 }
                 

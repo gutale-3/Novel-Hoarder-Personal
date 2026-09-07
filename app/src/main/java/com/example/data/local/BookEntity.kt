@@ -1,9 +1,15 @@
 package com.example.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "books")
+@Entity(
+    tableName = "books",
+    indices = [
+        Index(value = ["category"])
+    ]
+)
 data class BookEntity(
     @PrimaryKey val id: String, // TomatoMTL book ID (e.g. "123")
     val url: String,
@@ -16,5 +22,6 @@ data class BookEntity(
     val totalChapters: Int,
     val updatedAt: Long = System.currentTimeMillis(),
     val autoArchiveHours: Int = 0,
-    val isDeleted: Boolean = false
+    val isDeleted: Boolean = false,
+    val category: String = "Reading"
 )

@@ -230,13 +230,34 @@ object GenericScraper : NovelSource {
     }
 
     private suspend fun loadUrlAndWait(webView: WebView, url: String) {
-        suspendCancellableCoroutine<Unit> { continuation ->
-            webView.webViewClient = object : android.webkit.WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    if (continuation.isActive) continuation.resume(Unit)
+        withTimeoutOrNull(25000) {
+            suspendCancellableCoroutine<Unit> { continuation ->
+                webView.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        if (continuation.isActive) continuation.resume(Unit)
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        errorCode: Int,
+                        description: String?,
+                        failingUrl: String?
+                    ) {
+                        if (continuation.isActive) continuation.resume(Unit)
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                        error: android.webkit.WebResourceError?
+                    ) {
+                        if (request?.isForMainFrame == true && continuation.isActive) {
+                            continuation.resume(Unit)
+                        }
+                    }
                 }
+                webView.loadUrl(url)
             }
-            webView.loadUrl(url)
         }
     }
 

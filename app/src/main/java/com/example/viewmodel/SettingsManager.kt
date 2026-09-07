@@ -34,11 +34,13 @@ class SettingsManager(val application: Application) {
 
     // --- Reader Settings ---
     var readerTheme by mutableStateOf("follow_app") // "follow_app", "light", "dark", "sepia", "night", "mint", "nord", "oled"
+    var readerPagingMode by mutableStateOf("paged") // "paged" (Single Chapter with Next Button), "continuous" (Infinite Vertical Scroll)
     var readerLineHeight by mutableStateOf(1.4f)
     var readerParagraphSpacing by mutableStateOf(12) // in dp (0..24)
     var readerFirstLineIndentEnabled by mutableStateOf(false)
     var readerMargin by mutableStateOf(16) // in dp padding
     var readerLetterSpacing by mutableStateOf(0.0f)
+    var readerWordSpacing by mutableStateOf(0.0f)
     var readerCustomFontPath by mutableStateOf("")
     var readerCustomFontName by mutableStateOf("")
     var readerJustificationEnabled by mutableStateOf(false)
@@ -50,6 +52,7 @@ class SettingsManager(val application: Application) {
     // --- Library & Browse Settings ---
     var librarySort by mutableStateOf("recently_read") // "recently_read", "recently_updated", "title", "author", "unread_count", "progress"
     var libraryView by mutableStateOf("grid") // "grid", "list"
+    var activeLibraryCategory by mutableStateOf("All")
     var aggressiveCleanDefault by mutableStateOf(false)
     var chapterNumberingMode by mutableStateOf("site") // "site" (keep original), "sequential" (1, 2, 3...)
     var lastBrowserUrl by mutableStateOf("https://www.google.com")
@@ -116,11 +119,13 @@ class SettingsManager(val application: Application) {
         batchSize = prefs.getInt("batch_size", 10)
         autoFetchWhileReading = prefs.getBoolean("auto_fetch_while_reading", true)
         readerTheme = prefs.getString("reader_theme", "follow_app") ?: "follow_app"
+        readerPagingMode = prefs.getString("reader_paging_mode", "paged") ?: "paged"
         readerLineHeight = prefs.getFloat("reader_line_height", 1.4f)
         readerParagraphSpacing = prefs.getInt("reader_paragraph_spacing", 12)
         readerFirstLineIndentEnabled = prefs.getBoolean("reader_first_line_indent_enabled", false)
         readerMargin = prefs.getInt("reader_margin", 16)
         readerLetterSpacing = prefs.getFloat("reader_letter_spacing", 0.0f)
+        readerWordSpacing = prefs.getFloat("reader_word_spacing", 0.0f)
         readerCustomFontPath = prefs.getString("reader_custom_font_path", "") ?: ""
         readerCustomFontName = prefs.getString("reader_custom_font_name", "") ?: ""
         readerJustificationEnabled = prefs.getBoolean("reader_justification_enabled", false)
@@ -131,6 +136,7 @@ class SettingsManager(val application: Application) {
 
         librarySort = prefs.getString("library_sort", "recently_read") ?: "recently_read"
         libraryView = prefs.getString("library_view", "grid") ?: "grid"
+        activeLibraryCategory = prefs.getString("active_library_category", "All") ?: "All"
         aggressiveCleanDefault = prefs.getBoolean("aggressive_clean_default", false)
         chapterNumberingMode = prefs.getString("chapter_numbering_mode", "site") ?: "site"
         lastBrowserUrl = prefs.getString("last_browser_url", "https://www.google.com") ?: "https://www.google.com"
@@ -193,6 +199,21 @@ class SettingsManager(val application: Application) {
     fun updateReaderTheme(theme: String) {
         readerTheme = theme
         prefs.edit().putString("reader_theme", theme).apply()
+    }
+
+    fun updateReaderPagingMode(mode: String) {
+        readerPagingMode = mode
+        prefs.edit().putString("reader_paging_mode", mode).apply()
+    }
+
+    fun updateReaderWordSpacing(spacing: Float) {
+        readerWordSpacing = spacing.coerceIn(-0.1f, 0.5f)
+        prefs.edit().putFloat("reader_word_spacing", readerWordSpacing).apply()
+    }
+
+    fun updateActiveLibraryCategory(category: String) {
+        activeLibraryCategory = category
+        prefs.edit().putString("active_library_category", category).apply()
     }
 
     fun updateReaderLineHeight(height: Float) {
@@ -483,109 +504,10 @@ class SettingsManager(val application: Application) {
     }
 
     suspend fun exportLibraryMetadataJson(repository: NovelRepository): String = withContext(Dispatchers.IO) {
-        val books = repository.getAllBooks()
-        val jsonArray = JSONArray()
-
-        for (book in books) {
-            val bookObj = JSONObject()
-            bookObj.put("id", book.id)
-            bookObj.put("title", book.title)
-            bookObj.put("author", book.author)
-            bookObj.put("synopsis", book.synopsis)
-            bookObj.put("coverUrl", book.coverUrl ?: "")
-            bookObj.put("url", book.url)
-            bookObj.put("lastReadChapterId", book.lastReadChapterId ?: "")
-
-            val chapters = repository.getChapters(book.id)
-            val chArray = JSONArray()
-            for (ch in chapters) {
-                val chObj = JSONObject()
-                chObj.put("id", ch.id)
-                chObj.put("chapterId", ch.chapterId)
-                chObj.put("title", ch.title)
-                chObj.put("content", ch.content)
-                chObj.put("url", ch.url)
-                chObj.put("chapterNumber", ch.chapterNumber)
-                chObj.put("hash", ch.hash)
-                chArray.put(chObj)
-            }
-            bookObj.put("chapters", chArray)
-
-            val glossaries = repository.getGlossary(book.id)
-            val glArray = JSONArray()
-            for (gl in glossaries) {
-                val glObj = JSONObject()
-                glObj.put("id", gl.id)
-                glObj.put("originalText", gl.originalText)
-                glObj.put("replacementText", gl.replacementText)
-                glArray.put(glObj)
-            }
-            bookObj.put("glossaries", glArray)
-
-            jsonArray.put(bookObj)
-        }
-
-        val root = JSONObject()
-        root.put("version", 1)
-        root.put("exportedAt", System.currentTimeMillis())
-        root.put("books", jsonArray)
-        root.toString(2)
+        com.example.util.BackupRestoreManager.generateBackupMetadataJson(repository)
     }
 
     suspend fun importLibraryMetadataJson(repository: NovelRepository, jsonStr: String): Int = withContext(Dispatchers.IO) {
-        val root = JSONObject(jsonStr)
-        val booksArray = root.getJSONArray("books")
-        var importedCount = 0
-
-        for (i in 0 until booksArray.length()) {
-            val bookObj = booksArray.getJSONObject(i)
-            val book = com.example.data.local.BookEntity(
-                id = bookObj.getString("id"),
-                url = bookObj.optString("url", ""),
-                title = bookObj.getString("title"),
-                author = bookObj.optString("author", "Unknown Author"),
-                synopsis = bookObj.optString("synopsis", ""),
-                coverUrl = bookObj.optString("coverUrl", null).takeIf { !it.isNullOrEmpty() },
-                coverLocalPath = null,
-                lastReadChapterId = bookObj.optString("lastReadChapterId", null).takeIf { !it.isNullOrEmpty() },
-                totalChapters = 0
-            )
-            repository.insertBook(book)
-
-            val chArray = bookObj.optJSONArray("chapters")
-            if (chArray != null) {
-                for (j in 0 until chArray.length()) {
-                    val chObj = chArray.getJSONObject(j)
-                    val ch = com.example.data.local.ChapterEntity(
-                        id = chObj.getString("id"),
-                        bookId = book.id,
-                        chapterId = chObj.optString("chapterId", "ch_${j+1}"),
-                        chapterNumber = chObj.optInt("chapterNumber", j + 1),
-                        title = chObj.getString("title"),
-                        url = chObj.optString("url", ""),
-                        content = chObj.optString("content", ""),
-                        hash = chObj.optString("hash", "")
-                    )
-                    repository.insertChapter(ch)
-                }
-            }
-
-            val glArray = bookObj.optJSONArray("glossaries")
-            if (glArray != null) {
-                for (j in 0 until glArray.length()) {
-                    val glObj = glArray.getJSONObject(j)
-                    val gl = com.example.data.local.GlossaryEntity(
-                        id = 0,
-                        bookId = book.id,
-                        originalText = glObj.getString("originalText"),
-                        replacementText = glObj.getString("replacementText")
-                    )
-                    repository.insertGlossary(gl)
-                }
-            }
-
-            importedCount++
-        }
-        importedCount
+        com.example.util.BackupRestoreManager.importJsonString(repository, jsonStr)
     }
 }

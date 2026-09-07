@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ReadingSessionEntity::class,
         TextReplacementRuleEntity::class
     ],
-    version = 6,
+    version = 9,
     exportSchema = true
 )
 /**
@@ -135,6 +135,33 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapters_bookId_isArchived_isDeleted_chapterNumber` ON `chapters` (`bookId`, `isArchived`, `isDeleted`, `chapterNumber`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapters_bookId_chapterNumber` ON `chapters` (`bookId`, `chapterNumber`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapters_hash` ON `chapters` (`hash`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookId` ON `bookmarks` (`bookId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookId_chapterId` ON `bookmarks` (`bookId`, `chapterId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_reading_sessions_bookId` ON `reading_sessions` (`bookId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_reading_sessions_date` ON `reading_sessions` (`date`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_replacement_rules_bookId` ON `replacement_rules` (`bookId`)")
+            }
+        }
+
+        internal val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "books", "category", "TEXT NOT NULL DEFAULT 'Reading'")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_books_category` ON `books` (`category`)")
+            }
+        }
+
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Ensure index_books_category exists for any database transitioning from 8 to 9
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_books_category` ON `books` (`category`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -142,7 +169,17 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "novel_hoarder_db"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8,
+                    MIGRATION_8_9
+                )
+                .fallbackToDestructiveMigration()
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { INSTANCE = it }

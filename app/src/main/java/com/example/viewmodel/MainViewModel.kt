@@ -258,11 +258,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         container.tts.onSpeakStarted = { isTtsPlayerBarMinimized = false }
     }
 
-    // --- Stats state ---
+    // --- Stats state (Optimized Reactive Flows) ---
+    val allBookStatsMap: StateFlow<Map<String, BookStats>> = repository.allBookStatsFlow
+        .map { list -> list.associateBy { it.bookId } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     val totalBooks = repository.allBooks.map { it.size }
-    val totalChapters = flow {
-        emit(repository.getTotalChapterCount())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val totalChapters: StateFlow<Int> = repository.allBookStatsFlow
+        .map { list -> list.sumOf { it.totalChapters } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    // --- Search Helper ---
+    suspend fun searchChapters(bookId: String?, query: String): List<ChapterEntity> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext emptyList()
+        if (bookId.isNullOrEmpty()) {
+            repository.searchAllChapters(query.trim())
+        } else {
+            repository.searchChaptersInBook(bookId, query.trim())
+        }
+    }
+
+    // --- Storage Maintenance ---
+    suspend fun getStorageBreakdown(context: Context) = com.example.util.StorageMaintenanceManager.computeStorageBreakdown(context, repository)
+    suspend fun cleanTempExportFiles(context: Context) = com.example.util.StorageMaintenanceManager.cleanTempExportFiles(context)
+    suspend fun cleanOrphanedCovers(context: Context) = com.example.util.StorageMaintenanceManager.cleanOrphanedCovers(context, repository)
+    suspend fun vacuumDatabase(context: Context) = com.example.util.StorageMaintenanceManager.vacuumDatabase(context)
+    suspend fun purgeReadChaptersContent() = com.example.util.StorageMaintenanceManager.purgeReadChaptersContent(repository)
 
     // --- TTS Minimize State ---
     var isTtsPlayerBarMinimized by mutableStateOf(false)
@@ -425,34 +446,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         findText: String,
         replaceText: String,
         scopeAllBooks: Boolean
-    ): Pair<Int, Int> = withContext(Dispatchers.IO) {
-        if (findText.isEmpty()) return@withContext Pair(0, 0)
-
-        var chaptersModified = 0
-        var totalMatchesReplaced = 0
-
-        val targetChapters = if (scopeAllBooks) {
-            val books = repository.allBooks.firstOrNull() ?: emptyList()
-            books.flatMap { repository.getChapters(it.id) }
-        } else {
-            if (bookId == null) emptyList() else repository.getChapters(bookId)
-        }
-
-        for (chapter in targetChapters) {
-            if (chapter.content.contains(findText, ignoreCase = true)) {
-                val regex = Regex(Regex.escape(findText), RegexOption.IGNORE_CASE)
-                val matches = regex.findAll(chapter.content).count()
-                if (matches > 0) {
-                    val updatedContent = chapter.content.replace(findText, replaceText, ignoreCase = true)
-                    repository.updateChapterContent(chapter.id, updatedContent)
-                    chaptersModified++
-                    totalMatchesReplaced += matches
-                }
-            }
-        }
-
-        return@withContext Pair(chaptersModified, totalMatchesReplaced)
-    }
+    ): Pair<Int, Int> = textRules.bulkFindAndReplace(bookId, findText, replaceText, scopeAllBooks)
 
     override fun onCleared() {
         super.onCleared()

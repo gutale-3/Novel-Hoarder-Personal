@@ -27,35 +27,39 @@ class ChapterUpdateWorker(
         const val NOTIFICATION_ID_BASE = 2000
 
         fun schedulePeriodicUpdates(context: Context) {
-            val prefs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
-            val isEnabled = prefs.getBoolean("enable_auto_check_updates", true)
-            val workManager = androidx.work.WorkManager.getInstance(context)
+            try {
+                val prefs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+                val isEnabled = prefs.getBoolean("enable_auto_check_updates", true)
+                val workManager = androidx.work.WorkManager.getInstance(context)
 
-            if (!isEnabled) {
-                workManager.cancelUniqueWork(WORK_NAME)
-                return
-            }
+                if (!isEnabled) {
+                    workManager.cancelUniqueWork(WORK_NAME)
+                    return
+                }
 
-            val intervalHours = prefs.getInt("update_check_interval_hours", 12).toLong().coerceIn(4L, 48L)
-            val wifiOnly = prefs.getBoolean("update_check_wifi_only", true)
+                val intervalHours = prefs.getInt("update_check_interval_hours", 12).toLong().coerceIn(4L, 48L)
+                val wifiOnly = prefs.getBoolean("update_check_wifi_only", true)
 
-            val constraints = androidx.work.Constraints.Builder()
-                .setRequiredNetworkType(
-                    if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED
+                val constraints = androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(
+                        if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED
+                    )
+                    .build()
+
+                val updateRequest = androidx.work.PeriodicWorkRequestBuilder<ChapterUpdateWorker>(
+                    intervalHours, java.util.concurrent.TimeUnit.HOURS
                 )
-                .build()
+                    .setConstraints(constraints)
+                    .build()
 
-            val updateRequest = androidx.work.PeriodicWorkRequestBuilder<ChapterUpdateWorker>(
-                intervalHours, java.util.concurrent.TimeUnit.HOURS
-            )
-                .setConstraints(constraints)
-                .build()
-
-            workManager.enqueueUniquePeriodicWork(
-                WORK_NAME,
-                androidx.work.ExistingPeriodicWorkPolicy.UPDATE,
-                updateRequest
-            )
+                workManager.enqueueUniquePeriodicWork(
+                    WORK_NAME,
+                    androidx.work.ExistingPeriodicWorkPolicy.UPDATE,
+                    updateRequest
+                )
+            } catch (t: Throwable) {
+                android.util.Log.e("ChapterUpdateWorker", "WorkManager schedule failed gracefully", t)
+            }
         }
     }
 

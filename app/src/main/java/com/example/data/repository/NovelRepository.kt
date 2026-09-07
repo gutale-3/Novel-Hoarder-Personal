@@ -199,6 +199,22 @@ class NovelRepository(private val bookDao: BookDao) {
     suspend fun deleteReplacementRuleById(id: Long) = bookDao.deleteReplacementRuleById(id)
     suspend fun insertReplacementRules(rules: List<TextReplacementRuleEntity>) = bookDao.insertReplacementRules(rules)
 
+    // --- Batch Stats (Eliminating N+1 Queries) ---
+    val allBookStatsFlow: Flow<List<BookStats>> = bookDao.getAllBookStatsFlow()
+    suspend fun getAllBookStats(): List<BookStats> = bookDao.getAllBookStats()
+
+    // --- Category Management ---
+    suspend fun updateBookCategory(bookId: String, category: String) = bookDao.updateBookCategory(bookId, category)
+    suspend fun updateBooksCategory(bookIds: List<String>, category: String) = bookDao.updateBooksCategory(bookIds, category)
+
+    // --- In-Novel & Global Chapter Search ---
+    suspend fun searchChaptersInBook(bookId: String, query: String): List<ChapterEntity> = bookDao.searchChaptersInBook(bookId, query)
+    suspend fun searchAllChapters(query: String, limit: Int = 100): List<ChapterEntity> = bookDao.searchAllChapters(query, limit)
+
+    // --- Storage Space Reclamation ---
+    suspend fun clearReadChaptersContent(bookId: String): Int = bookDao.clearReadChaptersContent(bookId)
+    suspend fun clearAllReadChaptersContent(): Int = bookDao.clearAllReadChaptersContent()
+
     // --- Glossary & Text Rule application helpers ---
     fun applyGlossary(text: String, glossary: List<GlossaryEntity>): String {
         var cleanText = text

@@ -82,7 +82,7 @@ class TtsPlaybackManager(
     var ttsActiveParagraphIndex by mutableStateOf<Int?>(-1)
 
     // Premium Piper / Kokoro offline voice properties
-    val sherpaOnnxTtsEngine = SherpaOnnxTtsEngine(application)
+    val sherpaOnnxTtsEngine by lazy { SherpaOnnxTtsEngine(application) }
     var premiumVoiceDownloading by mutableStateOf(false)
         private set
     var premiumVoiceDownloadProgress by mutableStateOf(0)
@@ -586,20 +586,32 @@ class TtsPlaybackManager(
                 addAction("com.example.ACTION_NEXT_CHAPTER")
                 addAction("com.example.ACTION_STOP_TTS")
             }
-            ContextCompat.registerReceiver(
-                context,
-                ttsReceiver,
-                filter,
-                ContextCompat.RECEIVER_NOT_EXPORTED
-            )
+            try {
+                ContextCompat.registerReceiver(
+                    context,
+                    ttsReceiver,
+                    filter,
+                    ContextCompat.RECEIVER_NOT_EXPORTED
+                )
+            } catch (e: Exception) {
+                try {
+                    context.registerReceiver(ttsReceiver, filter)
+                } catch (ignored: Exception) {}
+            }
 
-            val noisyFilter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
-            ContextCompat.registerReceiver(
-                context,
-                noisyReceiver,
-                noisyFilter,
-                ContextCompat.RECEIVER_NOT_EXPORTED
-            )
+            try {
+                val noisyFilter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+                ContextCompat.registerReceiver(
+                    context,
+                    noisyReceiver,
+                    noisyFilter,
+                    ContextCompat.RECEIVER_EXPORTED
+                )
+            } catch (e: Exception) {
+                try {
+                    context.registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+                } catch (ignored: Exception) {}
+            }
 
             isReceiverRegistered = true
         }

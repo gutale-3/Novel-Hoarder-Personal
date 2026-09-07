@@ -1,9 +1,16 @@
 package com.example.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "reading_sessions")
+@Entity(
+    tableName = "reading_sessions",
+    indices = [
+        Index(value = ["bookId"]),
+        Index(value = ["date"])
+    ]
+)
 data class ReadingSessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val bookId: String,

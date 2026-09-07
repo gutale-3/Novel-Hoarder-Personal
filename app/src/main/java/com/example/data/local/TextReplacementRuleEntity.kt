@@ -1,9 +1,15 @@
 package com.example.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "replacement_rules")
+@Entity(
+    tableName = "replacement_rules",
+    indices = [
+        Index(value = ["bookId"])
+    ]
+)
 data class TextReplacementRuleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val bookId: String? = null, // null indicates global rule across all books

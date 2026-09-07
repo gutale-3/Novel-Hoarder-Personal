@@ -372,12 +372,7 @@ class AiFeaturesManager(
                 if (book.url.startsWith("local://")) return@launch
                 val scraper = SourceManager.getSourceForUrl(book.url)
                 val webView = withContext(Dispatchers.Main) {
-                    WebView(settings.application.applicationContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        @Suppress("DEPRECATION")
-                        settings.databaseEnabled = true
-                    }
+                    com.example.util.WebViewFactory.create(settings.application.applicationContext)
                 }
 
                 try {
@@ -435,7 +430,7 @@ class AiFeaturesManager(
                     }
                 } finally {
                     withContext(Dispatchers.Main) {
-                        try { webView.destroy() } catch (_: Exception) {}
+                        com.example.util.WebViewFactory.destroySafely(webView)
                     }
                 }
             } catch (e: Exception) {

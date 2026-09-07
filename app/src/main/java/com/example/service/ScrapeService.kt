@@ -30,12 +30,16 @@ class ScrapeService : Service() {
         const val NOTIFICATION_ID = 1003
 
         fun start(context: Context, bookName: String, totalChapters: Int) {
-            val intent = Intent(context, ScrapeService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_BOOK_NAME, bookName)
-                putExtra(EXTRA_TOTAL_CHAPTERS, totalChapters)
+            try {
+                val intent = Intent(context, ScrapeService::class.java).apply {
+                    action = ACTION_START
+                    putExtra(EXTRA_BOOK_NAME, bookName)
+                    putExtra(EXTRA_TOTAL_CHAPTERS, totalChapters)
+                }
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: Exception) {
+                // Background start restrictions — scraping continues without FGS
             }
-            ContextCompat.startForegroundService(context, intent)
         }
 
         fun update(context: Context, currentChapter: Int, status: String) {
@@ -84,14 +88,18 @@ class ScrapeService : Service() {
                 totalChapters = intent.getIntExtra(EXTRA_TOTAL_CHAPTERS, 0)
                 
                 val notification = buildNotification(0, "Starting...")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(
+                            NOTIFICATION_ID,
+                            notification,
+                            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                        )
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
+                } catch (e: Exception) {
+                    // Ignore foreground start failures if permission or background constraint blocked
                 }
             }
             ACTION_UPDATE -> {

@@ -36,11 +36,15 @@ class VoiceDownloadService : Service() {
         const val NOTIFICATION_ID = 1002
 
         fun start(context: Context, voiceId: String) {
-            val intent = Intent(context, VoiceDownloadService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_VOICE_ID, voiceId)
+            try {
+                val intent = Intent(context, VoiceDownloadService::class.java).apply {
+                    action = ACTION_START
+                    putExtra(EXTRA_VOICE_ID, voiceId)
+                }
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: Exception) {
+                // Background start restrictions — download will run through direct coroutines if needed
             }
-            ContextCompat.startForegroundService(context, intent)
         }
     }
 
@@ -76,14 +80,18 @@ class VoiceDownloadService : Service() {
                         .setProgress(100, 0, true)
                         .setOngoing(true)
 
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(
-                            NOTIFICATION_ID,
-                            builder.build(),
-                            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                        )
-                    } else {
-                        startForeground(NOTIFICATION_ID, builder.build())
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            startForeground(
+                                NOTIFICATION_ID,
+                                builder.build(),
+                                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                            )
+                        } else {
+                            startForeground(NOTIFICATION_ID, builder.build())
+                        }
+                    } catch (e: Exception) {
+                        // Foreground service start restriction fallback
                     }
 
                     serviceScope.launch {

@@ -45,15 +45,7 @@ fun HomeScreen(
     val books by viewModel.repository.allBooks.collectAsState(emptyList())
     val totalBooksCount by viewModel.totalBooks.collectAsState(0)
     val totalChaptersCount by viewModel.totalChapters.collectAsState(0)
-
-    val unreadCounts = remember { mutableStateMapOf<String, Int>() }
-
-    LaunchedEffect(books) {
-        books.forEach { book ->
-            val count = viewModel.repository.getUnreadChapterCount(book.id)
-            unreadCounts[book.id] = count
-        }
-    }
+    val bookStatsMap by viewModel.allBookStatsMap.collectAsState()
 
     LazyColumn(
         modifier = modifier
@@ -481,7 +473,7 @@ fun HomeScreen(
             items(books.take(5)) { book ->
                 RecentBookRow(
                     book = book,
-                    unreadCount = unreadCounts[book.id] ?: 0,
+                    unreadCount = bookStatsMap[book.id]?.unreadCount ?: 0,
                     onClick = { onOpenBook(book.id) }
                 )
             }

@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -14,12 +16,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
 import com.example.ui.theme.AppTheme
 import com.example.ui.theme.MinTouchTarget
 import com.example.ui.theme.TextDefaults
 import com.example.ui.theme.screenContentPadding
 import com.example.viewmodel.MainViewModel
+import com.example.util.StorageBreakdown
+import com.example.util.StorageMaintenanceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -39,21 +44,25 @@ fun SettingsScreen(
     val aiModelManager = viewModel.aiModelManager
 
     var showClearDataDialog by remember { mutableStateOf(false) }
-    var totalStorageText by remember { mutableStateOf("Calculating...") }
+    var showCrashLogDialog by remember { mutableStateOf(false) }
+    var crashLogContent by remember { mutableStateOf<String?>(null) }
+    var storageBreakdown by remember { mutableStateOf<StorageBreakdown?>(null) }
+    var isCleaningStorage by remember { mutableStateOf(false) }
 
-    // Calculate total storage
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            val dbFile = context.getDatabasePath("novel_hoarder_db")
-            val dbSize = if (dbFile.exists()) dbFile.length() else 0L
-            val filesDirSize = getFolderSize(context.filesDir)
-            val cacheDirSize = getFolderSize(context.cacheDir)
-            val total = dbSize + filesDirSize + cacheDirSize
-            val mb = total / (1024 * 1024)
-            withContext(Dispatchers.Main) {
-                totalStorageText = "$mb MB"
-            }
+    fun refreshStorage() {
+        coroutineScope.launch {
+            storageBreakdown = StorageMaintenanceManager.computeStorageBreakdown(context, viewModel.repository)
         }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshStorage()
+        try {
+            val crashFile = File(context.filesDir, "last_crash.txt")
+            if (crashFile.exists()) {
+                crashLogContent = crashFile.readText()
+            }
+        } catch (_: Exception) {}
     }
 
     var isBackingUp by remember { mutableStateOf(false) }
@@ -422,7 +431,10 @@ fun SettingsScreen(
                     }
                 }
 
-                Text("Total Library Storage: $totalStorageText", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Total App Storage: ${storageBreakdown?.let { StorageMaintenanceManager.formatBytes(it.totalSizeBytes) } ?: "Calculating..."}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
             }
@@ -688,6 +700,77 @@ fun SettingsScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Storage Breakdown & Reclaim Space
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Storage & Cache Management", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        }
+
+                        val bd = storageBreakdown
+                        if (bd != null) {
+                            Text("Total App Storage: ${StorageMaintenanceManager.formatBytes(bd.totalSizeBytes)}", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            Text("• Database: ${StorageMaintenanceManager.formatBytes(bd.databaseSizeBytes)} (${bd.totalBooksCount} books, ${bd.totalChaptersCount} chapters)", style = MaterialTheme.typography.bodySmall)
+                            Text("• Book Covers: ${StorageMaintenanceManager.formatBytes(bd.coversSizeBytes)}", style = MaterialTheme.typography.bodySmall)
+                            Text("• Export & Temp Cache: ${StorageMaintenanceManager.formatBytes(bd.tempExportsSizeBytes + bd.otherCacheSizeBytes)}", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text("Calculating storage...", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        isCleaningStorage = true
+                                        val freedExports = StorageMaintenanceManager.cleanTempExportFiles(context)
+                                        val deletedCovers = StorageMaintenanceManager.cleanOrphanedCovers(context, viewModel.repository)
+                                        StorageMaintenanceManager.vacuumDatabase(context)
+                                        refreshStorage()
+                                        isCleaningStorage = false
+                                        Toast.makeText(context, "Cleaned: ${StorageMaintenanceManager.formatBytes(freedExports)} cache freed, $deletedCovers orphaned covers removed", Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                enabled = !isCleaningStorage,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (isCleaningStorage) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                } else {
+                                    Icon(Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Clean Cache", fontSize = 12.sp, softWrap = false)
+                                }
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        isCleaningStorage = true
+                                        StorageMaintenanceManager.vacuumDatabase(context)
+                                        refreshStorage()
+                                        isCleaningStorage = false
+                                        Toast.makeText(context, "Database optimized and compacted", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                enabled = !isCleaningStorage,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Optimize DB", fontSize = 12.sp, softWrap = false)
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedButton(
@@ -695,7 +778,7 @@ fun SettingsScreen(
                     modifier = Modifier.padding(vertical = 4.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Icon(Icons.Default.CleaningServices, contentDescription = null)
+                    Icon(Icons.Default.DeleteSweep, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Clear Site Data & Cookies", softWrap = false)
                 }
@@ -724,7 +807,114 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
+            // --- 9. Diagnostics & Stability ---
+            item {
+                SectionHeader("Diagnostics & Stability")
+
+                if (crashLogContent != null) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Previous Crash Log Saved",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { showCrashLogDialog = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Text("View Crash Log")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            File(context.filesDir, "last_crash.txt").delete()
+                                            crashLogContent = null
+                                            Toast.makeText(context, "Crash log cleared", Toast.LENGTH_SHORT).show()
+                                        } catch (_: Exception) {}
+                                    }
+                                ) {
+                                    Text("Dismiss")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        "No crashes detected. App environment is running stably.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        val report = buildString {
+                            appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                            appendLine("Android: ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
+                            appendLine("ABIs: ${android.os.Build.SUPPORTED_ABIS.joinToString(", ")}")
+                            appendLine("App Version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                        }
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Device Diagnostics", report))
+                        Toast.makeText(context, "System diagnostics copied to clipboard", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchTarget)
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Copy Device Diagnostics")
+                }
+            }
         }
+    }
+
+    if (showCrashLogDialog && crashLogContent != null) {
+        AlertDialog(
+            onDismissRequest = { showCrashLogDialog = false },
+            title = { Text("Crash Diagnostics Log") },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(260.dp)
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                ) {
+                    Text(
+                        text = crashLogContent ?: "",
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Crash Log", crashLogContent ?: ""))
+                        Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Copy")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCrashLogDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
     }
 
     if (showClearDataDialog) {

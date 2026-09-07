@@ -136,4 +136,38 @@ class TextReplacementManager(
             }
         }
     }
+
+    suspend fun bulkFindAndReplace(
+        bookId: String?,
+        findText: String,
+        replaceText: String,
+        scopeAllBooks: Boolean
+    ): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        if (findText.isEmpty()) return@withContext Pair(0, 0)
+
+        var chaptersModified = 0
+        var totalMatchesReplaced = 0
+
+        val targetChapters = if (scopeAllBooks) {
+            val books = repository.getAllBooks()
+            books.flatMap { repository.getChapters(it.id) }
+        } else {
+            if (bookId == null) emptyList() else repository.getChapters(bookId)
+        }
+
+        val regex = Regex(Regex.escape(findText), RegexOption.IGNORE_CASE)
+        for (chapter in targetChapters) {
+            if (chapter.content.contains(findText, ignoreCase = true)) {
+                val matches = regex.findAll(chapter.content).count()
+                if (matches > 0) {
+                    val updatedContent = chapter.content.replace(findText, replaceText, ignoreCase = true)
+                    repository.updateChapterContent(chapter.id, updatedContent)
+                    chaptersModified++
+                    totalMatchesReplaced += matches
+                }
+            }
+        }
+
+        return@withContext Pair(chaptersModified, totalMatchesReplaced)
+    }
 }

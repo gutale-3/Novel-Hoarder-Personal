@@ -326,4 +326,70 @@ interface BookDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertReplacementRules(rules: List<TextReplacementRuleEntity>)
+
+    // --- Batch Aggregated Stats (Single-Query Elimination of N+1) ---
+    @Query("""
+        SELECT 
+            bookId,
+            COUNT(*) AS totalChapters,
+            COUNT(CASE WHEN isRead = 0 THEN 1 END) AS unreadCount,
+            COUNT(CASE WHEN content != '' THEN 1 END) AS downloadedCount
+        FROM chapters
+        WHERE isDeleted = 0
+        GROUP BY bookId
+    """)
+    fun getAllBookStatsFlow(): Flow<List<BookStats>>
+
+    @Query("""
+        SELECT 
+            bookId,
+            COUNT(*) AS totalChapters,
+            COUNT(CASE WHEN isRead = 0 THEN 1 END) AS unreadCount,
+            COUNT(CASE WHEN content != '' THEN 1 END) AS downloadedCount
+        FROM chapters
+        WHERE isDeleted = 0
+        GROUP BY bookId
+    """)
+    suspend fun getAllBookStats(): List<BookStats>
+
+    // --- Category Management ---
+    @Query("UPDATE books SET category = :category WHERE id = :bookId")
+    suspend fun updateBookCategory(bookId: String, category: String)
+
+    @Query("UPDATE books SET category = :category WHERE id IN (:bookIds)")
+    suspend fun updateBooksCategory(bookIds: List<String>, category: String)
+
+    // --- In-Novel & Global Chapter Full-Text Search ---
+    @Query("""
+        SELECT * FROM chapters 
+        WHERE bookId = :bookId 
+          AND isDeleted = 0 
+          AND (title LIKE '%' || :query || '%' OR content LIKE '%' || :query || '%')
+        ORDER BY chapterNumber ASC
+    """)
+    suspend fun searchChaptersInBook(bookId: String, query: String): List<ChapterEntity>
+
+    @Query("""
+        SELECT * FROM chapters 
+        WHERE isDeleted = 0 
+          AND (title LIKE '%' || :query || '%' OR content LIKE '%' || :query || '%')
+        ORDER BY bookId, chapterNumber ASC
+        LIMIT :limit
+    """)
+    suspend fun searchAllChapters(query: String, limit: Int = 100): List<ChapterEntity>
+
+    // --- Storage Maintenance / Space Reclamation ---
+    @Query("UPDATE chapters SET content = '' WHERE bookId = :bookId AND isRead = 1")
+    suspend fun clearReadChaptersContent(bookId: String): Int
+
+    @Query("UPDATE chapters SET content = '' WHERE isRead = 1")
+    suspend fun clearAllReadChaptersContent(): Int
 }
+
+data class BookStats(
+    val bookId: String,
+    val totalChapters: Int,
+    val unreadCount: Int,
+    val downloadedCount: Int
+)
+

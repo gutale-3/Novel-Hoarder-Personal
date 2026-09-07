@@ -48,4 +48,24 @@ object WebViewFactory {
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
     }
+
+    /**
+     * Safely destroys a WebView instance, releasing all listeners, removing from any parent,
+     * clearing history, and preventing memory leaks.
+     */
+    fun destroySafely(webView: WebView?) {
+        if (webView == null) return
+        try {
+            webView.stopLoading()
+            webView.webChromeClient = null
+            webView.webViewClient = android.webkit.WebViewClient()
+            webView.loadUrl("about:blank")
+            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+            webView.clearHistory()
+            webView.removeAllViews()
+            webView.destroy()
+        } catch (ignored: Exception) {
+            // ignore
+        }
+    }
 }

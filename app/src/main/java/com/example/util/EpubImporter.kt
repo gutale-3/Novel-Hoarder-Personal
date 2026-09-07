@@ -390,17 +390,19 @@ object EpubImporter {
                 }
             }
 
-            // Include any readable manifest HTML/XHTML items that might be missing from spine
-            val manifestHtmlHrefs = manifestMap.values.filter { href ->
-                val clean = href.substringBefore("#").substringBefore("?")
-                val ext = clean.substringAfterLast('.', "").lowercase()
-                ext in listOf("html", "xhtml", "htm", "xml")
-            }
+            // Only if spine was empty or missing, fallback to manifest HTML/XHTML items
+            if (spineFiles.isEmpty()) {
+                val manifestHtmlHrefs = manifestMap.values.filter { href ->
+                    val clean = href.substringBefore("#").substringBefore("?")
+                    val ext = clean.substringAfterLast('.', "").lowercase()
+                    ext in listOf("html", "xhtml", "htm", "xml")
+                }
 
-            for (href in manifestHtmlHrefs) {
-                val resolved = resolveEpubFile(opfDir, href, tempDir)
-                if (resolved != null && resolved.exists() && seenCanonicalPaths.add(resolved.canonicalPath)) {
-                    spineFiles.add(Pair(href, resolved))
+                for (href in manifestHtmlHrefs) {
+                    val resolved = resolveEpubFile(opfDir, href, tempDir)
+                    if (resolved != null && resolved.exists() && seenCanonicalPaths.add(resolved.canonicalPath)) {
+                        spineFiles.add(Pair(href, resolved))
+                    }
                 }
             }
 
@@ -501,7 +503,9 @@ object EpubImporter {
                     else -> ""
                 }
 
-                if (text.isNotBlank()) {
+                if (isFrontMatter(file.name, resolvedTitle, text)) {
+                    warnings.add("Skipped front matter: ${resolvedTitle.ifBlank { file.name }}")
+                } else if (text.isNotBlank()) {
                     rawChapters.add(RawChapter(title = resolvedTitle, content = text))
                 } else {
                     warnings.add("Skipped empty file: ${file.name}")
@@ -561,6 +565,20 @@ object EpubImporter {
     }
 
     private data class RawChapter(val title: String, val content: String)
+
+    private fun isFrontMatter(filename: String, title: String, text: String): Boolean {
+        val lowerName = filename.lowercase()
+        val lowerTitle = title.lowercase()
+        val lowerText = text.lowercase()
+
+        val isCopyright = lowerName.contains("copyright") || lowerTitle.contains("copyright") ||
+                (lowerText.contains("all rights reserved") && text.length < 2000)
+        val isTitlePage = lowerName.contains("titlepage") || lowerName.contains("title_page") || lowerTitle == "title page"
+        val isCover = (lowerName.contains("cover") || lowerTitle == "cover") && text.length < 500
+        val isToc = (lowerName.contains("toc") || lowerTitle == "table of contents" || lowerTitle == "contents") && text.length < 2000
+
+        return isCopyright || isTitlePage || isCover || isToc
+    }
 
     // =========================================================================
     // TXT IMPORTER

@@ -1,9 +1,16 @@
 package com.example.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "bookmarks")
+@Entity(
+    tableName = "bookmarks",
+    indices = [
+        Index(value = ["bookId"]),
+        Index(value = ["bookId", "chapterId"])
+    ]
+)
 data class BookmarkEntity(
     @PrimaryKey val id: String, // bookId_chapterId_paragraphIndex
     val bookId: String,

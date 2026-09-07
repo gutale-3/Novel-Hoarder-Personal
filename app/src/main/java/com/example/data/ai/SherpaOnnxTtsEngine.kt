@@ -109,11 +109,15 @@ class SherpaOnnxTtsEngine(private val context: Context) {
                     maxNumSentences = 1
                 )
 
+                try {
+                    System.loadLibrary("onnxruntime")
+                } catch (_: Throwable) {}
+
                 offlineTts = OfflineTts(config = config)
                 loadedModelFolder = voice.folderName
                 return offlineTts
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (t: Throwable) {
+                android.util.Log.e("SherpaOnnx", "Failed to initialize OfflineTts engine", t)
                 return null
             }
         }
@@ -123,7 +127,7 @@ class SherpaOnnxTtsEngine(private val context: Context) {
         synchronized(engineLock) {
             try {
                 offlineTts?.release()
-            } catch (e: Exception) {
+            } catch (_: Throwable) {
                 // ignore
             }
             offlineTts = null

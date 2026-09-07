@@ -69,18 +69,12 @@ fun LibraryScreen(
     var showImportStatusDialog by remember { mutableStateOf(false) }
     var importStatusMessage by remember { mutableStateOf("") }
 
-    // Keep Map of bookId -> unreadCount & downloadedCount in memory
-    val unreadCounts = remember { mutableStateMapOf<String, Int>() }
-    val downloadedCounts = remember { mutableStateMapOf<String, Int>() }
+    // Batch book stats map from Room (No N+1 queries)
+    val bookStatsMap by viewModel.allBookStatsMap.collectAsState()
 
-    LaunchedEffect(books) {
-        books.forEach { book ->
-            val unread = viewModel.repository.getUnreadChapterCount(book.id)
-            val downloaded = viewModel.repository.getDownloadedChapterCount(book.id)
-            unreadCounts[book.id] = unread
-            downloadedCounts[book.id] = downloaded
-        }
-    }
+    // Category / Shelf state
+    val categories = listOf("All", "Reading", "Plan to Read", "Completed", "Favorites")
+    var selectedCategory by remember { mutableStateOf(viewModel.settings.activeLibraryCategory) }
 
     // Export with missing chapters state
     var showMissingExportDialog by remember { mutableStateOf(false) }
@@ -106,6 +100,7 @@ fun LibraryScreen(
     var editUrl by remember { mutableStateOf("") }
     var editCoverUrl by remember { mutableStateOf("") }
     var editCoverLocalPath by remember { mutableStateOf("") }
+    var editCategory by remember { mutableStateOf("Reading") }
 
     val scope = rememberCoroutineScope()
 
@@ -161,17 +156,17 @@ fun LibraryScreen(
         }
     }
 
-    val filteredAndSortedBooks = remember(books, searchQuery, sortBy, unreadCounts.toMap()) {
+    val filteredAndSortedBooks = remember(books, searchQuery, sortBy, selectedCategory, bookStatsMap) {
         var list = books.filter {
-            it.title.contains(searchQuery, ignoreCase = true) || 
-            it.author.contains(searchQuery, ignoreCase = true)
+            (selectedCategory == "All" || it.category.equals(selectedCategory, ignoreCase = true)) &&
+            (it.title.contains(searchQuery, ignoreCase = true) || it.author.contains(searchQuery, ignoreCase = true))
         }
         
         list = when (sortBy) {
             "Title A-Z" -> list.sortedBy { it.title.lowercase() }
             "Title Z-A" -> list.sortedByDescending { it.title.lowercase() }
             "Total Chapters" -> list.sortedByDescending { it.totalChapters }
-            "Unread Chapters" -> list.sortedByDescending { unreadCounts[it.id] ?: 0 }
+            "Unread Chapters" -> list.sortedByDescending { bookStatsMap[it.id]?.unreadCount ?: 0 }
             "Last Updated" -> list.sortedByDescending { it.updatedAt }
             else -> list.sortedBy { it.title.lowercase() }
         }
@@ -381,7 +376,39 @@ fun LibraryScreen(
                             modifier = Modifier.padding(start = 8.dp)
                         )
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            var showBatchCategoryMenu by remember { mutableStateOf(false) }
+                            Box {
+                                Button(
+                                    onClick = { showBatchCategoryMenu = true },
+                                    enabled = selectedBookIds.isNotEmpty(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                                ) {
+                                    Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Shelf", fontSize = 12.sp)
+                                }
+                                DropdownMenu(
+                                    expanded = showBatchCategoryMenu,
+                                    onDismissRequest = { showBatchCategoryMenu = false }
+                                ) {
+                                    listOf("Reading", "Plan to Read", "Completed", "Favorites").forEach { cat ->
+                                        DropdownMenuItem(
+                                            text = { Text("Move to $cat") },
+                                            onClick = {
+                                                showBatchCategoryMenu = false
+                                                viewModel.library.bulkUpdateCategory(selectedBookIds, cat) { msg ->
+                                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                                    isBatchMode = false
+                                                    selectedBookIds = emptySet()
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
                             Button(
                                 onClick = {
                                     if (selectedBookIds.isNotEmpty()) {
@@ -420,6 +447,42 @@ fun LibraryScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // Category Shelves / Tabs
+        ScrollableTabRow(
+            selectedTabIndex = categories.indexOf(selectedCategory).coerceAtLeast(0),
+            edgePadding = 16.dp,
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.primary,
+            divider = {},
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+        ) {
+            categories.forEach { cat ->
+                val count = if (cat == "All") books.size else books.count { it.category.equals(cat, ignoreCase = true) }
+                Tab(
+                    selected = selectedCategory == cat,
+                    onClick = { 
+                        selectedCategory = cat
+                        viewModel.settings.updateActiveLibraryCategory(cat)
+                    },
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            Text(cat, fontWeight = if (selectedCategory == cat) FontWeight.Bold else FontWeight.Normal)
+                            Badge(
+                                containerColor = if (selectedCategory == cat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = if (selectedCategory == cat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            ) {
+                                Text("$count", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                )
             }
         }
 
@@ -534,11 +597,7 @@ fun LibraryScreen(
                         },
                         onCheckNewChapters = { viewModel.scraping.checkForNewChapters(book) },
                         onDownloadBatch = { count ->
-                            viewModel.scraping.downloadNextChapters(book.id, count) { s, f ->
-                                scope.launch {
-                                    downloadedCounts[book.id] = viewModel.repository.getDownloadedChapterCount(book.id)
-                                }
-                            }
+                            viewModel.scraping.downloadNextChapters(book.id, count)
                         },
                         onDownloadAllRemaining = {
                             pendingDownloadAllBook = book
@@ -560,8 +619,8 @@ fun LibraryScreen(
                                 selectedBookIds + book.id
                             }
                         },
-                        unreadCount = unreadCounts[book.id] ?: 0,
-                        downloadedCount = downloadedCounts[book.id] ?: 0,
+                        unreadCount = bookStatsMap[book.id]?.unreadCount ?: 0,
+                        downloadedCount = bookStatsMap[book.id]?.downloadedCount ?: 0,
                         onMigrateSource = {
                             activeSourceMigrationBook = book
                             showSourceMigrationDialog = true
@@ -573,6 +632,7 @@ fun LibraryScreen(
                             editUrl = if (book.url.startsWith("local://")) "" else book.url
                             editCoverUrl = book.coverUrl ?: ""
                             editCoverLocalPath = book.coverLocalPath ?: ""
+                            editCategory = book.category
                             showEditDetailsDialog = true
                         }
                     )
@@ -1057,6 +1117,27 @@ fun LibraryScreen(
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
                     )
+
+                    Divider()
+
+                    Text(
+                        text = "Shelf / Category",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("Reading", "Plan to Read", "Completed", "Favorites").forEach { cat ->
+                            FilterChip(
+                                selected = editCategory == cat,
+                                onClick = { editCategory = cat },
+                                label = { Text(cat, fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -1069,7 +1150,8 @@ fun LibraryScreen(
                             newAuthor = editAuthor,
                             newUrl = editUrl,
                             newCoverUrl = editCoverUrl.ifBlank { null },
-                            newCoverLocalPath = editCoverLocalPath.ifBlank { null }
+                            newCoverLocalPath = editCoverLocalPath.ifBlank { null },
+                            newCategory = editCategory
                         ) { success, msg ->
                             showEditDetailsDialog = false
                             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
@@ -1174,8 +1256,10 @@ fun LibraryScreen(
     // --- Download All Remaining Confirmation Dialog ---
     if (showDownloadAllConfirmDialog && pendingDownloadAllBook != null) {
         val book = pendingDownloadAllBook!!
-        val downloaded = downloadedCounts[book.id] ?: 0
-        val pending = (book.totalChapters - downloaded).coerceAtLeast(0)
+        val stats = bookStatsMap[book.id]
+        val downloaded = stats?.downloadedCount ?: 0
+        val total = stats?.totalChapters ?: book.totalChapters
+        val pending = (total - downloaded).coerceAtLeast(0)
         val delaySec = viewModel.settings.requestDelayMs / 1000f
         val estMinutes = ((pending * delaySec) / 60).toInt().coerceAtLeast(1)
 

@@ -8,7 +8,8 @@
 package com.example
 
 import android.app.Application
-import androidx.work.Configuration
+import android.content.Intent
+import android.util.Log
 import com.example.data.ai.AiProviderRegistry
 import com.example.data.ai.ModelManager
 import com.example.data.ai.PiperModelManager
@@ -16,10 +17,12 @@ import com.example.data.local.AppDatabase
 import com.example.data.plugin.PluginManager
 import com.example.data.repository.NovelRepository
 import com.example.data.scraper.SourceManager
+import com.example.ui.CrashActivity
 import com.example.viewmodel.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import java.io.File
 
 class AppContainer(val application: Application) {
 
@@ -82,20 +85,46 @@ class AppContainer(val application: Application) {
     }
 }
 
-class NovelHoarderApp : Application(), Configuration.Provider {
+class NovelHoarderApp : Application() {
     lateinit var container: AppContainer
         private set
-
-    override val workManagerConfiguration: Configuration
-        get() = Configuration.Builder()
-            .setMinimumLoggingLevel(android.util.Log.INFO)
-            .build()
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        setupCrashHandler()
         container = AppContainer(this)
-        com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(this)
+        try {
+            com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(this)
+        } catch (t: Throwable) {
+            Log.e("NovelHoarderApp", "Failed to schedule background chapter updates", t)
+        }
+    }
+
+    private fun setupCrashHandler() {
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                Log.e("NovelHoarderCrash", "Uncaught exception on thread: ${thread.name}", throwable)
+                val stackTrace = throwable.stackTraceToString()
+                try {
+                    val crashFile = File(filesDir, "last_crash.txt")
+                    crashFile.writeText(stackTrace)
+                } catch (_: Throwable) {}
+
+                val intent = Intent(applicationContext, CrashActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    putExtra("crash_stack_trace", stackTrace)
+                    putExtra("crash_error_message", throwable.message ?: throwable.javaClass.simpleName)
+                    putExtra("crash_thread", thread.name)
+                }
+                startActivity(intent)
+                android.os.Process.killProcess(android.os.Process.myPid())
+                System.exit(10)
+            } catch (_: Throwable) {
+                defaultHandler?.uncaughtException(thread, throwable)
+            }
+        }
     }
 
     companion object {

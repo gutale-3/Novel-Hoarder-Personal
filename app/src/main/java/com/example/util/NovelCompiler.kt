@@ -555,8 +555,11 @@ object NovelCompiler {
         canvas.restore()
     }
 
-    private fun escapeXml(input: String): String {
-        return input.replace("&", "&amp;")
+    fun escapeXml(input: String): String {
+        // Strip ASCII control characters illegal in XML 1.0 (keeping tab \t, line feed \n, carriage return \r)
+        val sanitized = input.replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]"), "")
+        return sanitized
+            .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
