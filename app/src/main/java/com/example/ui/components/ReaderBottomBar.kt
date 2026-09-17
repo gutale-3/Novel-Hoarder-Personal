@@ -26,7 +26,8 @@ fun ReaderBottomBar(
     viewModel: MainViewModel,
     barBgColor: Color,
     barContentColor: Color,
-    onSelectChapter: (String) -> Unit
+    onSelectChapter: (String) -> Unit,
+    estimatedMinutesLeft: Int? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -68,9 +69,13 @@ fun ReaderBottomBar(
                     Text("Previous", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
 
+                val estSnippet = if (estimatedMinutesLeft != null && estimatedMinutesLeft > 0) {
+                    " • ⏱ ~${estimatedMinutesLeft}m left"
+                } else ""
+
                 Text(
                     text = if (chapters.isNotEmpty() && currentIdx != -1) {
-                        "${currentIdx + 1} / ${chapters.size}"
+                        "${currentIdx + 1} / ${chapters.size}$estSnippet"
                     } else "",
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Bold,

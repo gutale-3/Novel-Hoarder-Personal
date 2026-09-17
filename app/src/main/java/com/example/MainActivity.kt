@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -29,6 +31,27 @@ import com.example.ui.theme.NovelHoarderTheme
 import com.example.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
+    private val pendingRoute = mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        val openBookId = intent?.getStringExtra("open_reader_book")
+        if (!openBookId.isNullOrEmpty()) {
+            val openChapterId = intent.getStringExtra("open_reader_chapter")
+            val targetRoute = if (!openChapterId.isNullOrEmpty()) {
+                "reader/$openBookId?chapterId=$openChapterId"
+            } else {
+                "reader/$openBookId"
+            }
+            pendingRoute.value = targetRoute
+        }
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,9 +63,46 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        handleIntent(intent)
+
         setContent {
             val viewModel: MainViewModel = viewModel()
             val navController = rememberNavController()
+
+            // Handle incoming intents (e.g. from TTS media notifications)
+            val currentPendingRoute by pendingRoute
+            LaunchedEffect(currentPendingRoute) {
+                currentPendingRoute?.let { route ->
+                    navController.navigate(route)
+                    pendingRoute.value = null
+                }
+            }
+
+            // Resume reading session or last screen automatically upon launch
+            var hasRestoredSession by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                if (!hasRestoredSession) {
+                    hasRestoredSession = true
+                    if (pendingRoute.value == null) {
+                        val activeBookId = viewModel.progress.getActiveReaderBookId()
+                        if (!activeBookId.isNullOrEmpty()) {
+                            val activeChapterId = viewModel.progress.getActiveReaderChapterId()
+                            val activeParaIndex = viewModel.progress.getActiveReaderParaIndex()
+                            val route = if (!activeChapterId.isNullOrEmpty()) {
+                                "reader/$activeBookId?chapterId=$activeChapterId&paraIndex=$activeParaIndex"
+                            } else {
+                                "reader/$activeBookId"
+                            }
+                            navController.navigate(route)
+                        } else {
+                            val lastTab = viewModel.progress.getLastActiveTab()
+                            if (lastTab != "home" && (lastTab == "library" || lastTab == "scrape")) {
+                                navController.navigate(lastTab)
+                            }
+                        }
+                    }
+                }
+            }
 
             NovelHoarderTheme(appTheme = viewModel.currentTheme) {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -53,14 +113,13 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     topBar = {
-                        if (!isFullScreen) {
+                        if (!isFullScreen && currentRoute != "library") {
                             TopAppBar(
                                 title = {
                                     Text(
                                         text = when (currentRoute) {
                                             "home" -> "Novel Hoarder"
                                             "scrape" -> "Scraper Terminal"
-                                            "library" -> "My Library"
                                             else -> "Novel Hoarder"
                                         },
                                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
@@ -124,6 +183,7 @@ class MainActivity : ComponentActivity() {
                                     selected = currentRoute == "home",
                                     onClick = {
                                         if (currentRoute != "home") {
+                                            viewModel.progress.setLastActiveTab("home")
                                             navController.navigate("home") {
                                                 popUpTo("home") { saveState = true }
                                                 launchSingleTop = true
@@ -140,6 +200,7 @@ class MainActivity : ComponentActivity() {
                                     selected = currentRoute == "scrape",
                                     onClick = {
                                         if (currentRoute != "scrape") {
+                                            viewModel.progress.setLastActiveTab("scrape")
                                             navController.navigate("scrape") {
                                                 popUpTo("home") { saveState = true }
                                                 launchSingleTop = true
@@ -156,6 +217,7 @@ class MainActivity : ComponentActivity() {
                                     selected = currentRoute == "library",
                                     onClick = {
                                         if (currentRoute != "library") {
+                                            viewModel.progress.setLastActiveTab("library")
                                             navController.navigate("library") {
                                                 popUpTo("home") { saveState = true }
                                                 launchSingleTop = true
@@ -196,9 +258,18 @@ class MainActivity : ComponentActivity() {
                             composable("home") {
                                 HomeScreen(
                                     viewModel = viewModel,
-                                    onNavigateToScrape = { navController.navigate("scrape") },
-                                    onNavigateToLibrary = { navController.navigate("library") },
-                                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") }
+                                    onNavigateToScrape = {
+                                        viewModel.progress.setLastActiveTab("scrape")
+                                        navController.navigate("scrape")
+                                    },
+                                    onNavigateToLibrary = {
+                                        viewModel.progress.setLastActiveTab("library")
+                                        navController.navigate("library")
+                                    },
+                                    onOpenBook = { bookId ->
+                                        viewModel.progress.setActiveReaderSession(bookId)
+                                        navController.navigate("reader/$bookId")
+                                    }
                                 )
                             }
 
@@ -209,8 +280,17 @@ class MainActivity : ComponentActivity() {
                             composable("library") {
                                 LibraryScreen(
                                     viewModel = viewModel,
-                                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
-                                    onNavigateToScrape = { navController.navigate("scrape") }
+                                    onOpenBook = { bookId ->
+                                        viewModel.progress.setActiveReaderSession(bookId)
+                                        navController.navigate("reader/$bookId")
+                                    },
+                                    onNavigateToScrape = {
+                                        viewModel.progress.setLastActiveTab("scrape")
+                                        navController.navigate("scrape")
+                                    },
+                                    onNavigateToSettings = {
+                                        navController.navigate("settings")
+                                    }
                                 )
                             }
 
@@ -252,7 +332,10 @@ class MainActivity : ComponentActivity() {
                                     viewModel = viewModel,
                                     initialChapterId = chapterId,
                                     initialParaIndex = paraIndex,
-                                    onBack = { navController.popBackStack() }
+                                    onBack = {
+                                        viewModel.progress.clearActiveReaderSession()
+                                        navController.popBackStack()
+                                    }
                                 )
                             }
                         }
@@ -260,6 +343,7 @@ class MainActivity : ComponentActivity() {
                         TtsPlayerBar(
                             viewModel = viewModel,
                             onNavigateToReader = { bookId, chapterId, paraIndex ->
+                                viewModel.progress.setActiveReaderSession(bookId, chapterId, paraIndex)
                                 navController.navigate("reader/$bookId?chapterId=$chapterId&paraIndex=$paraIndex")
                             },
                             modifier = Modifier

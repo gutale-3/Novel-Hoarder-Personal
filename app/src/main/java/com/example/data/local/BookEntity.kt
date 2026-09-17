@@ -23,5 +23,6 @@ data class BookEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val autoArchiveHours: Int = 0,
     val isDeleted: Boolean = false,
-    val category: String = "Reading"
+    val category: String = "Reading",
+    val lastReadChapterNumber: Int = 0
 )

@@ -30,6 +30,10 @@ class LibraryManager(
     fun deleteBook(bookId: String) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+                if (prefs.getString("active_reading_book_id", null) == bookId) {
+                    prefs.edit().remove("active_reading_book_id").remove("active_reading_chapter_id").remove("active_reading_para_index").apply()
+                }
                 repository.softDeleteBook(bookId)
                 scrapingManager.addLog("Moved novel to Trash: $bookId")
             } catch (e: Exception) {
@@ -52,6 +56,10 @@ class LibraryManager(
     fun permanentlyDeleteBook(bookId: String) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+                if (prefs.getString("active_reading_book_id", null) == bookId) {
+                    prefs.edit().remove("active_reading_book_id").remove("active_reading_chapter_id").remove("active_reading_para_index").apply()
+                }
                 val context = application.applicationContext
                 val folder = File(context.filesDir, bookId)
                 if (folder.exists()) {
@@ -156,6 +164,26 @@ class LibraryManager(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 repository.moveChapterDown(bookId, chapterId)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun moveChaptersUp(bookId: String, chapterIds: List<String>) {
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                repository.moveChaptersUp(bookId, chapterIds)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun moveChaptersDown(bookId: String, chapterIds: List<String>) {
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                repository.moveChaptersDown(bookId, chapterIds)
             } catch (e: Exception) {
                 e.printStackTrace()
             }

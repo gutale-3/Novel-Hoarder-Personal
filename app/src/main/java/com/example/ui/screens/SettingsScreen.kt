@@ -562,6 +562,23 @@ fun SettingsScreen(
                     }
                 }
 
+                // Automatic Chapter Grabbing (starts from latest chapter)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Automatic Chapter Grabbing", style = MaterialTheme.typography.bodyMedium)
+                        Text("Automatically download new chapters starting strictly after your last saved chapter (e.g. 501 if you have 500)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.autoGrabNewChapters,
+                        onCheckedChange = {
+                            settingsManager.updateAutoGrabNewChapters(it)
+                        }
+                    )
+                }
+
                 // 6. Source Migration
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),

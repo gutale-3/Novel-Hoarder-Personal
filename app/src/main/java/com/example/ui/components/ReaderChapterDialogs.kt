@@ -661,7 +661,8 @@ fun ParagraphBookmarkActionDialog(
                             chapterId = currentChapterId,
                             paragraphIndex = paragraphIndex,
                             text = paragraphText,
-                            note = bookmarkNoteText
+                            note = bookmarkNoteText,
+                            timestamp = System.currentTimeMillis()
                         )
                         viewModel.repository.insertBookmark(newBookmark)
                         onDismiss()

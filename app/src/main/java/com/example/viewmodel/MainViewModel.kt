@@ -42,6 +42,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val textRules: TextReplacementManager get() = container.textRules
     val sourceMigration: SourceMigrationManager get() = container.sourceMigration
     val manualCapture: ManualCaptureManager get() = container.manualCapture
+    val chapterTags: ChapterTagManager get() = container.chapterTags
 
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
 
@@ -357,6 +358,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         get() = tts.sleepTimerRemainingSeconds
         set(value) { tts.sleepTimerRemainingSeconds = value }
 
+    var sleepTimerAutoRestart: Boolean
+        get() = tts.sleepTimerAutoRestart
+        set(value) { tts.updateSleepTimerAutoRestart(value) }
+
+    var autoGrabNewChapters: Boolean
+        get() = settings.autoGrabNewChapters
+        set(value) { settings.updateAutoGrabNewChapters(value) }
+
     // --- Glossary AI State ---
     val isGeneratingGlossary: Boolean get() = aiFeatures.isGeneratingGlossary
     val glossaryStatusMessage: String get() = aiFeatures.glossaryStatusMessage
@@ -450,7 +459,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        tts.unregister()
+        // Note: TtsPlaybackManager is an Application-level singleton managed by AppContainer.
+        // It persists background playback and service lifecycle independently of Activity recreation.
     }
 }
 

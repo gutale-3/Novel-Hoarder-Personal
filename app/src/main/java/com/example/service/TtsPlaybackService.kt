@@ -69,6 +69,18 @@ class TtsPlaybackService : Service() {
         return START_NOT_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        try {
+            val tts = NovelHoarderApp.getContainer(application).tts
+            tts.pauseTts()
+            tts.dismissTtsNotification()
+        } catch (_: Exception) {
+            // ignore
+        }
+        stopSelf()
+    }
+
     override fun onDestroy() {
         isRunning = false
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)

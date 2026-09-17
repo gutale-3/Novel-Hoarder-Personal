@@ -388,7 +388,7 @@ fun TtsPlayerBar(
                         val m = sleepSecs / 60
                         val s = sleepSecs % 60
                         Text(
-                            text = "Sleep in ${m}m ${s}s",
+                            text = if (viewModel.ttsIsPlaying) "Sleep in ${m}m ${s}s" else "Sleep: ${m}m",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.tertiary
                         )
@@ -1057,10 +1057,25 @@ fun TtsPlayerBar(
 
                         // Sleep Timer
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "Sleep Timer",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Sleep Timer",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                if (viewModel.sleepTimerMinutes > 0) {
+                                    val mins = viewModel.sleepTimerMinutes
+                                    Text(
+                                        text = if (viewModel.sleepTimerAutoRestart) "$mins min (Auto-Restart)" else "$mins min",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1074,6 +1089,32 @@ fun TtsPlayerBar(
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
+                            }
+
+                            // Auto-Restart / Sticky Timer Toggle
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Auto-Restart on Play / Pause",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "Restarts full timer duration whenever playback is paused or played until turned Off",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = viewModel.sleepTimerAutoRestart,
+                                    onCheckedChange = { viewModel.sleepTimerAutoRestart = it }
+                                )
                             }
                         }
 

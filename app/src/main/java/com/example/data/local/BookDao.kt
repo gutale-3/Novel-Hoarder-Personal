@@ -330,25 +330,33 @@ interface BookDao {
     // --- Batch Aggregated Stats (Single-Query Elimination of N+1) ---
     @Query("""
         SELECT 
-            bookId,
-            COUNT(*) AS totalChapters,
-            COUNT(CASE WHEN isRead = 0 THEN 1 END) AS unreadCount,
-            COUNT(CASE WHEN content != '' THEN 1 END) AS downloadedCount
-        FROM chapters
-        WHERE isDeleted = 0
-        GROUP BY bookId
+            b.id AS bookId,
+            MAX(b.totalChapters) AS totalChapters,
+            COUNT(CASE WHEN c.isRead = 0 AND c.isDeleted = 0 THEN 1 END) AS unreadCount,
+            COUNT(CASE WHEN c.content != '' AND c.isDeleted = 0 THEN 1 END) AS downloadedCount,
+            COALESCE(MAX(c.chapterNumber), 0) AS maxChapterNumber,
+            COALESCE(MAX(CASE WHEN c.isRead = 1 THEN c.chapterNumber ELSE 0 END), 0) AS maxReadChapterNumber,
+            COUNT(CASE WHEN c.isRead = 1 THEN 1 END) AS readCount
+        FROM books b
+        LEFT JOIN chapters c ON b.id = c.bookId
+        WHERE b.isDeleted = 0
+        GROUP BY b.id
     """)
     fun getAllBookStatsFlow(): Flow<List<BookStats>>
 
     @Query("""
         SELECT 
-            bookId,
-            COUNT(*) AS totalChapters,
-            COUNT(CASE WHEN isRead = 0 THEN 1 END) AS unreadCount,
-            COUNT(CASE WHEN content != '' THEN 1 END) AS downloadedCount
-        FROM chapters
-        WHERE isDeleted = 0
-        GROUP BY bookId
+            b.id AS bookId,
+            MAX(b.totalChapters) AS totalChapters,
+            COUNT(CASE WHEN c.isRead = 0 AND c.isDeleted = 0 THEN 1 END) AS unreadCount,
+            COUNT(CASE WHEN c.content != '' AND c.isDeleted = 0 THEN 1 END) AS downloadedCount,
+            COALESCE(MAX(c.chapterNumber), 0) AS maxChapterNumber,
+            COALESCE(MAX(CASE WHEN c.isRead = 1 THEN c.chapterNumber ELSE 0 END), 0) AS maxReadChapterNumber,
+            COUNT(CASE WHEN c.isRead = 1 THEN 1 END) AS readCount
+        FROM books b
+        LEFT JOIN chapters c ON b.id = c.bookId
+        WHERE b.isDeleted = 0
+        GROUP BY b.id
     """)
     suspend fun getAllBookStats(): List<BookStats>
 
@@ -390,6 +398,9 @@ data class BookStats(
     val bookId: String,
     val totalChapters: Int,
     val unreadCount: Int,
-    val downloadedCount: Int
+    val downloadedCount: Int,
+    val maxChapterNumber: Int = 0,
+    val maxReadChapterNumber: Int = 0,
+    val readCount: Int = 0
 )
 

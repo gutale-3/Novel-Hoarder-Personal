@@ -73,6 +73,46 @@ class NovelRepository(private val bookDao: BookDao) {
         }
     }
 
+    suspend fun moveChaptersUp(bookId: String, chapterIds: List<String>) {
+        val chapters = bookDao.getChaptersForBook(bookId).toMutableList()
+        val sortedIds = chapters.map { it.id }.filter { chapterIds.contains(it) }
+        for (id in sortedIds) {
+            val idx = chapters.indexOfFirst { it.id == id }
+            if (idx > 0) {
+                val curr = chapters[idx]
+                val prev = chapters[idx - 1]
+                val tempNum = curr.chapterNumber
+                val prevNum = prev.chapterNumber
+                bookDao.updateChapterNumber(curr.id, prevNum)
+                bookDao.updateChapterNumber(prev.id, tempNum)
+                val updatedCurr = curr.copy(chapterNumber = prevNum)
+                val updatedPrev = prev.copy(chapterNumber = tempNum)
+                chapters[idx] = updatedPrev
+                chapters[idx - 1] = updatedCurr
+            }
+        }
+    }
+
+    suspend fun moveChaptersDown(bookId: String, chapterIds: List<String>) {
+        val chapters = bookDao.getChaptersForBook(bookId).toMutableList()
+        val sortedIds = chapters.map { it.id }.filter { chapterIds.contains(it) }.reversed()
+        for (id in sortedIds) {
+            val idx = chapters.indexOfFirst { it.id == id }
+            if (idx != -1 && idx < chapters.size - 1) {
+                val curr = chapters[idx]
+                val next = chapters[idx + 1]
+                val tempNum = curr.chapterNumber
+                val nextNum = next.chapterNumber
+                bookDao.updateChapterNumber(curr.id, nextNum)
+                bookDao.updateChapterNumber(next.id, tempNum)
+                val updatedCurr = curr.copy(chapterNumber = nextNum)
+                val updatedNext = next.copy(chapterNumber = tempNum)
+                chapters[idx] = updatedNext
+                chapters[idx + 1] = updatedCurr
+            }
+        }
+    }
+
     suspend fun updateChapterReadStatus(chapterId: String, isRead: Boolean, readAt: Long? = if (isRead) System.currentTimeMillis() else null) = bookDao.updateChapterReadStatus(chapterId, isRead, readAt)
 
     suspend fun updateChaptersReadStatus(chapterIds: List<String>, isRead: Boolean, readAt: Long? = if (isRead) System.currentTimeMillis() else null) = bookDao.updateChaptersReadStatus(chapterIds, isRead, readAt)

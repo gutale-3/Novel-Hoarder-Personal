@@ -110,11 +110,35 @@ class ChapterUpdateWorker(
                 }
 
                 if (chapterUrls.isNotEmpty()) {
-                    val savedChapterCount = withContext(Dispatchers.IO) {
-                        bookDao.getChapterCountForBook(book.id)
+                    val localChapters = withContext(Dispatchers.IO) {
+                        bookDao.getChaptersForBook(book.id)
                     }
-                    val newCount = chapterUrls.size - savedChapterCount
+                    val maxChapNum = localChapters.maxOfOrNull { it.chapterNumber } ?: 0
+
+                    var newCount = 0
+                    var nextChapterStart = 1
+                    if (maxChapNum > 0) {
+                        val sortedLocals = localChapters.sortedByDescending { it.chapterNumber }
+                        var matchedIdx = -1
+                        var matchedNum = maxChapNum
+                        for (loc in sortedLocals) {
+                            val idx = chapterUrls.indexOf(loc.url)
+                            if (idx >= 0) {
+                                matchedIdx = idx
+                                matchedNum = loc.chapterNumber
+                                break
+                            }
+                        }
+                        val startIndex = if (matchedIdx >= 0) matchedIdx + 1 else maxChapNum.coerceAtMost(chapterUrls.size)
+                        nextChapterStart = if (matchedIdx >= 0) matchedNum + 1 else maxChapNum + 1
+                        newCount = (chapterUrls.size - startIndex).coerceAtLeast(0)
+                    } else {
+                        newCount = chapterUrls.size
+                        nextChapterStart = 1
+                    }
+
                     if (newCount > 0) {
+                        val autoGrab = prefs.getBoolean("auto_grab_new_chapters", false)
                         val openAppIntent = Intent(context, com.example.MainActivity::class.java)
                         val openAppPendingIntent = PendingIntent.getActivity(
                             context, index, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -123,7 +147,10 @@ class ChapterUpdateWorker(
                         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                             .setSmallIcon(android.R.drawable.ic_popup_sync)
                             .setContentTitle("New Chapters for ${book.title}")
-                            .setContentText("Found $newCount new chapters available to download!")
+                            .setContentText(
+                                if (autoGrab) "Auto-grabbing $newCount new chapters from Ch. $nextChapterStart!"
+                                else "Found $newCount new chapters (from Ch. $nextChapterStart) available to download!"
+                            )
                             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                             .setContentIntent(openAppPendingIntent)
                             .setAutoCancel(true)

@@ -5,6 +5,7 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
@@ -61,7 +62,8 @@ fun ReaderContent(
     onOpenFindReplace: () -> Unit,
     onOpenRsvp: () -> Unit,
     onSelectChapter: (String) -> Unit,
-    onParagraphLongClick: (Int, String) -> Unit
+    onParagraphLongClick: (Int, String) -> Unit,
+    onOpenTags: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -342,17 +344,135 @@ fun ReaderContent(
                     verticalArrangement = Arrangement.spacedBy(viewModel.settings.readerParagraphSpacing.dp),
                     contentPadding = PaddingValues(top = 20.dp, bottom = 100.dp)
                 ) {
-                    // Title
+                    // Title, Reading Time Estimate & Milestone Tags
                     item {
-                        Text(
-                            text = activeChapter.title,
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontWeight = FontWeight.Black,
-                                color = if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary,
-                                fontFamily = selectedFontFamily
-                            ),
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = activeChapter.title,
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.Black,
+                                    color = if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary,
+                                    fontFamily = selectedFontFamily
+                                ),
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+
+                            // Reading Time Remaining & Progress Pill
+                            val userWpm = remember(viewModel.stats.totalReadingSeconds, viewModel.stats.totalWordsRead) {
+                                if (viewModel.stats.totalReadingSeconds >= 120 && viewModel.stats.totalWordsRead > 200) {
+                                    ((viewModel.stats.totalWordsRead * 60) / viewModel.stats.totalReadingSeconds).toInt().coerceIn(120, 600)
+                                } else {
+                                    240
+                                }
+                            }
+
+                            val totalChapterWords = remember(chapterParagraphs) {
+                                chapterParagraphs.sumOf { it.trim().split("\\s+".toRegex()).size }
+                            }
+
+                            val remainingWords = remember(chapterParagraphs, currentParagraphIndex) {
+                                if (currentParagraphIndex >= chapterParagraphs.size) 0
+                                else chapterParagraphs.drop(currentParagraphIndex).sumOf { it.trim().split("\\s+".toRegex()).size }
+                            }
+
+                            val minutesLeft = remember(remainingWords, userWpm) {
+                                if (remainingWords <= 0) 0
+                                else kotlin.math.ceil(remainingWords.toDouble() / userWpm.toDouble()).toInt().coerceAtLeast(1)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Schedule,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(13.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = if (remainingWords <= 0) "Finished" else "~$minutesLeft min left",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontSize = 11.sp
+                                        )
+                                        Text(
+                                            text = "•",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "$remainingWords w ($totalChapterWords total)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+
+                                val activeTags = viewModel.chapterTags.getTagsForChapter(activeChapter.id)
+                                activeTags.forEach { tag ->
+                                    val tagColor = Color(tag.colorHex)
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = tagColor.copy(alpha = 0.15f),
+                                        border = BorderStroke(1.dp, tagColor.copy(alpha = 0.4f)),
+                                        modifier = Modifier.clickable { onOpenTags() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Text(tag.icon, fontSize = 11.sp)
+                                            Text(
+                                                tag.name,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = tagColor
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.Transparent,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                                    modifier = Modifier.clickable { onOpenTags() }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Label,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(11.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = if (activeTags.isEmpty()) "+ Tag" else "+",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Find & Replace bar

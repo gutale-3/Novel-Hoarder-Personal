@@ -80,6 +80,10 @@ class AppContainer(val application: Application) {
         SourceMigrationManager(application, repository, appScope)
     }
 
+    val chapterTags by lazy {
+        ChapterTagManager(application)
+    }
+
     init {
         SourceManager.pluginManagerProvider = { pluginManager }
     }

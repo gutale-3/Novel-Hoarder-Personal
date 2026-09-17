@@ -28,9 +28,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BookEntity
+import com.example.data.local.BookStats
 import com.example.data.local.GlossaryEntity
 import com.example.ui.components.*
 import com.example.viewmodel.MainViewModel
@@ -40,6 +42,20 @@ import androidx.compose.ui.layout.ContentScale
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.unit.Velocity
+import kotlin.math.roundToInt
+import com.example.ui.theme.AppTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +63,7 @@ fun LibraryScreen(
     viewModel: MainViewModel,
     onOpenBook: (String) -> Unit,
     onNavigateToScrape: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val books by viewModel.repository.allBooks.collectAsState(emptyList())
@@ -73,7 +90,7 @@ fun LibraryScreen(
     val bookStatsMap by viewModel.allBookStatsMap.collectAsState()
 
     // Category / Shelf state
-    val categories = listOf("All", "Reading", "Plan to Read", "Completed", "Favorites")
+    val categories = listOf("All", "Reading", "Plan to Read", "Waiting", "Completed", "Favorites")
     var selectedCategory by remember { mutableStateOf(viewModel.settings.activeLibraryCategory) }
 
     // Export with missing chapters state
@@ -194,48 +211,300 @@ fun LibraryScreen(
     var activeSourceMigrationBook by remember { mutableStateOf<BookEntity?>(null) }
     var showSourceMigrationDialog by remember { mutableStateOf(false) }
 
+    val lazyListState = rememberLazyListState()
+    var headerHeightPx by remember { mutableFloatStateOf(0f) }
+    var headerOffsetPx by remember { mutableFloatStateOf(0f) }
+    val headerAnimatable = remember { androidx.compose.animation.core.Animatable(0f) }
+    val coroutineScope = rememberCoroutineScope()
+
+    suspend fun animateHeaderTo(target: Float) {
+        if (headerHeightPx <= 0f) return
+        val clampedTarget = target.coerceIn(-headerHeightPx, 0f)
+        headerAnimatable.snapTo(headerOffsetPx)
+        headerAnimatable.animateTo(
+            targetValue = clampedTarget,
+            animationSpec = androidx.compose.animation.core.tween(
+                durationMillis = 220,
+                easing = androidx.compose.animation.core.FastOutSlowInEasing
+            )
+        ) {
+            headerOffsetPx = value
+        }
+    }
+
+    fun updateHeaderDelta(delta: Float): Float {
+        if (headerHeightPx <= 0f) return 0f
+        val oldOffset = headerOffsetPx
+        val newOffset = (headerOffsetPx + delta).coerceIn(-headerHeightPx, 0f)
+        headerOffsetPx = newOffset
+        return newOffset - oldOffset
+    }
+
+    fun settleHeader(velocity: Float = 0f) {
+        if (headerHeightPx <= 0f) return
+        coroutineScope.launch {
+            val target = when {
+                velocity < -250f -> -headerHeightPx
+                velocity > 250f && lazyListState.firstVisibleItemIndex == 0 -> 0f
+                headerOffsetPx > -headerHeightPx * 0.35f && lazyListState.firstVisibleItemIndex == 0 -> 0f
+                else -> -headerHeightPx
+            }
+            animateHeaderTo(target)
+        }
+    }
+
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (headerHeightPx <= 0f) return Offset.Zero
+                val delta = available.y
+                // Unidirectional: only collapse when scrolling down through the novel list
+                if (delta < 0f && headerOffsetPx > -headerHeightPx) {
+                    val consumed = updateHeaderDelta(delta)
+                    return Offset(0f, consumed)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (headerHeightPx <= 0f) return Offset.Zero
+                // Only reveal header when at the very top of the list and pulling downward
+                if (available.y > 0f && lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0) {
+                    val consumedDelta = updateHeaderDelta(available.y)
+                    return Offset(0f, consumedDelta)
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (headerHeightPx > 0f && (headerOffsetPx < 0f && headerOffsetPx > -headerHeightPx)) {
+                    settleHeader(available.y)
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+
+    // Automatically reveal header when user scrolls back to the very top
+    LaunchedEffect(lazyListState.firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
+        if (lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0) {
+            if (headerOffsetPx < 0f) {
+                animateHeaderTo(0f)
+            }
+        }
+    }
+
+    LaunchedEffect(currentMainTab) {
+        if (headerOffsetPx != 0f) {
+            animateHeaderTo(0f)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .nestedScroll(nestedScrollConnection)
     ) {
-        // Main Navigation Bar (Library vs Deleted Items)
-        TabRow(
-            selectedTabIndex = currentMainTab,
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Tab(
-                selected = currentMainTab == 0,
-                onClick = { currentMainTab = 0 },
-                text = { Text("Library (${books.size})", fontWeight = FontWeight.Bold) }
-            )
-            val totalDeleted = deletedBooks.size + deletedChapters.size
-            Tab(
-                selected = currentMainTab == 1,
-                onClick = { currentMainTab = 1 },
-                text = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("Deleted Items", fontWeight = FontWeight.Bold)
-                        if (totalDeleted > 0) {
-                            Badge { Text("$totalDeleted") }
-                        }
-                    }
-                }
-            )
-        }
-
-        if (currentMainTab == 0) {
-            // Control Card (Search, Sort, Import, Batch Panel)
-        Card(
+        // Collapsible Top Header Section with smooth 1:1 direct finger tracking and fling physics
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    val fullHeight = placeable.height.toFloat()
+                    if (fullHeight > 0f && headerHeightPx != fullHeight) {
+                        headerHeightPx = fullHeight
+                    }
+                    val currentOffset = headerOffsetPx.coerceIn(-fullHeight, 0f)
+                    val visibleHeight = (fullHeight + currentOffset).roundToInt().coerceAtLeast(0)
+                    layout(placeable.width, visibleHeight) {
+                        placeable.placeRelative(0, currentOffset.roundToInt())
+                    }
+                }
+                .clipToBounds()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                val consumed = updateHeaderDelta(dragAmount)
+                                if (consumed != 0f) {
+                                    change.consume()
+                                }
+                            },
+                            onDragEnd = {
+                                settleHeader()
+                            }
+                        )
+                    }
+            ) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "My Library",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                    },
+                    actions = {
+                        IconButton(onClick = onNavigateToSettings) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        var showThemeMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showThemeMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Palette,
+                                    contentDescription = "Toggle Themes",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showThemeMenu,
+                                onDismissRequest = { showThemeMenu = false }
+                            ) {
+                                AppTheme.values().forEach { theme ->
+                                    DropdownMenuItem(
+                                        text = { Text(theme.displayName) },
+                                        onClick = {
+                                            viewModel.settings.updateTheme(theme)
+                                            showThemeMenu = false
+                                        },
+                                        leadingIcon = {
+                                            if (viewModel.currentTheme == theme) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = "Selected",
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    windowInsets = WindowInsets(0, 0, 0, 0)
+                )
+
+                // Main Navigation Bar (Library vs Deleted Items)
+                TabRow(
+                    selectedTabIndex = currentMainTab,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Tab(
+                        selected = currentMainTab == 0,
+                        onClick = { 
+                            currentMainTab = 0 
+                            coroutineScope.launch { animateHeaderTo(0f) }
+                        },
+                        text = { Text("Library (${books.size})", fontWeight = FontWeight.Bold) }
+                    )
+                    val totalDeleted = deletedBooks.size + deletedChapters.size
+                    Tab(
+                        selected = currentMainTab == 1,
+                        onClick = { 
+                            currentMainTab = 1 
+                            coroutineScope.launch { animateHeaderTo(0f) }
+                        },
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Text("Deleted Items", fontWeight = FontWeight.Bold)
+                                if (totalDeleted > 0) {
+                                    Badge { Text("$totalDeleted") }
+                                }
+                            }
+                        }
+                    )
+                }
+
+                if (currentMainTab == 0) {
+                    // Recommendation Card for Automatic Chapter Grabbing
+                    var showAutoGrabRecommendation by remember { mutableStateOf(true) }
+                    if (showAutoGrabRecommendation && !viewModel.autoGrabNewChapters) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Recommended: Auto-Grab Chapters",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = "Auto-grab newly released chapters strictly starting after your latest saved chapter. You can toggle this on and off anytime in Settings.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                                    )
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.autoGrabNewChapters = true
+                                        showAutoGrabRecommendation = false
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Turn On", fontSize = 11.sp)
+                                }
+                                IconButton(
+                                    onClick = { showAutoGrabRecommendation = false },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Dismiss",
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Control Card (Search, Sort, Import, Batch Panel)
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
         ) {
@@ -393,7 +662,7 @@ fun LibraryScreen(
                                     expanded = showBatchCategoryMenu,
                                     onDismissRequest = { showBatchCategoryMenu = false }
                                 ) {
-                                    listOf("Reading", "Plan to Read", "Completed", "Favorites").forEach { cat ->
+                                    listOf("Reading", "Plan to Read", "Waiting", "Completed", "Favorites").forEach { cat ->
                                         DropdownMenuItem(
                                             text = { Text("Move to $cat") },
                                             onClick = {
@@ -485,21 +754,44 @@ fun LibraryScreen(
                 )
             }
         }
+                } // ends if (currentMainTab == 0) header controls
+            } // ends Column inside Box
+        } // ends collapsible header Box
 
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
-        ) {
+        if (currentMainTab == 0) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                LazyColumn(
+                    state = lazyListState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
+                ) {
             if (filteredAndSortedBooks.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 64.dp, bottom = 64.dp),
+                            .fillParentMaxHeight(1.1f)
+                            .padding(top = 40.dp, bottom = 40.dp)
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures(
+                                    onVerticalDrag = { change, dragAmount ->
+                                        val consumed = updateHeaderDelta(dragAmount)
+                                        if (consumed != 0f) {
+                                            change.consume()
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        settleHeader()
+                                    }
+                                )
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Column(
@@ -621,6 +913,13 @@ fun LibraryScreen(
                         },
                         unreadCount = bookStatsMap[book.id]?.unreadCount ?: 0,
                         downloadedCount = bookStatsMap[book.id]?.downloadedCount ?: 0,
+                        bookStats = bookStatsMap[book.id],
+                        onUpdateCategory = { newCategory ->
+                            scope.launch {
+                                viewModel.repository.updateBookCategory(book.id, newCategory)
+                                android.widget.Toast.makeText(context, "Moved to '$newCategory'", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         onMigrateSource = {
                             activeSourceMigrationBook = book
                             showSourceMigrationDialog = true
@@ -639,11 +938,38 @@ fun LibraryScreen(
                 }
             }
         }
+
+        // Quick back-to-top button when header is hidden
+            androidx.compose.animation.AnimatedVisibility(
+                visible = (headerOffsetPx < -10f) || lazyListState.firstVisibleItemIndex > 0,
+                enter = scaleIn() + fadeIn(),
+                exit = scaleOut() + fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            animateHeaderTo(0f)
+                            lazyListState.animateScrollToItem(0)
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Back to Top")
+                }
+            }
+        }
     } else {
         // --- DELETED ITEMS (TRASH) SECTION ---
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
                 .padding(16.dp)
         ) {
             Card(
@@ -1126,10 +1452,12 @@ fun LibraryScreen(
                     )
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("Reading", "Plan to Read", "Completed", "Favorites").forEach { cat ->
+                        listOf("Reading", "Plan to Read", "Waiting", "Completed", "Favorites").forEach { cat ->
                             FilterChip(
                                 selected = editCategory == cat,
                                 onClick = { editCategory = cat },
@@ -1182,14 +1510,49 @@ fun LibraryScreen(
     if (viewModel.showNewChaptersDialog) {
         val count = viewModel.newChaptersFoundCount
         val bookName = viewModel.checkedBookEntity?.title ?: "Novel"
+        val startChapter = viewModel.scraping.newChaptersList.firstOrNull()?.chapterNumber
+        val endChapter = viewModel.scraping.newChaptersList.lastOrNull()?.chapterNumber
+        val rangeStr = if (startChapter != null && endChapter != null) {
+            if (startChapter == endChapter) "Chapter $startChapter" else "Chapters $startChapter to $endChapter"
+        } else ""
+
         AlertDialog(
             onDismissRequest = { viewModel.showNewChaptersDialog = false },
-            title = { Text("New Chapters Found") },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("New Chapters Found")
+                }
+            },
             text = {
-                if (count > 0) {
-                    Text("Found $count new chapters for \"$bookName\". Do you want to download/get them now?")
-                } else {
-                    Text("No new chapters found for \"$bookName\". Everything is up to date!")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (count > 0) {
+                        Text(
+                            text = "Found $count new chapter(s) for \"$bookName\"" +
+                                (if (rangeStr.isNotEmpty()) " ($rangeStr)" else "") +
+                                ".\n\nGrabbing will start strictly from your latest chapter."
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.autoGrabNewChapters = !viewModel.autoGrabNewChapters
+                                }
+                        ) {
+                            Checkbox(
+                                checked = viewModel.autoGrabNewChapters,
+                                onCheckedChange = { viewModel.autoGrabNewChapters = it }
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Always auto-grab new chapters without asking",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    } else {
+                        Text("No new chapters found for \"$bookName\". Everything is up to date!")
+                    }
                 }
             },
             confirmButton = {
@@ -1200,7 +1563,7 @@ fun LibraryScreen(
                             onNavigateToScrape()
                         }
                     ) {
-                        Text("Yes, Get It")
+                        Text("Download Now")
                     }
                 } else {
                     Button(onClick = { viewModel.showNewChaptersDialog = false }) {
@@ -1211,7 +1574,7 @@ fun LibraryScreen(
             dismissButton = {
                 if (count > 0) {
                     TextButton(onClick = { viewModel.showNewChaptersDialog = false }) {
-                        Text("No")
+                        Text("Later")
                     }
                 }
             }
@@ -1325,11 +1688,23 @@ fun LibraryBookItem(
     onToggleSelect: () -> Unit = {},
     unreadCount: Int = 0,
     downloadedCount: Int = 0,
+    bookStats: BookStats? = null,
+    onUpdateCategory: (String) -> Unit = {},
     onMigrateSource: () -> Unit = {},
     onEditDetails: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expandedMenu by remember { mutableStateOf(false) }
+
+    // Title formatted up to 15 words, displaying across up to two lines
+    val displayTitle = remember(book.title) {
+        val words = book.title.trim().split(Regex("\\s+"))
+        if (words.size > 15) {
+            words.take(15).joinToString(" ") + "…"
+        } else {
+            book.title
+        }
+    }
 
     Card(
         modifier = modifier
@@ -1411,27 +1786,95 @@ fun LibraryBookItem(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Top
                     ) {
                         Text(
-                            text = book.title,
-                            style = MaterialTheme.typography.titleLarge.copy(
+                            text = displayTitle,
+                            style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 15.sp,
+                                lineHeight = 19.sp
                             ),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
 
                         Box {
-                            IconButton(onClick = { expandedMenu = true }) {
+                            IconButton(
+                                onClick = { expandedMenu = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
                                 Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Menu")
                             }
                             DropdownMenu(
                                 expanded = expandedMenu,
                                 onDismissRequest = { expandedMenu = false }
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text("Listen (TTS)") },
+                                    onClick = {
+                                        expandedMenu = false
+                                        onListen()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.VolumeUp, contentDescription = null) }
+                                )
+                                Divider()
+                                // Shelf / Status category selection
+                                Text(
+                                    text = "SHELF / STATUS",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                )
+                                val shelfOptions = listOf(
+                                    "Reading" to Icons.Default.MenuBook,
+                                    "Plan to Read" to Icons.Default.BookmarkBorder,
+                                    "Waiting" to Icons.Default.HourglassEmpty,
+                                    "Completed" to Icons.Default.CheckCircleOutline,
+                                    "Favorites" to Icons.Default.FavoriteBorder
+                                )
+                                shelfOptions.forEach { (catName, icon) ->
+                                    val isCurrent = book.category.equals(catName, ignoreCase = true)
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = catName,
+                                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (isCurrent) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = "Current shelf",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            expandedMenu = false
+                                            onUpdateCategory(catName)
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = icon,
+                                                contentDescription = null,
+                                                tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    )
+                                }
+                                Divider()
                                 if (!book.url.startsWith("local://")) {
                                     DropdownMenuItem(
                                         text = {
@@ -1665,9 +2108,15 @@ fun LibraryBookItem(
             }
 
             // Reading progress percentage & bar
-            val readChapters = (book.totalChapters - unreadCount).coerceAtLeast(0)
-            val progressPercent = if (book.totalChapters > 0) {
-                (readChapters.toFloat() / book.totalChapters * 100).toInt().coerceIn(0, 100)
+            val totalChaps = maxOf(book.totalChapters, downloadedCount, bookStats?.maxChapterNumber ?: 0)
+            val currentReadChNum = maxOf(
+                book.lastReadChapterNumber,
+                bookStats?.maxReadChapterNumber ?: 0,
+                bookStats?.readCount ?: 0,
+                if (totalChaps > 0) (totalChaps - unreadCount).coerceAtLeast(0) else 0
+            )
+            val progressPercent = if (totalChaps > 0) {
+                ((currentReadChNum.toFloat() / totalChaps) * 100).toInt().coerceIn(0, 100)
             } else {
                 0
             }
@@ -1681,21 +2130,31 @@ fun LibraryBookItem(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Reading Progress: $progressPercent%",
+                        text = if (totalChaps > 0) {
+                            if (currentReadChNum >= totalChaps) "Reading Progress: 100% (Completed)"
+                            else "Reading Progress: $progressPercent%"
+                        } else {
+                            "Reading Progress: Not started"
+                        },
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Medium
                         )
                     )
                     Text(
-                        text = "$readChapters/${book.totalChapters} Read",
+                        text = if (totalChaps > 0) {
+                            if (currentReadChNum > 0) "Ch. $currentReadChNum / $totalChaps Read"
+                            else "0 / $totalChaps Read"
+                        } else {
+                            "0 Chapters"
+                        },
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
                     )
                 }
                 LinearProgressIndicator(
-                    progress = if (book.totalChapters > 0) readChapters.toFloat() / book.totalChapters else 0f,
+                    progress = if (totalChaps > 0) (currentReadChNum.toFloat() / totalChaps).coerceIn(0f, 1f) else 0f,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp)
@@ -1703,42 +2162,6 @@ fun LibraryBookItem(
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.outlineVariant
                 )
-            }
-
-            // Symmetric Action Buttons Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalButton(
-                    onClick = onListen,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    ),
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    Icon(imageVector = Icons.Default.VolumeUp, contentDescription = "Listen", modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Listen", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
-
-                Button(
-                    onClick = onRead,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    ),
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    Icon(imageVector = Icons.Default.MenuBook, contentDescription = "Read Book", modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Read", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
             }
         }
     }

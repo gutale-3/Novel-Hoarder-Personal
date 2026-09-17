@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.local.BookEntity
 import com.example.data.local.ChapterEntity
 import com.example.viewmodel.MainViewModel
@@ -34,7 +35,8 @@ fun ReaderTopBar(
     onOpenStats: () -> Unit,
     onOpenTextRules: () -> Unit,
     onOpenTapZones: () -> Unit,
-    onOpenSourceMigration: () -> Unit
+    onOpenSourceMigration: () -> Unit,
+    onOpenTags: () -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -47,12 +49,27 @@ fun ReaderTopBar(
 
         TopAppBar(
             title = {
-                Text(
-                    text = bookState?.title ?: "Offline Reader",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
+                Column {
+                    Text(
+                        text = bookState?.title ?: "Offline Reader",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    if (activeChapter != null) {
+                        val activeTags = viewModel.chapterTags.getTagsForChapter(activeChapter.id)
+                        val tagSnippet = if (activeTags.isNotEmpty()) " ${activeTags.joinToString("") { it.icon }}" else ""
+                        Text(
+                            text = "${activeChapter.title}$tagSnippet",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = barContentColor.copy(alpha = 0.7f),
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                }
             },
             navigationIcon = {
                 IconButton(onClick = onBack) {
@@ -60,6 +77,29 @@ fun ReaderTopBar(
                 }
             },
             actions = {
+                // Milestone Tag Button for Active Chapter
+                val activeTags = if (activeChapter != null) viewModel.chapterTags.getTagsForChapter(activeChapter.id) else emptyList()
+                IconButton(onClick = onOpenTags) {
+                    BadgedBox(
+                        badge = {
+                            if (activeTags.isNotEmpty()) {
+                                Badge(
+                                    containerColor = Color(activeTags.first().colorHex),
+                                    contentColor = Color.White
+                                ) {
+                                    Text("${activeTags.size}")
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Label,
+                            contentDescription = "Tag Chapter",
+                            tint = if (activeTags.isNotEmpty()) Color(activeTags.first().colorHex) else barContentColor.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+
                 // Audio / TTS Narration (Always visible)
                 IconButton(onClick = {
                     val activeCh = activeChapter
@@ -70,16 +110,18 @@ fun ReaderTopBar(
                         } else if (viewModel.ttsIsPaused && viewModel.ttsPlayingChapter?.id == activeCh.id) {
                             viewModel.tts.resumeTts()
                         } else {
-                            viewModel.tts.speak(activeCh.content, bk, activeCh)
+                            val savedPara = viewModel.progress.getSavedParagraphIndex(bk.id, activeCh.id)
+                            viewModel.tts.speak(activeCh.content, bk, activeCh, startFromParagraphIndex = if (savedPara > 0) savedPara else -1)
                         }
                     }
                 }) {
-                    val icon = if (viewModel.ttsIsPlaying && viewModel.ttsPlayingChapter?.id == activeChapter?.id) {
+                    val isCurrentChapterPlaying = viewModel.ttsIsPlaying && viewModel.ttsPlayingChapter?.id == activeChapter?.id
+                    val icon = if (isCurrentChapterPlaying) {
                         Icons.Default.VolumeOff
                     } else {
                         Icons.Default.RecordVoiceOver
                     }
-                    Icon(imageVector = icon, contentDescription = "Listen to Chapter")
+                    Icon(imageVector = icon, contentDescription = if (isCurrentChapterPlaying) "Pause narration" else "Listen to Chapter")
                 }
 
                 // Open TOC drawer (Always visible)
@@ -147,6 +189,15 @@ fun ReaderTopBar(
                         expanded = showMenu,
                         onDismissRequest = { showMenu = false }
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("Milestone Tags") },
+                            leadingIcon = { Icon(Icons.Default.Label, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) },
+                            onClick = {
+                                showMenu = false
+                                onOpenTags()
+                            }
+                        )
+
                         DropdownMenuItem(
                             text = { Text("Font & Reader Settings") },
                             leadingIcon = { Icon(Icons.Default.TextFormat, contentDescription = null, modifier = Modifier.size(20.dp)) },

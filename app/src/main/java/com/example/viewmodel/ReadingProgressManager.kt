@@ -128,7 +128,7 @@ class ReadingProgressManager(
                 val book = repository.getBook(bookId)
                 if (book != null) {
                     val updatedBook = book.copy(
-                        totalChapters = newCount,
+                        totalChapters = maxOf(book.totalChapters, newCount),
                         updatedAt = System.currentTimeMillis()
                     )
                     repository.updateBook(updatedBook)
@@ -182,7 +182,58 @@ class ReadingProgressManager(
         prefs.edit()
             .putInt("progress_para_${bookId}_${chapterId}", paragraphIndex)
             .putString("progress_chapter_${bookId}", chapterId)
+            .putString("active_reading_book_id", bookId)
+            .putString("active_reading_chapter_id", chapterId)
+            .putInt("active_reading_para_index", paragraphIndex)
             .apply()
+    }
+
+    fun getActiveReaderBookId(): String? {
+        val id = prefs.getString("active_reading_book_id", null)
+        return if (id.isNullOrBlank()) null else id
+    }
+
+    fun getActiveReaderChapterId(): String? {
+        val id = prefs.getString("active_reading_chapter_id", null)
+        return if (id.isNullOrBlank()) null else id
+    }
+
+    fun getActiveReaderParaIndex(): Int {
+        return prefs.getInt("active_reading_para_index", -1)
+    }
+
+    fun setActiveReaderSession(bookId: String, chapterId: String? = null, paraIndex: Int = -1) {
+        if (bookId.isBlank()) return
+        val editor = prefs.edit().putString("active_reading_book_id", bookId)
+        if (!chapterId.isNullOrBlank()) {
+            editor.putString("active_reading_chapter_id", chapterId)
+            editor.putString("progress_chapter_$bookId", chapterId)
+        }
+        if (paraIndex >= 0) {
+            editor.putInt("active_reading_para_index", paraIndex)
+            if (!chapterId.isNullOrBlank()) {
+                editor.putInt("progress_para_${bookId}_${chapterId}", paraIndex)
+            }
+        }
+        editor.apply()
+    }
+
+    fun clearActiveReaderSession() {
+        prefs.edit()
+            .remove("active_reading_book_id")
+            .remove("active_reading_chapter_id")
+            .remove("active_reading_para_index")
+            .apply()
+    }
+
+    fun getLastActiveTab(): String {
+        return prefs.getString("last_active_tab", "home") ?: "home"
+    }
+
+    fun setLastActiveTab(tab: String) {
+        if (tab in listOf("home", "scrape", "library")) {
+            prefs.edit().putString("last_active_tab", tab).apply()
+        }
     }
 
     fun autoSaveProgressAndBookmark(

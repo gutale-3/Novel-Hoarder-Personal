@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -46,6 +47,11 @@ fun ReaderScreen(
     var currentChapterId by remember { mutableStateOf(initialChapterId ?: "") }
     val lazyListState = rememberLazyListState()
 
+    BackHandler {
+        viewModel.progress.clearActiveReaderSession()
+        onBack()
+    }
+
     var showControls by remember { mutableStateOf(false) }
 
     // Dialog Visibility States
@@ -64,6 +70,7 @@ fun ReaderScreen(
     var showTextRulesDialog by remember { mutableStateOf(false) }
     var showSourceMigrationDialog by remember { mutableStateOf(false) }
     var showTapZonesDialog by remember { mutableStateOf(false) }
+    var showTagDialogForChapter by remember { mutableStateOf<ChapterEntity?>(null) }
 
     var sessionStartTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -163,9 +170,15 @@ fun ReaderScreen(
     // Whenever active chapter changes, save reading progress in database and prefetch next chapters
     LaunchedEffect(activeChapter) {
         if (activeChapter != null && bookState != null) {
-            viewModel.repository.updateBook(bookState!!.copy(lastReadChapterId = activeChapter.id))
+            viewModel.repository.updateBook(
+                bookState!!.copy(
+                    lastReadChapterId = activeChapter.id,
+                    lastReadChapterNumber = maxOf(bookState!!.lastReadChapterNumber, activeChapter.chapterNumber)
+                )
+            )
             viewModel.aiFeatures.triggerAutoDownloadNextChapters(bookState!!, activeChapter)
             viewModel.tts.primeChapterOpening(activeChapter.content)
+            viewModel.progress.setActiveReaderSession(bookId, activeChapter.id)
         }
     }
 
@@ -212,6 +225,7 @@ fun ReaderScreen(
                         paragraphIndex = currentParagraphIndex,
                         paragraphText = currentParaText
                     )
+                    viewModel.progress.setActiveReaderSession(bookId, activeChapter.id, currentParagraphIndex)
                     val durationSec = ((System.currentTimeMillis() - sessionStartTime) / 1000)
                     if (viewModel.settings.enableReadingStats && durationSec >= 5) {
                         val wordsInSession = lines.take(currentParagraphIndex + 1).sumOf { it.split("\\s+".toRegex()).size }.coerceAtLeast(10)
@@ -241,6 +255,31 @@ fun ReaderScreen(
                 }
             }
         }
+    }
+
+    val activeParagraphs = remember(activeChapter?.content) {
+        activeChapter?.content?.split("\n\n", "\n")?.filter { it.isNotBlank() } ?: emptyList()
+    }
+    val currentParagraphIndex by remember {
+        derivedStateOf {
+            val visibleIdx = lazyListState.firstVisibleItemIndex - READER_HEADER_ITEMS
+            if (visibleIdx >= 0) visibleIdx else 0
+        }
+    }
+    val userWpm = remember(viewModel.stats.totalReadingSeconds, viewModel.stats.totalWordsRead) {
+        if (viewModel.stats.totalReadingSeconds >= 120 && viewModel.stats.totalWordsRead > 200) {
+            ((viewModel.stats.totalWordsRead * 60) / viewModel.stats.totalReadingSeconds).toInt().coerceIn(120, 600)
+        } else {
+            240
+        }
+    }
+    val remainingWords = remember(activeParagraphs, currentParagraphIndex) {
+        if (currentParagraphIndex >= activeParagraphs.size) 0
+        else activeParagraphs.drop(currentParagraphIndex).sumOf { it.trim().split("\\s+".toRegex()).size }
+    }
+    val estimatedMinutesLeft = remember(remainingWords, userWpm) {
+        if (remainingWords <= 0) 0
+        else kotlin.math.ceil(remainingWords.toDouble() / userWpm.toDouble()).toInt().coerceAtLeast(1)
     }
 
     ModalNavigationDrawer(
@@ -287,7 +326,8 @@ fun ReaderScreen(
                     onOpenStats = { showStatsDialog = true },
                     onOpenTextRules = { showTextRulesDialog = true },
                     onOpenTapZones = { showTapZonesDialog = true },
-                    onOpenSourceMigration = { showSourceMigrationDialog = true }
+                    onOpenSourceMigration = { showSourceMigrationDialog = true },
+                    onOpenTags = { showTagDialogForChapter = activeChapter }
                 )
             },
             bottomBar = {
@@ -298,7 +338,8 @@ fun ReaderScreen(
                     viewModel = viewModel,
                     barBgColor = barBgColor,
                     barContentColor = barContentColor,
-                    onSelectChapter = { chId -> currentChapterId = chId }
+                    onSelectChapter = { chId -> currentChapterId = chId },
+                    estimatedMinutesLeft = estimatedMinutesLeft
                 )
             }
         ) { innerPadding ->
@@ -329,7 +370,8 @@ fun ReaderScreen(
                         selectedParaIndexForBookmark = idx
                         selectedParaTextForBookmark = text
                         showBookmarkDialog = true
-                    }
+                    },
+                    onOpenTags = { showTagDialogForChapter = activeChapter }
                 )
             }
         }
@@ -505,6 +547,14 @@ fun ReaderScreen(
             book = bookState!!,
             viewModel = viewModel,
             onDismiss = { showSourceMigrationDialog = false }
+        )
+    }
+
+    if (showTagDialogForChapter != null) {
+        ChapterTagDialog(
+            chapter = showTagDialogForChapter,
+            tagManager = viewModel.chapterTags,
+            onDismiss = { showTagDialogForChapter = null }
         )
     }
 }

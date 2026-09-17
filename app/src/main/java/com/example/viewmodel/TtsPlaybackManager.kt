@@ -67,6 +67,9 @@ class TtsPlaybackManager(
     // Text To Speech (TTS) System state
     private var tts: TextToSpeech? = null
     var isTtsReady by mutableStateOf(false)
+    @Volatile
+    private var isInitializingTts = false
+    private val pendingInitCallbacks = mutableListOf<() -> Unit>()
     var ttsVoices by mutableStateOf<List<VoiceOption>>(emptyList())
     var selectedVoiceId by mutableStateOf<String>("")
     var previewingVoiceId by mutableStateOf<String?>(null)
@@ -96,6 +99,8 @@ class TtsPlaybackManager(
     // Sleep Timer state
     var sleepTimerMinutes by mutableStateOf(0) // 0 = Off, -1 = End of Chapter
     var sleepTimerRemainingSeconds by mutableStateOf<Int?>(null)
+    var sleepTimerAutoRestart by mutableStateOf(prefs.getBoolean("tts_sleep_timer_auto_restart", true))
+        private set
     private var sleepTimerJob: Job? = null
 
     // Audio Focus & Noisy Receiver
@@ -177,10 +182,31 @@ class TtsPlaybackManager(
         // Load preferences
         focusModeEnabled = prefs.getBoolean("focus_mode", false)
         ttsAutoScrollEnabled = prefs.getBoolean("tts_auto_scroll", true)
+        ttsPitch = prefs.getFloat("tts_pitch", 1.0f)
+        ttsSpeed = prefs.getFloat("tts_speed", 1.0f)
+
+        val savedVoice = prefs.getString("tts_selected_voice", "") ?: ""
+        if (savedVoice.isNotEmpty() && !isLocalNeuralVoice(savedVoice)) {
+            selectedVoiceId = savedVoice
+        } else if (savedVoice.isNotEmpty() && isLocalNeuralVoice(savedVoice)) {
+            val voice = PiperVoiceCatalog.getVoiceById(savedVoice)
+            if (isVoiceDownloaded(voice)) {
+                selectedVoiceId = savedVoice
+            } else {
+                selectedVoiceId = "default_system"
+            }
+        } else {
+            selectedVoiceId = "default_system"
+        }
 
         registerTtsReceiver()
         cleanUpRemovedVoiceModels()
         warmUpLocalVoice()
+
+        // Eagerly initialize TTS engine in background so it's primed for immediate playback
+        coroutineScope.launch(Dispatchers.IO) {
+            initTts()
+        }
     }
 
     fun unregister() {
@@ -191,7 +217,14 @@ class TtsPlaybackManager(
         sherpaOnnxTtsEngine.stop()
         sherpaOnnxTtsEngine.shutdown()
         tts?.stop()
-        tts?.shutdown()
+        try { tts?.shutdown() } catch (_: Exception) {}
+        tts = null
+        isTtsReady = false
+        ttsIsPlaying = false
+        ttsIsPaused = false
+        ttsPlayingBook = null
+        ttsPlayingChapter = null
+        ttsActiveParagraphIndex = -1
         mediaSession?.apply {
             isActive = false
             release()
@@ -342,11 +375,17 @@ class TtsPlaybackManager(
         return prefs.getInt("tts_speaker_id_$voiceId", 0)
     }
 
+    fun updateSleepTimerAutoRestart(enabled: Boolean) {
+        sleepTimerAutoRestart = enabled
+        prefs.edit().putBoolean("tts_sleep_timer_auto_restart", enabled).apply()
+    }
+
     fun startSleepTimer(minutes: Int) {
         sleepTimerJob?.cancel()
         sleepTimerMinutes = minutes
         if (minutes == 0) {
             sleepTimerRemainingSeconds = null
+            addLog("Sleep timer turned off.")
             return
         }
         if (minutes == -1) { // End of Chapter mode
@@ -356,6 +395,20 @@ class TtsPlaybackManager(
         }
         
         sleepTimerRemainingSeconds = minutes * 60
+        addLog("Sleep timer set for $minutes minutes.")
+        if (ttsIsPlaying) {
+            startSleepTimerCountdown()
+        }
+    }
+
+    fun startSleepTimerCountdown() {
+        sleepTimerJob?.cancel()
+        if (sleepTimerMinutes <= 0) return
+
+        if (sleepTimerRemainingSeconds == null || (sleepTimerRemainingSeconds ?: 0) <= 0) {
+            sleepTimerRemainingSeconds = sleepTimerMinutes * 60
+        }
+
         sleepTimerJob = coroutineScope.launch(Dispatchers.Default) {
             while (isActive && (sleepTimerRemainingSeconds ?: 0) > 0) {
                 delay(1000L)
@@ -366,10 +419,15 @@ class TtsPlaybackManager(
             }
             if (isActive) {
                 withContext(Dispatchers.Main) {
-                    addLog("Sleep timer expired. Pausing playback.")
+                    addLog("Sleep timer expired ($sleepTimerMinutes min). Pausing playback.")
                     pauseTts()
-                    sleepTimerMinutes = 0
-                    sleepTimerRemainingSeconds = null
+                    if (sleepTimerAutoRestart) {
+                        // Keep configured duration active and reset countdown for when playback resumes
+                        sleepTimerRemainingSeconds = sleepTimerMinutes * 60
+                    } else {
+                        sleepTimerMinutes = 0
+                        sleepTimerRemainingSeconds = null
+                    }
                 }
             }
         }
@@ -631,12 +689,30 @@ class TtsPlaybackManager(
             onReady?.invoke()
             return
         }
+
+        synchronized(pendingInitCallbacks) {
+            if (onReady != null) {
+                pendingInitCallbacks.add(onReady)
+            }
+            if (isInitializingTts) {
+                return
+            }
+            isInitializingTts = true
+        }
+
         if (tts != null && !isTtsReady) {
             try { tts?.shutdown() } catch (_: Exception) {}
             tts = null
         }
         addLog("Initializing TextToSpeech engine...")
         tts = TextToSpeech(application) { status ->
+            val callbacks: List<() -> Unit>
+            synchronized(pendingInitCallbacks) {
+                isInitializingTts = false
+                callbacks = ArrayList(pendingInitCallbacks)
+                pendingInitCallbacks.clear()
+            }
+
             if (status == TextToSpeech.SUCCESS) {
                 isTtsReady = true
                 val availableVoices = mutableListOf<VoiceOption>()
@@ -672,23 +748,38 @@ class TtsPlaybackManager(
                 ttsVoices = finalVoices
 
                 var savedVoice = prefs.getString("tts_selected_voice", "") ?: ""
-                if (savedVoice == "premium_piper" || savedVoice.isEmpty()) {
-                    savedVoice = PiperVoiceCatalog.AMY_LOW.id
-                }
-                if (savedVoice.isNotEmpty()) {
-                    val matched = ttsVoices.find { it.id == savedVoice }
-                    if (matched != null) {
-                        setTtsVoice(matched)
+                if (savedVoice.startsWith("vits-piper-") || savedVoice.startsWith("kokoro-")) {
+                    val voice = PiperVoiceCatalog.getVoiceById(savedVoice)
+                    if (!isVoiceDownloaded(voice)) {
+                        savedVoice = ""
                     }
+                }
+                if (savedVoice.isEmpty() || savedVoice == "premium_piper") {
+                    val downloaded = PiperVoiceCatalog.ALL_VOICES.find { isVoiceDownloaded(it) }
+                    savedVoice = downloaded?.id ?: "default_system"
+                }
+
+                val matched = ttsVoices.find { it.id == savedVoice }
+                    ?: ttsVoices.find { it.id == "default_system" }
+                    ?: ttsVoices.firstOrNull()
+
+                if (matched != null) {
+                    setTtsVoice(matched, restartIfPlaying = false)
                 }
 
                 val savedPitch = prefs.getFloat("tts_pitch", 1.0f)
                 val savedSpeed = prefs.getFloat("tts_speed", 1.0f)
                 ttsPitch = savedPitch
                 ttsSpeed = savedSpeed
+                try {
+                    tts?.setPitch(savedPitch)
+                    tts?.setSpeechRate(savedSpeed)
+                } catch (_: Exception) {}
 
                 addLog("TTS successfully initialized with ${ttsVoices.size} voices.")
-                onReady?.invoke()
+                coroutineScope.launch(Dispatchers.Main) {
+                    callbacks.forEach { it.invoke() }
+                }
             } else {
                 isTtsReady = false
                 try { tts?.shutdown() } catch (_: Exception) {}
@@ -791,30 +882,31 @@ class TtsPlaybackManager(
         }
     }
 
-    fun setTtsVoice(voiceOption: VoiceOption) {
+    fun setTtsVoice(voiceOption: VoiceOption, restartIfPlaying: Boolean = true) {
         selectedVoiceId = voiceOption.id
         prefs.edit().putString("tts_selected_voice", voiceOption.id).apply()
         if (voiceOption.id.startsWith("vits-piper-") || voiceOption.id.startsWith("kokoro-")) {
             sherpaOnnxTtsEngine.selectedVoiceId = voiceOption.id
             sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(voiceOption.id)
             warmUpLocalVoice()
+            try { tts?.language = Locale.getDefault() } catch (_: Exception) {}
         } else if (voiceOption.id.startsWith("default_")) {
-            tts?.setLanguage(voiceOption.locale)
+            try { tts?.language = voiceOption.locale } catch (_: Exception) {}
         } else {
             try {
                 val rawVoices = tts?.voices
                 val actualVoice = rawVoices?.find { it.name == voiceOption.id }
                 if (actualVoice != null) {
-                    tts?.setVoice(actualVoice)
+                    tts?.voice = actualVoice
                 } else {
-                    tts?.setLanguage(voiceOption.locale)
+                    tts?.language = voiceOption.locale
                 }
             } catch (e: Exception) {
-                tts?.setLanguage(voiceOption.locale)
+                try { tts?.language = voiceOption.locale } catch (_: Exception) {}
             }
         }
 
-        if (ttsIsPlaying) {
+        if (restartIfPlaying && ttsIsPlaying) {
             val book = ttsPlayingBook
             val chapter = ttsPlayingChapter
             if (book != null && chapter != null) {
@@ -895,7 +987,23 @@ class TtsPlaybackManager(
         while (nextUnitToQueue < end) {
             val unit = speechUnits[nextUnitToQueue]
             val id = "unit_${activeChapterKey}#${nextUnitToQueue}#${unit.paragraphIndex}"
-            tts?.speak(unit.text, TextToSpeech.QUEUE_ADD, null, id)
+            val res = tts?.speak(unit.text, TextToSpeech.QUEUE_ADD, null, id)
+            if (res == TextToSpeech.ERROR && nextUnitToQueue == 0) {
+                addLog("Warning: tts.speak rejected speech unit. Reinitializing engine...")
+                isTtsReady = false
+                try { tts?.shutdown() } catch (_: Exception) {}
+                tts = null
+                initTts {
+                    coroutineScope.launch(Dispatchers.Main) {
+                        val bk = ttsPlayingBook
+                        val ch = ttsPlayingChapter
+                        if (bk != null && ch != null) {
+                            speak(ch.content, bk, ch, ttsActiveParagraphIndex ?: 0)
+                        }
+                    }
+                }
+                return
+            }
             nextUnitToQueue++
         }
     }
@@ -919,7 +1027,10 @@ class TtsPlaybackManager(
 
         // Save chapter progress & mark chapter as read
         coroutineScope.launch(Dispatchers.IO) {
-            val updatedBook = book.copy(lastReadChapterId = chapter.id)
+            val updatedBook = book.copy(
+                lastReadChapterId = chapter.id,
+                lastReadChapterNumber = maxOf(book.lastReadChapterNumber, chapter.chapterNumber)
+            )
             repository.updateBook(updatedBook)
             repository.updateChapterReadStatus(chapter.id, true)
         }
@@ -934,6 +1045,10 @@ class TtsPlaybackManager(
                 ttsPlayingChapter = chapter
                 ttsIsPlaying = true
                 ttsIsPaused = false
+
+                if (sleepTimerMinutes > 0 && sleepTimerJob?.isActive != true) {
+                    startSleepTimerCountdown()
+                }
 
                 tts?.stop()
 
@@ -985,9 +1100,11 @@ class TtsPlaybackManager(
                     onDone = {
                         coroutineScope.launch(Dispatchers.Main) {
                             if (sleepTimerMinutes == -1) {
-                                addLog("End of chapter reached for sleep timer. Stopping playback.")
-                                stopTts()
-                                sleepTimerMinutes = 0
+                                addLog("End of chapter reached for sleep timer. Pausing playback.")
+                                pauseTts()
+                                if (!sleepTimerAutoRestart) {
+                                    sleepTimerMinutes = 0
+                                }
                             } else {
                                 playNextChapterTts()
                             }
@@ -1011,10 +1128,23 @@ class TtsPlaybackManager(
         ttsIsPlaying = true
         ttsIsPaused = false
 
+        if (sleepTimerMinutes > 0 && sleepTimerJob?.isActive != true) {
+            startSleepTimerCountdown()
+        }
+
         initTts {
             coroutineScope.launch(Dispatchers.Main) {
                 if (!ttsIsPlaying || ttsPlayingChapter?.id != chapter.id) {
                     return@launch
+                }
+
+                // Ensure language is set
+                try {
+                    if (tts?.language == null) {
+                        tts?.language = Locale.getDefault()
+                    }
+                } catch (_: Exception) {
+                    try { tts?.language = Locale.US } catch (_: Exception) {}
                 }
 
                 tts?.setPitch(ttsPitch)
@@ -1033,17 +1163,18 @@ class TtsPlaybackManager(
                 nextUnitToQueue = 0
                 activeChapterKey = chapter.id
 
-                if (startFromParagraphIndex < 0) {
-                    tts?.speak(chapter.title, TextToSpeech.QUEUE_ADD, null, "title_${chapter.id}")
-                    ttsActiveParagraphIndex = -1
-                } else {
-                    ttsActiveParagraphIndex = startFromParagraphIndex
-                }
-
-                queueNextUnits()
-                showTtsNotification()
-
                 var consecutiveFailures = 0
+
+                fun handleUtteranceError(utteranceId: String?, errorCode: Int) {
+                    consecutiveFailures++
+                    addLog("TTS utterance error on $utteranceId (code $errorCode, consecutive: $consecutiveFailures)")
+                    if (consecutiveFailures >= 5) {
+                        coroutineScope.launch(Dispatchers.Main) {
+                            addLog("5 consecutive speech utterance errors — stopping playback.")
+                            stopTts()
+                        }
+                    }
+                }
 
                 tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
@@ -1082,9 +1213,11 @@ class TtsPlaybackManager(
                                 if (unitIdx >= speechUnits.size - 1) {
                                     coroutineScope.launch(Dispatchers.Main) {
                                         if (sleepTimerMinutes == -1) {
-                                            addLog("End of chapter reached for sleep timer. Stopping playback.")
-                                            stopTts()
-                                            sleepTimerMinutes = 0
+                                            addLog("End of chapter reached for sleep timer. Pausing playback.")
+                                            pauseTts()
+                                            if (!sleepTimerAutoRestart) {
+                                                sleepTimerMinutes = 0
+                                            }
                                         } else {
                                             playNextChapterTts()
                                         }
@@ -1100,15 +1233,37 @@ class TtsPlaybackManager(
 
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) {
-                        consecutiveFailures++
-                        if (consecutiveFailures >= 3) {
-                            coroutineScope.launch(Dispatchers.Main) {
-                                addLog("3 consecutive speech utterance errors — stopping playback.")
-                                stopTts()
-                            }
-                        }
+                        handleUtteranceError(utteranceId, -1)
+                    }
+
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        handleUtteranceError(utteranceId, errorCode)
                     }
                 })
+
+                var speakResult = TextToSpeech.SUCCESS
+                if (startFromParagraphIndex < 0) {
+                    speakResult = tts?.speak(chapter.title, TextToSpeech.QUEUE_ADD, null, "title_${chapter.id}") ?: TextToSpeech.ERROR
+                    ttsActiveParagraphIndex = -1
+                } else {
+                    ttsActiveParagraphIndex = startFromParagraphIndex
+                }
+
+                if (speakResult == TextToSpeech.ERROR) {
+                    addLog("Warning: TextToSpeech.speak() returned ERROR. Attempting auto-recovery...")
+                    isTtsReady = false
+                    try { tts?.shutdown() } catch (_: Exception) {}
+                    tts = null
+                    initTts {
+                        coroutineScope.launch(Dispatchers.Main) {
+                            speak(text, book, chapter, startFromParagraphIndex)
+                        }
+                    }
+                    return@launch
+                }
+
+                queueNextUnits()
+                showTtsNotification()
             }
         }
     }
@@ -1165,12 +1320,30 @@ class TtsPlaybackManager(
         showTtsNotification()
         saveTtsProgress()
         loadResumableTtsSession()
+
+        // Persistent timer: reset to full duration if auto-restart enabled
+        if (sleepTimerMinutes > 0) {
+            sleepTimerJob?.cancel()
+            if (sleepTimerAutoRestart) {
+                sleepTimerRemainingSeconds = sleepTimerMinutes * 60
+            }
+        }
     }
 
     fun resumeTts() {
-        val book = ttsPlayingBook ?: return
-        val chapter = ttsPlayingChapter ?: return
-        speak(chapter.content, book, chapter, startFromParagraphIndex = ttsActiveParagraphIndex ?: 0)
+        if (sleepTimerMinutes > 0) {
+            if (sleepTimerAutoRestart) {
+                sleepTimerRemainingSeconds = sleepTimerMinutes * 60
+            }
+            startSleepTimerCountdown()
+        }
+        val book = ttsPlayingBook
+        val chapter = ttsPlayingChapter
+        if (book != null && chapter != null) {
+            speak(chapter.content, book, chapter, startFromParagraphIndex = ttsActiveParagraphIndex ?: 0)
+        } else {
+            resumeLastSession()
+        }
     }
 
     fun stopTts() {
@@ -1185,6 +1358,11 @@ class TtsPlaybackManager(
         dismissTtsNotification()
         clearTtsProgress()
         hasResumableSession = false
+
+        sleepTimerJob?.cancel()
+        if (sleepTimerMinutes > 0 && sleepTimerAutoRestart) {
+            sleepTimerRemainingSeconds = sleepTimerMinutes * 60
+        }
 
         mediaSession?.apply {
             isActive = false
@@ -1212,7 +1390,12 @@ class TtsPlaybackManager(
 
         if (book.lastReadChapterId != chapter.id) {
             coroutineScope.launch(Dispatchers.IO) {
-                repository.updateBook(book.copy(lastReadChapterId = chapter.id))
+                repository.updateBook(
+                    book.copy(
+                        lastReadChapterId = chapter.id,
+                        lastReadChapterNumber = maxOf(book.lastReadChapterNumber, chapter.chapterNumber)
+                    )
+                )
             }
         }
 

@@ -47,7 +47,10 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    debug {
+      signingConfig = signingConfigs.getByName("debugConfig")
+      isDebuggable = false
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -60,7 +63,7 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
   packaging {
     jniLibs {
-      useLegacyPackaging = true
+      useLegacyPackaging = false
       pickFirsts.add("**/libonnxruntime.so")
     }
   }
@@ -112,6 +115,6 @@ dependencies {
   implementation(libs.jsoup)
   implementation(libs.sherpa.onnx)
   implementation(libs.commons.compress)
-  implementation(libs.androidx.graphics.path)
+  // implementation(libs.androidx.graphics.path) - removed unused dependency to eliminate non-16KB-aligned libandroidx.graphics.path.so
   implementation(libs.mlkit.translate)
 }

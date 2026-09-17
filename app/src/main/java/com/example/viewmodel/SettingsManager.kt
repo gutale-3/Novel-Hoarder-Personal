@@ -92,6 +92,7 @@ class SettingsManager(val application: Application) {
     var readingGuideOpacity by mutableStateOf(0.15f)
 
     var enableAutoCheckUpdates by mutableStateOf(true)
+    var autoGrabNewChapters by mutableStateOf(false)
     var updateCheckIntervalHours by mutableStateOf(12) // 6, 12, 24
     var updateCheckWifiOnly by mutableStateOf(true)
 
@@ -173,6 +174,7 @@ class SettingsManager(val application: Application) {
         readingGuideHeight = prefs.getInt("reading_guide_height", 80)
 
         enableAutoCheckUpdates = prefs.getBoolean("enable_auto_check_updates", true)
+        autoGrabNewChapters = prefs.getBoolean("auto_grab_new_chapters", false)
         updateCheckIntervalHours = prefs.getInt("update_check_interval_hours", 12)
         updateCheckWifiOnly = prefs.getBoolean("update_check_wifi_only", true)
 
@@ -455,6 +457,11 @@ class SettingsManager(val application: Application) {
     fun updateEnableAutoCheckUpdates(enabled: Boolean) {
         enableAutoCheckUpdates = enabled
         prefs.edit().putBoolean("enable_auto_check_updates", enabled).apply()
+    }
+
+    fun updateAutoGrabNewChapters(enabled: Boolean) {
+        autoGrabNewChapters = enabled
+        prefs.edit().putBoolean("auto_grab_new_chapters", enabled).apply()
     }
 
     fun updateEnableBackgroundChapterUpdates(enabled: Boolean) = updateEnableAutoCheckUpdates(enabled)

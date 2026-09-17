@@ -397,14 +397,47 @@ class ScrapingManager(
                 
                 // Fetch local chapters
                 val localChapters = repository.getChapters(bookId)
-                val localUrls = localChapters.map { it.url }.toSet()
-                val localNums = localChapters.map { it.chapterNumber }.toSet()
+                val maxLocalChapNum = localChapters.maxOfOrNull { it.chapterNumber } ?: 0
+                val userFromCap = fromChapterInput.toIntOrNull()
 
                 val missingList = mutableListOf<MissingChapter>()
-                for ((index, chapUrl) in chapterUrls.withIndex()) {
-                    val chapNum = index + 1
-                    if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
-                        missingList.add(MissingChapter(chapUrl, chapNum))
+                if (maxLocalChapNum == 0) {
+                    val localUrls = localChapters.map { it.url }.toSet()
+                    val localNums = localChapters.map { it.chapterNumber }.toSet()
+                    for ((index, chapUrl) in chapterUrls.withIndex()) {
+                        val chapNum = index + 1
+                        if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
+                            missingList.add(MissingChapter(chapUrl, chapNum))
+                        }
+                    }
+                } else {
+                    val sortedLocals = localChapters.sortedByDescending { it.chapterNumber }
+                    var matchedTocIndex = -1
+                    var matchedChapNum = maxLocalChapNum
+                    for (loc in sortedLocals) {
+                        val idx = chapterUrls.indexOf(loc.url)
+                        if (idx >= 0) {
+                            matchedTocIndex = idx
+                            matchedChapNum = loc.chapterNumber
+                            break
+                        }
+                    }
+                    val startIndex = if (matchedTocIndex >= 0) {
+                        matchedTocIndex + 1
+                    } else {
+                        maxLocalChapNum.coerceAtMost(chapterUrls.size)
+                    }
+
+                    for (i in startIndex until chapterUrls.size) {
+                        val chapUrl = chapterUrls[i]
+                        val chapNum = if (matchedTocIndex >= 0) {
+                            matchedChapNum + (i - matchedTocIndex)
+                        } else {
+                            maxLocalChapNum + 1 + (i - startIndex)
+                        }
+                        if (userFromCap == null || chapNum >= userFromCap) {
+                            missingList.add(MissingChapter(chapUrl, chapNum))
+                        }
                     }
                 }
 
@@ -485,13 +518,45 @@ class ScrapingManager(
                 }
 
                 val localChapters = repository.getChapters(book.id)
-                val localUrls = localChapters.map { it.url }.toSet()
-                val localNums = localChapters.map { it.chapterNumber }.toSet()
+                val maxLocalChapNum = localChapters.maxOfOrNull { it.chapterNumber } ?: 0
 
                 val missingList = mutableListOf<MissingChapter>()
-                for ((index, chapUrl) in chapterUrls.withIndex()) {
-                    val chapNum = index + 1
-                    if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
+                if (maxLocalChapNum == 0) {
+                    val localUrls = localChapters.map { it.url }.toSet()
+                    val localNums = localChapters.map { it.chapterNumber }.toSet()
+                    for ((index, chapUrl) in chapterUrls.withIndex()) {
+                        val chapNum = index + 1
+                        if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
+                            missingList.add(MissingChapter(chapUrl, chapNum))
+                        }
+                    }
+                } else {
+                    // Strictly grab chapters starting after the user's latest downloaded chapter (e.g. 501 if 500, 672 if 671, 1001 if 1000)
+                    // Even if earlier chapters were deleted to save scrolling length, never grab deleted chapters.
+                    val sortedLocals = localChapters.sortedByDescending { it.chapterNumber }
+                    var matchedTocIndex = -1
+                    var matchedChapNum = maxLocalChapNum
+                    for (loc in sortedLocals) {
+                        val idx = chapterUrls.indexOf(loc.url)
+                        if (idx >= 0) {
+                            matchedTocIndex = idx
+                            matchedChapNum = loc.chapterNumber
+                            break
+                        }
+                    }
+                    val startIndex = if (matchedTocIndex >= 0) {
+                        matchedTocIndex + 1
+                    } else {
+                        maxLocalChapNum.coerceAtMost(chapterUrls.size)
+                    }
+
+                    for (i in startIndex until chapterUrls.size) {
+                        val chapUrl = chapterUrls[i]
+                        val chapNum = if (matchedTocIndex >= 0) {
+                            matchedChapNum + (i - matchedTocIndex)
+                        } else {
+                            maxLocalChapNum + 1 + (i - startIndex)
+                        }
                         missingList.add(MissingChapter(chapUrl, chapNum))
                     }
                 }
@@ -499,9 +564,15 @@ class ScrapingManager(
                 withContext(Dispatchers.Main) {
                     newChaptersList = missingList
                     newChaptersFoundCount = missingList.size
-                    showNewChaptersDialog = true
                     isCheckingNewChapters = false
                     checkingNewChaptersBookId = null
+
+                    if (missingList.isNotEmpty() && settings.autoGrabNewChapters) {
+                        addLog("Auto-Grab enabled: Found ${missingList.size} new chapters (starting from Ch. ${missingList.first().chapterNumber}). Automatically grabbing...")
+                        startScrapingNewChapters()
+                    } else {
+                        showNewChaptersDialog = true
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1148,6 +1219,60 @@ class ScrapingManager(
                     rescrapingChapterId = null
                     onComplete(false, "Error: ${e.message}")
                 }
+            }
+        }
+    }
+
+    fun rescrapeBatchChapters(chapters: List<ChapterEntity>, onComplete: (Boolean, String) -> Unit) {
+        if (chapters.isEmpty()) {
+            onComplete(false, "No chapters selected.")
+            return
+        }
+        if (rescrapingChapterId != null) {
+            onComplete(false, "Already rescraping another chapter.")
+            return
+        }
+        coroutineScope.launch(Dispatchers.IO) {
+            var successCount = 0
+            for (chapter in chapters) {
+                withContext(Dispatchers.Main) {
+                    rescrapingChapterId = chapter.id
+                }
+                try {
+                    val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
+                    val webView = createFreshWebView()
+                    try {
+                        val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
+                        val title = rawContent.first
+                        var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
+                        val glossaries = repository.getGlossary(chapter.bookId)
+                        if (glossaries.isNotEmpty()) {
+                            cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                        }
+                        val md5 = java.security.MessageDigest.getInstance("MD5")
+                        val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                        val updatedChapter = chapter.copy(
+                            title = title,
+                            content = cleanedBody,
+                            hash = hash,
+                            downloadedAt = System.currentTimeMillis()
+                        )
+                        repository.deletePolishedChapter(chapter.id)
+                        repository.deleteChapterRecap(chapter.id)
+                        repository.insertChapter(updatedChapter)
+                        successCount++
+                    } finally {
+                        withContext(Dispatchers.Main) {
+                            try { webView.destroy() } catch (_: Exception) {}
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            withContext(Dispatchers.Main) {
+                rescrapingChapterId = null
+                onComplete(true, "Rescraped $successCount of ${chapters.size} chapters.")
             }
         }
     }
