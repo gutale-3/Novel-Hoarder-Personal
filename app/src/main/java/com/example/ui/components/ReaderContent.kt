@@ -37,6 +37,7 @@ import com.example.data.local.ChapterEntity
 import com.example.data.local.GlossaryEntity
 import com.example.data.local.TextReplacementRuleEntity
 import com.example.util.BionicReadingHelper
+import com.example.util.WatermarkCleaner
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -77,8 +78,17 @@ fun ReaderContent(
 
     val isContinuous = viewModel.settings.readerPagingMode == "continuous"
 
-    val chapterParagraphs = remember(activeChapter?.content) {
-        activeChapter?.content?.split("\n\n", "\n")?.filter { it.isNotBlank() } ?: emptyList()
+    val chapterParagraphs = remember(
+        activeChapter?.content,
+        viewModel.settings.watermarkRemovalEnabled,
+        viewModel.settings.customWatermarkPhrases
+    ) {
+        val raw = activeChapter?.content?.split("\n\n", "\n")?.filter { it.isNotBlank() } ?: emptyList()
+        WatermarkCleaner.cleanParagraphs(
+            paragraphs = raw,
+            enabled = viewModel.settings.watermarkRemovalEnabled,
+            customPhrases = viewModel.settings.getCustomWatermarkPhrasesList()
+        )
     }
 
     Box(

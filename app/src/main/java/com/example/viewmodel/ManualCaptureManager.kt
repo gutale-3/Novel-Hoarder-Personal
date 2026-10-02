@@ -215,7 +215,13 @@ class ManualCaptureManager(
     }
 
     private suspend fun currentUrl(webView: WebView): String =
-        withContext(Dispatchers.Main) { webView.url.orEmpty() }
+        withContext(Dispatchers.Main) {
+            try {
+                webView.url.orEmpty()
+            } catch (_: Throwable) {
+                ""
+            }
+        }
 
     private suspend fun evaluateJs(webView: WebView, script: String): String? =
         withContext(Dispatchers.Main) {

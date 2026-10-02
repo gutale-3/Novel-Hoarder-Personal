@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -19,6 +20,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.example.data.local.BookEntity
 import com.example.data.local.ChapterEntity
 import com.example.ui.components.*
+import com.example.util.WatermarkCleaner
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
 import java.io.File
@@ -257,8 +259,17 @@ fun ReaderScreen(
         }
     }
 
-    val activeParagraphs = remember(activeChapter?.content) {
-        activeChapter?.content?.split("\n\n", "\n")?.filter { it.isNotBlank() } ?: emptyList()
+    val activeParagraphs = remember(
+        activeChapter?.content,
+        viewModel.settings.watermarkRemovalEnabled,
+        viewModel.settings.customWatermarkPhrases
+    ) {
+        val raw = activeChapter?.content?.split("\n\n", "\n")?.filter { it.isNotBlank() } ?: emptyList()
+        WatermarkCleaner.cleanParagraphs(
+            paragraphs = raw,
+            enabled = viewModel.settings.watermarkRemovalEnabled,
+            customPhrases = viewModel.settings.getCustomWatermarkPhrasesList()
+        )
     }
     val currentParagraphIndex by remember {
         derivedStateOf {
@@ -373,6 +384,16 @@ fun ReaderScreen(
                     },
                     onOpenTags = { showTagDialogForChapter = activeChapter }
                 )
+
+                // Extra-Dim Sub-Zero Night Scrim
+                if (viewModel.settings.readerExtraDimEnabled && viewModel.settings.readerExtraDimPercent > 0) {
+                    val dimAlpha = (viewModel.settings.readerExtraDimPercent / 100f).coerceIn(0.05f, 0.85f)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = dimAlpha))
+                    )
+                }
             }
         }
     }

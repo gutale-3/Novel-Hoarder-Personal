@@ -49,6 +49,22 @@ class SettingsManager(val application: Application) {
     var readerTapZonesEnabled by mutableStateOf(true)
     var readerKeepScreenOnEnabled by mutableStateOf(false)
 
+    // --- Extra Dim (Sub-Zero Night Reading) ---
+    var readerExtraDimEnabled by mutableStateOf(false)
+    var readerExtraDimPercent by mutableStateOf(35) // 5..85%
+
+    // --- Chapter Noise & Watermark Cleaner ---
+    var watermarkRemovalEnabled by mutableStateOf(true)
+    var customWatermarkPhrases by mutableStateOf("")
+
+    // --- Table of Contents Subdivision ---
+    var defaultTocSubdivisionMode by mutableStateOf("as_is") // "as_is", "chapters", "volumes"
+    var defaultTocBatchSize by mutableStateOf(50) // 25, 50, 100
+
+    // --- Smart Space Saver (Auto-Prune Read Content) ---
+    var autoPruneReadChaptersEnabled by mutableStateOf(false)
+    var keepLastReadChaptersCount by mutableStateOf(50) // 20, 50, 100
+
     // --- Library & Browse Settings ---
     var librarySort by mutableStateOf("recently_read") // "recently_read", "recently_updated", "title", "author", "unread_count", "progress"
     var libraryView by mutableStateOf("grid") // "grid", "list"
@@ -141,6 +157,8 @@ class SettingsManager(val application: Application) {
         aggressiveCleanDefault = prefs.getBoolean("aggressive_clean_default", false)
         chapterNumberingMode = prefs.getString("chapter_numbering_mode", "site") ?: "site"
         lastBrowserUrl = prefs.getString("last_browser_url", "https://www.google.com") ?: "https://www.google.com"
+        defaultTocSubdivisionMode = prefs.getString("default_toc_subdivision_mode", "as_is") ?: "as_is"
+        defaultTocBatchSize = prefs.getInt("default_toc_batch_size", 50)
 
         glossaryPrompt = prefs.getString("glossary_prompt", "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary.") ?: "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary."
         polishPrompt = prefs.getString("polish_prompt", "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.") ?: "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
@@ -181,6 +199,18 @@ class SettingsManager(val application: Application) {
         enableAutoApplyTextRules = prefs.getBoolean("enable_auto_apply_text_rules", true)
         enableFullBackupRestore = prefs.getBoolean("enable_full_backup_restore", true)
         enableSourceMigration = prefs.getBoolean("enable_source_migration", true)
+
+        // Extra Dim
+        readerExtraDimEnabled = prefs.getBoolean("reader_extra_dim_enabled", false)
+        readerExtraDimPercent = prefs.getInt("reader_extra_dim_percent", 35)
+
+        // Watermark cleaner
+        watermarkRemovalEnabled = prefs.getBoolean("watermark_removal_enabled", true)
+        customWatermarkPhrases = prefs.getString("custom_watermark_phrases", "") ?: ""
+
+        // Smart Space Saver
+        autoPruneReadChaptersEnabled = prefs.getBoolean("auto_prune_read_chapters_enabled", false)
+        keepLastReadChaptersCount = prefs.getInt("keep_last_read_chapters_count", 50)
     }
 
     fun updateTheme(theme: AppTheme) {
@@ -300,6 +330,49 @@ class SettingsManager(val application: Application) {
     fun updateLastBrowserUrl(url: String) {
         lastBrowserUrl = url
         prefs.edit().putString("last_browser_url", url).apply()
+    }
+
+    // --- Extra Dim Controls ---
+    fun updateReaderExtraDimEnabled(enabled: Boolean) {
+        readerExtraDimEnabled = enabled
+        prefs.edit().putBoolean("reader_extra_dim_enabled", enabled).apply()
+    }
+
+    fun updateReaderExtraDimPercent(percent: Int) {
+        val clamped = percent.coerceIn(5, 85)
+        readerExtraDimPercent = clamped
+        prefs.edit().putInt("reader_extra_dim_percent", clamped).apply()
+    }
+
+    // --- Watermark Stripper Controls ---
+    fun updateWatermarkRemovalEnabled(enabled: Boolean) {
+        watermarkRemovalEnabled = enabled
+        prefs.edit().putBoolean("watermark_removal_enabled", enabled).apply()
+    }
+
+    fun updateCustomWatermarkPhrases(phrases: String) {
+        customWatermarkPhrases = phrases
+        prefs.edit().putString("custom_watermark_phrases", phrases).apply()
+    }
+
+    fun getCustomWatermarkPhrasesList(): List<String> {
+        if (customWatermarkPhrases.isBlank()) return emptyList()
+        return customWatermarkPhrases
+            .split("\n", ",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    }
+
+    // --- Smart Space Saver Controls ---
+    fun updateAutoPruneReadChaptersEnabled(enabled: Boolean) {
+        autoPruneReadChaptersEnabled = enabled
+        prefs.edit().putBoolean("auto_prune_read_chapters_enabled", enabled).apply()
+    }
+
+    fun updateKeepLastReadChaptersCount(count: Int) {
+        val valid = count.coerceIn(10, 200)
+        keepLastReadChaptersCount = valid
+        prefs.edit().putInt("keep_last_read_chapters_count", valid).apply()
     }
 
     fun importCustomFont(context: Context, uri: Uri) {
@@ -516,5 +589,46 @@ class SettingsManager(val application: Application) {
 
     suspend fun importLibraryMetadataJson(repository: NovelRepository, jsonStr: String): Int = withContext(Dispatchers.IO) {
         com.example.util.BackupRestoreManager.importJsonString(repository, jsonStr)
+    }
+
+    // --- Table of Contents Subdivision Per-Book and Global API ---
+    fun getBookTocSubdivisionMode(bookId: String): String {
+        return prefs.getString("toc_subdivision_mode_$bookId", defaultTocSubdivisionMode) ?: defaultTocSubdivisionMode
+    }
+
+    fun setBookTocSubdivisionMode(bookId: String, mode: String) {
+        prefs.edit().putString("toc_subdivision_mode_$bookId", mode).apply()
+    }
+
+    fun getBookTocBatchSize(bookId: String): Int {
+        return prefs.getInt("toc_batch_size_$bookId", defaultTocBatchSize)
+    }
+
+    fun setBookTocBatchSize(bookId: String, size: Int) {
+        prefs.edit().putInt("toc_batch_size_$bookId", size).apply()
+    }
+
+    fun getBookCustomVolumeSplits(bookId: String): List<Int> {
+        val raw = prefs.getString("toc_volume_splits_$bookId", null) ?: return emptyList()
+        return try {
+            raw.split(",").mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }.sorted()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun setBookCustomVolumeSplits(bookId: String, splits: List<Int>) {
+        val str = splits.filter { it > 0 }.sorted().joinToString(",")
+        prefs.edit().putString("toc_volume_splits_$bookId", str).apply()
+    }
+
+    fun updateDefaultTocSubdivisionMode(mode: String) {
+        defaultTocSubdivisionMode = mode
+        prefs.edit().putString("default_toc_subdivision_mode", mode).apply()
+    }
+
+    fun updateDefaultTocBatchSize(size: Int) {
+        defaultTocBatchSize = size
+        prefs.edit().putInt("default_toc_batch_size", size).apply()
     }
 }

@@ -152,6 +152,9 @@ interface BookDao {
     @Query("UPDATE chapters SET isArchived = :isArchived WHERE id IN (:chapterIds)")
     suspend fun updateChaptersArchiveStatus(chapterIds: List<String>, isArchived: Boolean)
 
+    @Query("UPDATE chapters SET content = '' WHERE id IN (:chapterIds)")
+    suspend fun clearChapterContents(chapterIds: List<String>): Int
+
     // Soft Delete / Restore Chapters
     @Query("UPDATE chapters SET isDeleted = 1 WHERE id = :id")
     suspend fun softDeleteChapterById(id: String)

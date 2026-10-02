@@ -1116,6 +1116,32 @@ fun TtsPlayerBar(
                                     onCheckedChange = { viewModel.sleepTimerAutoRestart = it }
                                 )
                             }
+
+                            // Smooth Audio Fade-Out Toggle
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Smooth 60s Audio Fade-Out",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "Gently lowers playback volume over the final 60 seconds before pause so you fall asleep peacefully",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = viewModel.sleepTimerFadeOutEnabled,
+                                    onCheckedChange = { viewModel.sleepTimerFadeOutEnabled = it }
+                                )
+                            }
                         }
 
                         Divider(color = MaterialTheme.colorScheme.outlineVariant)

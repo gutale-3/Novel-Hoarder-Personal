@@ -11,6 +11,10 @@ import com.example.data.local.BookmarkEntity
 import com.example.data.repository.NovelRepository
 import com.example.data.scraper.SourceManager
 import com.example.util.NovelCompiler
+import com.example.util.SampleNovels
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +29,44 @@ class LibraryManager(
 ) {
     var onClearSelection: (() -> Unit)? = null
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    var isSeedingSamples by mutableStateOf(false)
+        private set
+
+    init {
+        coroutineScope.launch(Dispatchers.IO) {
+            val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+            val alreadySeeded = prefs.getBoolean("sample_novels_seeded_v2", false)
+            if (!alreadySeeded) {
+                val existing = repository.getAllBooks()
+                if (existing.isEmpty()) {
+                    seedSampleNovels(force = false)
+                }
+            }
+        }
+    }
+
+    fun seedSampleNovels(force: Boolean = false, onComplete: ((Int) -> Unit)? = null) {
+        if (isSeedingSamples) return
+        isSeedingSamples = true
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                scrapingManager.addLog("Generating and seeding 5 sample novels (500+ chapters each)...")
+                val count = SampleNovels.seedSampleNovels(application, repository, force)
+                withContext(Dispatchers.Main) {
+                    isSeedingSamples = false
+                    scrapingManager.addLog("Successfully seeded $count sample novels with 500+ chapters each into library.")
+                    onComplete?.invoke(count)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    isSeedingSamples = false
+                    scrapingManager.addLog("Failed to seed sample novels: ${e.message}")
+                    onComplete?.invoke(0)
+                }
+            }
+        }
+    }
 
     // --- Book & Chapter Soft-Delete / Restore / Trash Helpers ---
     fun deleteBook(bookId: String) {

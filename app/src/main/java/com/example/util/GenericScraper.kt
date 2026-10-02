@@ -232,8 +232,9 @@ object GenericScraper : NovelSource {
     private suspend fun loadUrlAndWait(webView: WebView, url: String) {
         withTimeoutOrNull(25000) {
             suspendCancellableCoroutine<Unit> { continuation ->
-                webView.webViewClient = object : android.webkit.WebViewClient() {
+                webView.webViewClient = object : WebViewFactory.SafeWebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
                         if (continuation.isActive) continuation.resume(Unit)
                     }
 
@@ -243,6 +244,7 @@ object GenericScraper : NovelSource {
                         description: String?,
                         failingUrl: String?
                     ) {
+                        super.onReceivedError(view, errorCode, description, failingUrl)
                         if (continuation.isActive) continuation.resume(Unit)
                     }
 
@@ -251,9 +253,19 @@ object GenericScraper : NovelSource {
                         request: android.webkit.WebResourceRequest?,
                         error: android.webkit.WebResourceError?
                     ) {
+                        super.onReceivedError(view, request, error)
                         if (request?.isForMainFrame == true && continuation.isActive) {
                             continuation.resume(Unit)
                         }
+                    }
+
+                    override fun onRenderProcessGone(
+                        view: WebView?,
+                        detail: android.webkit.RenderProcessGoneDetail?
+                    ): Boolean {
+                        android.util.Log.w("GenericScraper", "Renderer process exited during scrape. Handled cleanly.")
+                        if (continuation.isActive) continuation.resume(Unit)
+                        return true
                     }
                 }
                 webView.loadUrl(url)

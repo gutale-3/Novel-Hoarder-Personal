@@ -362,6 +362,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         get() = tts.sleepTimerAutoRestart
         set(value) { tts.updateSleepTimerAutoRestart(value) }
 
+    var sleepTimerFadeOutEnabled: Boolean
+        get() = tts.sleepTimerFadeOutEnabled
+        set(value) { tts.setSleepTimerFadeOut(value) }
+
     var autoGrabNewChapters: Boolean
         get() = settings.autoGrabNewChapters
         set(value) { settings.updateAutoGrabNewChapters(value) }

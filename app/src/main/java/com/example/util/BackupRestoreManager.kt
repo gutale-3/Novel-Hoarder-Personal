@@ -413,5 +413,107 @@ object BackupRestoreManager {
 
         importedBooksCount
     }
+
+    suspend fun createLocalAutoBackup(
+        context: Context,
+        repository: NovelRepository
+    ): Result<File> = withContext(Dispatchers.IO) {
+        try {
+            val backupsDir = File(context.filesDir, "backups").apply { if (!exists()) mkdirs() }
+            val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+            val fileName = "backup_${sdf.format(java.util.Date())}.zip"
+            val backupFile = File(backupsDir, fileName)
+
+            val jsonString = generateBackupMetadataJson(repository)
+
+            backupFile.outputStream().use { outputStream ->
+                ZipOutputStream(BufferedOutputStream(outputStream)).use { zipOut ->
+                    // 1. Write metadata.json entry
+                    val metaEntry = ZipEntry("backup_metadata.json")
+                    zipOut.putNextEntry(metaEntry)
+                    zipOut.write(jsonString.toByteArray(Charsets.UTF_8))
+                    zipOut.closeEntry()
+
+                    // 2. Include any cached cover images
+                    val coversDir = File(context.filesDir, "covers")
+                    if (coversDir.exists() && coversDir.isDirectory) {
+                        coversDir.listFiles()?.forEach { coverFile ->
+                            if (coverFile.isFile) {
+                                val coverEntry = ZipEntry("covers/${coverFile.name}")
+                                zipOut.putNextEntry(coverEntry)
+                                coverFile.inputStream().use { it.copyTo(zipOut) }
+                                zipOut.closeEntry()
+                            }
+                        }
+                    }
+                }
+            }
+            Result.success(backupFile)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    fun listLocalBackups(context: Context): List<File> {
+        val backupsDir = File(context.filesDir, "backups")
+        if (!backupsDir.exists() || !backupsDir.isDirectory) return emptyList()
+        return backupsDir.listFiles { file -> file.isFile && file.extension.equals("zip", ignoreCase = true) }
+            ?.sortedByDescending { it.lastModified() }
+            ?: emptyList()
+    }
+
+    fun deleteLocalBackup(file: File): Boolean {
+        return try {
+            if (file.exists()) file.delete() else false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    suspend fun restoreLocalBackup(
+        context: Context,
+        repository: NovelRepository,
+        backupFile: File
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            if (!backupFile.exists()) {
+                return@withContext Result.failure(IllegalArgumentException("Backup file not found"))
+            }
+            var jsonString: String? = null
+            val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
+
+            backupFile.inputStream().use { inputStream ->
+                ZipInputStream(BufferedInputStream(inputStream)).use { zipIn ->
+                    var entry: ZipEntry? = zipIn.nextEntry
+                    while (entry != null) {
+                        if (entry.name == "backup_metadata.json" || entry.name.endsWith(".json")) {
+                            val baos = ByteArrayOutputStream()
+                            zipIn.copyTo(baos)
+                            jsonString = baos.toString("UTF-8")
+                        } else if (entry.name.startsWith("covers/") && !entry.isDirectory) {
+                            val fileName = File(entry.name).name
+                            val destFile = File(coversDir, fileName)
+                            destFile.outputStream().use { out ->
+                                zipIn.copyTo(out)
+                            }
+                        }
+                        zipIn.closeEntry()
+                        entry = zipIn.nextEntry
+                    }
+                }
+            }
+
+            if (jsonString.isNullOrBlank()) {
+                return@withContext Result.failure(IllegalArgumentException("No readable data in backup file"))
+            }
+
+            val importedCount = importJsonString(repository, jsonString!!)
+            Result.success(importedCount)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
 }
 

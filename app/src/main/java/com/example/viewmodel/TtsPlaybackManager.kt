@@ -24,6 +24,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.app.NotificationCompat
@@ -33,10 +34,12 @@ import com.example.data.ai.PiperVoice
 import com.example.data.ai.PiperVoiceCatalog
 import com.example.data.ai.SherpaOnnxTtsEngine
 import com.example.data.local.BookEntity
+import com.example.data.local.BookmarkEntity
 import com.example.data.local.ChapterEntity
 import com.example.data.repository.NovelRepository
 import com.example.service.TtsPlaybackService
 import com.example.util.AudioFocusHelper
+import com.example.util.WatermarkCleaner
 import kotlinx.coroutines.*
 import java.io.File
 import java.util.Locale
@@ -101,7 +104,28 @@ class TtsPlaybackManager(
     var sleepTimerRemainingSeconds by mutableStateOf<Int?>(null)
     var sleepTimerAutoRestart by mutableStateOf(prefs.getBoolean("tts_sleep_timer_auto_restart", true))
         private set
+    var sleepTimerFadeOutEnabled by mutableStateOf(prefs.getBoolean("tts_sleep_timer_fade_out", true))
+        private set
     private var sleepTimerJob: Job? = null
+
+    fun setSleepTimerFadeOut(enabled: Boolean) {
+        sleepTimerFadeOutEnabled = enabled
+        prefs.edit().putBoolean("tts_sleep_timer_fade_out", enabled).apply()
+    }
+
+    // Audio Fade & Volume Multiplier
+    var ttsVolumeMultiplier by mutableFloatStateOf(1.0f)
+        private set
+
+    fun applyTtsVolume(volume: Float) {
+        val clamped = volume.coerceIn(0.0f, 1.0f)
+        ttsVolumeMultiplier = clamped
+        try {
+            sherpaOnnxTtsEngine.setVolume(clamped)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     // Audio Focus & Noisy Receiver
     private var pausedByFocusLoss = false
@@ -172,8 +196,8 @@ class TtsPlaybackManager(
     private var settingsRestartJob: Job? = null
 
     private companion object {
-        const val QUEUE_WINDOW_SIZE = 25
-        const val QUEUE_REFILL_THRESHOLD = 8
+        const val QUEUE_WINDOW_SIZE = 5
+        const val QUEUE_REFILL_THRESHOLD = 2
         const val PERSIST_INTERVAL_MS = 3_000L
         const val NOTIFICATION_INTERVAL_MS = 1_000L
     }
@@ -415,12 +439,52 @@ class TtsPlaybackManager(
                 val remaining = (sleepTimerRemainingSeconds ?: 1) - 1
                 withContext(Dispatchers.Main) {
                     sleepTimerRemainingSeconds = remaining
+                    // Smoothly fade out audio over the last 60 seconds if enabled
+                    if (sleepTimerFadeOutEnabled && remaining in 1..60) {
+                        val fadeFactor = (remaining.toFloat() / 60.0f).coerceIn(0.02f, 1.0f)
+                        applyTtsVolume(fadeFactor)
+                    } else if (remaining <= 0) {
+                        applyTtsVolume(0.0f)
+                    } else {
+                        if (ttsVolumeMultiplier != 1.0f) {
+                            applyTtsVolume(1.0f)
+                        }
+                    }
                 }
             }
             if (isActive) {
                 withContext(Dispatchers.Main) {
-                    addLog("Sleep timer expired ($sleepTimerMinutes min). Pausing playback.")
+                    addLog("Sleep timer expired ($sleepTimerMinutes min). Volume smoothly faded out. Pausing playback.")
+
+                    // Auto-drop a "Fell Asleep" bookmark with current timestamp
+                    val currentBook = ttsPlayingBook
+                    val currentChap = ttsPlayingChapter
+                    val currentPara = (ttsActiveParagraphIndex ?: 0).coerceAtLeast(0)
+                    if (currentBook != null && currentChap != null) {
+                        coroutineScope.launch(Dispatchers.IO) {
+                            try {
+                                val bId = "${currentBook.id}_${currentChap.id}_${currentPara}_sleep_${System.currentTimeMillis()}"
+                                val sleepBookmark = BookmarkEntity(
+                                    id = bId,
+                                    bookId = currentBook.id,
+                                    chapterId = currentChap.id,
+                                    paragraphIndex = currentPara,
+                                    text = "Fell asleep here during audio playback (Sleep timer finished)",
+                                    note = "Fell Asleep (Sleep Timer)",
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                repository.insertBookmark(sleepBookmark)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+
                     pauseTts()
+
+                    // Reset volume back to 1.0f for subsequent playback
+                    applyTtsVolume(1.0f)
+
                     if (sleepTimerAutoRestart) {
                         // Keep configured duration active and reset countdown for when playback resumes
                         sleepTimerRemainingSeconds = sleepTimerMinutes * 60
@@ -987,7 +1051,10 @@ class TtsPlaybackManager(
         while (nextUnitToQueue < end) {
             val unit = speechUnits[nextUnitToQueue]
             val id = "unit_${activeChapterKey}#${nextUnitToQueue}#${unit.paragraphIndex}"
-            val res = tts?.speak(unit.text, TextToSpeech.QUEUE_ADD, null, id)
+            val params = android.os.Bundle().apply {
+                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, ttsVolumeMultiplier)
+            }
+            val res = tts?.speak(unit.text, TextToSpeech.QUEUE_ADD, params, id)
             if (res == TextToSpeech.ERROR && nextUnitToQueue == 0) {
                 addLog("Warning: tts.speak rejected speech unit. Reinitializing engine...")
                 isTtsReady = false
@@ -1054,7 +1121,13 @@ class TtsPlaybackManager(
 
                 val glossary = repository.getGlossary(book.id)
                 val cleanText = repository.applyGlossary(text, glossary)
-                val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                val baseParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                val rawParagraphs = WatermarkCleaner.cleanParagraphs(
+                    paragraphs = baseParagraphs,
+                    enabled = prefs.getBoolean("watermark_removal_enabled", true),
+                    customPhrases = (prefs.getString("custom_watermark_phrases", "") ?: "")
+                        .split("\n", ",").map { it.trim() }.filter { it.isNotEmpty() }
+                )
                 ttsTotalParagraphs = rawParagraphs.size
 
                 if (startFromParagraphIndex < 0) {
@@ -1153,7 +1226,13 @@ class TtsPlaybackManager(
                 val glossary = repository.getGlossary(book.id)
                 val cleanText = repository.applyGlossary(text, glossary)
 
-                val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                val baseParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                val rawParagraphs = WatermarkCleaner.cleanParagraphs(
+                    paragraphs = baseParagraphs,
+                    enabled = prefs.getBoolean("watermark_removal_enabled", true),
+                    customPhrases = (prefs.getString("custom_watermark_phrases", "") ?: "")
+                        .split("\n", ",").map { it.trim() }.filter { it.isNotEmpty() }
+                )
                 ttsTotalParagraphs = rawParagraphs.size
 
                 tts?.stop()
@@ -1331,6 +1410,7 @@ class TtsPlaybackManager(
     }
 
     fun resumeTts() {
+        applyTtsVolume(1.0f)
         if (sleepTimerMinutes > 0) {
             if (sleepTimerAutoRestart) {
                 sleepTimerRemainingSeconds = sleepTimerMinutes * 60

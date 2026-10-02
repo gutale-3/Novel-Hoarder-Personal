@@ -141,6 +141,65 @@ fun ReaderSettingsDialog(
                     }
                 }
 
+                // TOC Subdivision Mode
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Table of Contents Subdivision",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        text = "Structure chapters with collapsible drop-downs in the navigation drawer:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val currentMode = viewModel.settings.defaultTocSubdivisionMode
+                        listOf(
+                            Triple("as_is", "As Is", Icons.Default.FormatListNumbered),
+                            Triple("chapters", "Chapters", Icons.Default.Layers),
+                            Triple("volumes", "Volumes", Icons.Default.AutoStories)
+                        ).forEach { (code, label, icon) ->
+                            val isSel = currentMode == code
+                            OutlinedCard(
+                                onClick = { viewModel.settings.updateDefaultTocSubdivisionMode(code) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (isSel) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface
+                                ),
+                                border = CardDefaults.outlinedCardBorder(enabled = true).copy(
+                                    brush = androidx.compose.ui.graphics.SolidColor(
+                                        if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                    )
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = label,
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 11.sp,
+                                        color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Divider()
 
                 // 2. Background Theme Selector
@@ -477,6 +536,126 @@ fun ReaderSettingsDialog(
                         Switch(
                             checked = viewModel.settings.enableReadingGuide,
                             onCheckedChange = { viewModel.settings.updateEnableReadingGuide(it) }
+                        )
+                    }
+                }
+
+                Divider()
+
+                // Extra Dim Night Reading Mode
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Extra Dim (Sub-Zero)",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Software black filter for pitch-black night reading",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = viewModel.settings.readerExtraDimEnabled,
+                        onCheckedChange = { viewModel.settings.updateReaderExtraDimEnabled(it) }
+                    )
+                }
+
+                if (viewModel.settings.readerExtraDimEnabled) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Dim Intensity", style = MaterialTheme.typography.labelMedium)
+                            Text("${viewModel.settings.readerExtraDimPercent}%", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                        }
+                        Slider(
+                            value = viewModel.settings.readerExtraDimPercent.toFloat(),
+                            onValueChange = { viewModel.settings.updateReaderExtraDimPercent(it.toInt()) },
+                            valueRange = 5f..80f,
+                            steps = 14
+                        )
+                    }
+                }
+
+                // Watermark & Aggregator Noise Removal
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Strip Watermarks & Noise",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Auto-removes chapter header/footer watermarks & aggregator spam",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = viewModel.settings.watermarkRemovalEnabled,
+                        onCheckedChange = { viewModel.settings.updateWatermarkRemovalEnabled(it) }
+                    )
+                }
+
+                if (viewModel.settings.watermarkRemovalEnabled) {
+                    var showWatermarkFilterDialog by remember { mutableStateOf(false) }
+                    OutlinedButton(
+                        onClick = { showWatermarkFilterDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.FilterAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (viewModel.settings.customWatermarkPhrases.isNotBlank()) "Custom Watermarks (Configured)" else "Configure Custom Watermarks",
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    if (showWatermarkFilterDialog) {
+                        var tempPhrases by remember { mutableStateOf(viewModel.settings.customWatermarkPhrases) }
+                        AlertDialog(
+                            onDismissRequest = { showWatermarkFilterDialog = false },
+                            title = { Text("Custom Watermark Filters") },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        "Enter phrases, author watermarks, or site URLs to strip (comma or newline separated):",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    OutlinedTextField(
+                                        value = tempPhrases,
+                                        onValueChange = { tempPhrases = it },
+                                        placeholder = { Text("e.g. read at novelupdates.com, chapter updated by bot") },
+                                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                                        maxLines = 5
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        viewModel.settings.updateCustomWatermarkPhrases(tempPhrases)
+                                        showWatermarkFilterDialog = false
+                                    }
+                                ) {
+                                    Text("Save")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showWatermarkFilterDialog = false }) {
+                                    Text("Cancel")
+                                }
+                            }
                         )
                     }
                 }

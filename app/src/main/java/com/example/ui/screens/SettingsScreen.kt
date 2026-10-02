@@ -48,6 +48,10 @@ fun SettingsScreen(
     var crashLogContent by remember { mutableStateOf<String?>(null) }
     var storageBreakdown by remember { mutableStateOf<StorageBreakdown?>(null) }
     var isCleaningStorage by remember { mutableStateOf(false) }
+    var isPruningStorage by remember { mutableStateOf(false) }
+    var showWatermarkFilterDialog by remember { mutableStateOf(false) }
+    var showLocalBackupsDialog by remember { mutableStateOf(false) }
+    var localBackupsList by remember { mutableStateOf<List<File>>(emptyList()) }
 
     fun refreshStorage() {
         coroutineScope.launch {
@@ -400,6 +404,38 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Table of Contents Subdivision Default", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = settingsManager.defaultTocSubdivisionMode == "as_is",
+                        onClick = { settingsManager.updateDefaultTocSubdivisionMode("as_is") },
+                        label = { Text("Leave As Is", softWrap = false) }
+                    )
+                    FilterChip(
+                        selected = settingsManager.defaultTocSubdivisionMode == "chapters",
+                        onClick = { settingsManager.updateDefaultTocSubdivisionMode("chapters") },
+                        label = { Text("Chapters (1–50...)", softWrap = false) }
+                    )
+                    FilterChip(
+                        selected = settingsManager.defaultTocSubdivisionMode == "volumes",
+                        onClick = { settingsManager.updateDefaultTocSubdivisionMode("volumes") },
+                        label = { Text("Volumes", softWrap = false) }
+                    )
+                }
+                Text(
+                    text = when (settingsManager.defaultTocSubdivisionMode) {
+                        "chapters" -> "Default to dividing novels into chapter sets (1-50, 51-100, etc.) with drop-down accordions."
+                        "volumes" -> "Default to grouping novels by story volumes (Volume 1, Volume 2, etc.) with drop-down accordions."
+                        else -> "Default to a continuous full chapter list without volume divisions."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = onNavigateToPlugins,
@@ -639,6 +675,70 @@ fun SettingsScreen(
                     )
                 }
 
+                // 10. Extra Dim (Sub-Zero Night Reading)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Extra Dim (Sub-Zero)", style = MaterialTheme.typography.bodyMedium)
+                        Text("Software black filter for night reading below screen minimum brightness", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.readerExtraDimEnabled,
+                        onCheckedChange = { settingsManager.updateReaderExtraDimEnabled(it) }
+                    )
+                }
+
+                if (settingsManager.readerExtraDimEnabled) {
+                    Column(modifier = Modifier.padding(start = 12.dp, top = 2.dp, bottom = 6.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Dim Level", style = MaterialTheme.typography.labelMedium)
+                            Text("${settingsManager.readerExtraDimPercent}%", style = MaterialTheme.typography.labelMedium)
+                        }
+                        Slider(
+                            value = settingsManager.readerExtraDimPercent.toFloat(),
+                            onValueChange = { settingsManager.updateReaderExtraDimPercent(it.toInt()) },
+                            valueRange = 5f..80f,
+                            steps = 14
+                        )
+                    }
+                }
+
+                // 11. Watermark & Aggregator Noise Stripper
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Chapter Noise & Watermark Cleaner", style = MaterialTheme.typography.bodyMedium)
+                        Text("Strip site promotional headers/footers, Patreon/Discord links, and aggregator spam", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settingsManager.watermarkRemovalEnabled,
+                        onCheckedChange = { settingsManager.updateWatermarkRemovalEnabled(it) }
+                    )
+                }
+
+                if (settingsManager.watermarkRemovalEnabled) {
+                    Row(
+                        modifier = Modifier.padding(start = 12.dp, top = 2.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = { showWatermarkFilterDialog = true },
+                            modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
+                        ) {
+                            Icon(Icons.Default.FilterAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                if (settingsManager.customWatermarkPhrases.isNotBlank()) "Custom Watermarks (Configured)" else "Add Custom Watermark Phrases",
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
             }
 
@@ -688,6 +788,49 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Restore ZIP", softWrap = false)
                         }
+                    }
+                }
+
+                // Local Offline Snapshots
+                Row(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                isBackingUp = true
+                                val res = com.example.util.BackupRestoreManager.createLocalAutoBackup(context, viewModel.repository)
+                                isBackingUp = false
+                                res.fold(
+                                    onSuccess = { file ->
+                                        Toast.makeText(context, "Saved local snapshot: ${file.name}", Toast.LENGTH_SHORT).show()
+                                        localBackupsList = com.example.util.BackupRestoreManager.listLocalBackups(context)
+                                    },
+                                    onFailure = { e ->
+                                        Toast.makeText(context, "Snapshot failed: ${e.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            }
+                        },
+                        enabled = !isBackingUp && !isRestoring,
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = MinTouchTarget)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Save Snapshot", softWrap = false)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            localBackupsList = com.example.util.BackupRestoreManager.listLocalBackups(context)
+                            showLocalBackupsDialog = true
+                        },
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = MinTouchTarget)
+                    ) {
+                        Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Snapshots List", softWrap = false)
                     }
                 }
 
@@ -741,6 +884,72 @@ fun SettingsScreen(
                         } else {
                             Text("Calculating storage...", style = MaterialTheme.typography.bodySmall)
                         }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                        // Smart Space Saver
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Smart Space Saver", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+                                Text("Retain full chapter text for only the last X read chapters. Bookmarks, read flags, and stats are preserved.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = settingsManager.autoPruneReadChaptersEnabled,
+                                onCheckedChange = { settingsManager.updateAutoPruneReadChaptersEnabled(it) }
+                            )
+                        }
+
+                        if (settingsManager.autoPruneReadChaptersEnabled) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Keep last:", style = MaterialTheme.typography.labelMedium)
+                                listOf(20, 50, 100).forEach { count ->
+                                    FilterChip(
+                                        selected = settingsManager.keepLastReadChaptersCount == count,
+                                        onClick = { settingsManager.updateKeepLastReadChaptersCount(count) },
+                                        label = { Text("$count chapters") }
+                                    )
+                                }
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isPruningStorage = true
+                                    val count = viewModel.repository.pruneOldReadChapters(settingsManager.keepLastReadChaptersCount)
+                                    StorageMaintenanceManager.vacuumDatabase(context)
+                                    refreshStorage()
+                                    isPruningStorage = false
+                                    if (count > 0) {
+                                        Toast.makeText(context, "Pruned text from $count read chapters. Storage reclaimed!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "Read chapters are already within the ${settingsManager.keepLastReadChaptersCount} chapter threshold.", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            enabled = !isPruningStorage && !isCleaningStorage,
+                            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = MinTouchTarget)
+                        ) {
+                            if (isPruningStorage) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Pruning Chapters...")
+                            } else {
+                                Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Prune Read Content (Keep Last ${settingsManager.keepLastReadChaptersCount})", fontSize = 12.sp)
+                            }
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
@@ -954,6 +1163,133 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showClearDataDialog = false }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Watermark Filter Configuration Dialog
+    if (showWatermarkFilterDialog) {
+        var tempPhrases by remember { mutableStateOf(settingsManager.customWatermarkPhrases) }
+        AlertDialog(
+            onDismissRequest = { showWatermarkFilterDialog = false },
+            title = { Text("Chapter Watermark Stripper") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Enter promotional phrases, aggregator watermarks, or site names to strip (separated by commas or newlines):",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = tempPhrases,
+                        onValueChange = { tempPhrases = it },
+                        placeholder = { Text("e.g. read at novelupdates.com, chapter updated by bot") },
+                        modifier = Modifier.fillMaxWidth().height(130.dp),
+                        maxLines = 5
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        settingsManager.updateCustomWatermarkPhrases(tempPhrases)
+                        showWatermarkFilterDialog = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWatermarkFilterDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Local Snapshots Management Dialog
+    if (showLocalBackupsDialog) {
+        AlertDialog(
+            onDismissRequest = { showLocalBackupsDialog = false },
+            title = { Text("Local Offline Snapshots") },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 350.dp)
+                ) {
+                    if (localBackupsList.isEmpty()) {
+                        Text(
+                            "No local snapshots saved yet. Tap 'Save Snapshot' to create one.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        val sdf = remember { java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.getDefault()) }
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(localBackupsList.size) { index ->
+                                val file = localBackupsList[index]
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(file.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+                                            Text(
+                                                "${StorageMaintenanceManager.formatBytes(file.length())} • ${sdf.format(java.util.Date(file.lastModified()))}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            IconButton(
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        isRestoring = true
+                                                        val res = com.example.util.BackupRestoreManager.restoreLocalBackup(context, viewModel.repository, file)
+                                                        isRestoring = false
+                                                        res.fold(
+                                                            onSuccess = { count ->
+                                                                Toast.makeText(context, "Restored snapshot ($count novels)", Toast.LENGTH_LONG).show()
+                                                                showLocalBackupsDialog = false
+                                                            },
+                                                            onFailure = { e ->
+                                                                Toast.makeText(context, "Restore failed: ${e.message}", Toast.LENGTH_LONG).show()
+                                                            }
+                                                        )
+                                                    }
+                                                },
+                                                enabled = !isRestoring && !isBackingUp
+                                            ) {
+                                                Icon(Icons.Default.Unarchive, contentDescription = "Restore Snapshot", tint = MaterialTheme.colorScheme.primary)
+                                            }
+
+                                            IconButton(
+                                                onClick = {
+                                                    com.example.util.BackupRestoreManager.deleteLocalBackup(file)
+                                                    localBackupsList = com.example.util.BackupRestoreManager.listLocalBackups(context)
+                                                    Toast.makeText(context, "Snapshot deleted", Toast.LENGTH_SHORT).show()
+                                                }
+                                            ) {
+                                                Icon(Icons.Default.Delete, contentDescription = "Delete Snapshot", tint = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLocalBackupsDialog = false }) {
+                    Text("Close")
                 }
             }
         )

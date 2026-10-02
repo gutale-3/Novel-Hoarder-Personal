@@ -777,10 +777,10 @@ fun PluginManagementScreen(
                         AndroidView(
                             factory = { ctx ->
                                 WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    webViewClient = object : WebViewClient() {
+                                    WebViewFactory.applySafeDefaults(this)
+                                    webViewClient = object : WebViewFactory.SafeWebViewClient() {
                                         override fun onPageFinished(view: WebView?, url: String?) {
+                                            super.onPageFinished(view, url)
                                             val inspectScript = """
                                                 (() => {
                                                   const el = document.getElementById('__NEXT_DATA__');
@@ -829,7 +829,10 @@ fun PluginManagementScreen(
                                     webViewInstance = this
                                 }
                             },
-                            update = { /* handled dynamically */ }
+                            update = { /* handled dynamically */ },
+                            onRelease = { view ->
+                                WebViewFactory.destroySafely(view)
+                            }
                         )
                     }
                 }

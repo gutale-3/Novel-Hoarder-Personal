@@ -36,6 +36,21 @@ class SherpaOnnxTtsEngine(private val context: Context) {
     private var audioTrack: AudioTrack? = null
 
     @Volatile
+    private var playbackVolume = 1.0f
+
+    fun setVolume(volume: Float) {
+        val clamped = volume.coerceIn(0.0f, 1.0f)
+        playbackVolume = clamped
+        synchronized(this@SherpaOnnxTtsEngine) {
+            try {
+                audioTrack?.setVolume(clamped)
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+    }
+
+    @Volatile
     private var isPlaying = false
 
     /**
@@ -404,6 +419,7 @@ class SherpaOnnxTtsEngine(private val context: Context) {
         }
 
         try {
+            track.setVolume(playbackVolume)
             track.play()
 
             val chunkSize = 8192

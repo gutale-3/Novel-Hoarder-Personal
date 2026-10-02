@@ -7,6 +7,7 @@ import com.example.util.CloudflareException
 import com.example.util.GenericScraper
 import com.example.util.JsResultParser
 import com.example.util.PageExtractors
+import com.example.util.WebViewFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -354,13 +355,25 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
     }
 
     private suspend fun loadUrlAndWait(webView: WebView, url: String) {
-        suspendCancellableCoroutine<Unit> { continuation ->
-            webView.webViewClient = object : android.webkit.WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    if (continuation.isActive) continuation.resume(Unit)
+        withTimeoutOrNull(25000) {
+            suspendCancellableCoroutine<Unit> { continuation ->
+                webView.webViewClient = object : WebViewFactory.SafeWebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        if (continuation.isActive) continuation.resume(Unit)
+                    }
+
+                    override fun onRenderProcessGone(
+                        view: WebView?,
+                        detail: android.webkit.RenderProcessGoneDetail?
+                    ): Boolean {
+                        android.util.Log.w("PluginEngine", "Renderer process exited during load. Handled cleanly.")
+                        if (continuation.isActive) continuation.resume(Unit)
+                        return true
+                    }
                 }
+                webView.loadUrl(url)
             }
-            webView.loadUrl(url)
         }
     }
 

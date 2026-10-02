@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.BookmarkEntity
 import com.example.data.local.ChapterEntity
 import com.example.viewmodel.MainViewModel
+import com.example.util.ChapterGroup
+import com.example.util.ChapterSubdivisionHelper
+import com.example.util.TocSubdivisionMode
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -53,6 +56,18 @@ fun ReaderDrawerContent(
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var selectedChapters by remember { mutableStateOf(setOf<String>()) }
     var chapterForTagging by remember { mutableStateOf<ChapterEntity?>(null) }
+
+    var subdivisionMode by remember(bookId) {
+        mutableStateOf(TocSubdivisionMode.fromCode(viewModel.settings.getBookTocSubdivisionMode(bookId)))
+    }
+    var batchSize by remember(bookId) {
+        mutableIntStateOf(viewModel.settings.getBookTocBatchSize(bookId))
+    }
+    var customVolumeSplits by remember(bookId) {
+        mutableStateOf(viewModel.settings.getBookCustomVolumeSplits(bookId))
+    }
+    var showSubdivisionDialog by remember { mutableStateOf(false) }
+    var showVolumeSplitsDialog by remember { mutableStateOf(false) }
 
     ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surface
@@ -256,6 +271,9 @@ fun ReaderDrawerContent(
                         IconButton(onClick = onOpenAutoArchiveDialog) {
                             Icon(imageVector = Icons.Default.Settings, contentDescription = "Auto-Archive Settings", tint = MaterialTheme.colorScheme.primary)
                         }
+                        IconButton(onClick = { showSubdivisionDialog = true }) {
+                            Icon(imageVector = Icons.Default.FolderSpecial, contentDescription = "Subdivide Table of Contents", tint = MaterialTheme.colorScheme.primary)
+                        }
                         IconButton(onClick = {
                             isMultiSelectMode = true
                             selectedChapters = emptySet()
@@ -293,6 +311,146 @@ fun ReaderDrawerContent(
             }
             
             Spacer(modifier = Modifier.height(4.dp))
+
+            // --- TOC Subdivision Bar ---
+            val activeListForTOC = if (chapterSubTab == 0) {
+                val activeFilter = viewModel.chapterTags.activeTagFilter
+                if (activeFilter != null) {
+                    chapters.filter { viewModel.chapterTags.hasTag(it.id, activeFilter) }
+                } else chapters
+            } else archivedChapters
+
+            val currentGroups = remember(activeListForTOC, subdivisionMode, batchSize, customVolumeSplits) {
+                ChapterSubdivisionHelper.subdivideChapters(
+                    chapters = activeListForTOC,
+                    mode = subdivisionMode,
+                    batchSize = batchSize,
+                    customVolumeSplits = customVolumeSplits
+                )
+            }
+
+            var expandedGroupIds by remember(bookId, subdivisionMode, chapterSubTab) {
+                val initial = mutableSetOf<String>()
+                val activeGroupId = ChapterSubdivisionHelper.findGroupIdForChapter(currentGroups, currentChapterId)
+                if (activeGroupId != null) {
+                    initial.add(activeGroupId)
+                } else if (currentGroups.isNotEmpty()) {
+                    initial.add(currentGroups.first().id)
+                }
+                mutableStateOf(initial.toSet())
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = { showSubdivisionDialog = true },
+                    shape = RoundedCornerShape(8.dp),
+                    color = when (subdivisionMode) {
+                        TocSubdivisionMode.AS_IS -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        TocSubdivisionMode.BATCH_CHAPTERS -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        TocSubdivisionMode.VOLUMES -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+                    },
+                    border = BorderStroke(
+                        1.dp,
+                        when (subdivisionMode) {
+                            TocSubdivisionMode.AS_IS -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                            TocSubdivisionMode.BATCH_CHAPTERS -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                            TocSubdivisionMode.VOLUMES -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
+                        }
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = when (subdivisionMode) {
+                                TocSubdivisionMode.AS_IS -> Icons.Default.FormatListNumbered
+                                TocSubdivisionMode.BATCH_CHAPTERS -> Icons.Default.Layers
+                                TocSubdivisionMode.VOLUMES -> Icons.Default.AutoStories
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = when (subdivisionMode) {
+                                TocSubdivisionMode.AS_IS -> MaterialTheme.colorScheme.onSurfaceVariant
+                                TocSubdivisionMode.BATCH_CHAPTERS -> MaterialTheme.colorScheme.primary
+                                TocSubdivisionMode.VOLUMES -> MaterialTheme.colorScheme.tertiary
+                            }
+                        )
+                        Text(
+                            text = when (subdivisionMode) {
+                                TocSubdivisionMode.AS_IS -> "Leave As Is"
+                                TocSubdivisionMode.BATCH_CHAPTERS -> "Chapters (1–$batchSize)"
+                                TocSubdivisionMode.VOLUMES -> "Volumes (${currentGroups.size})"
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = when (subdivisionMode) {
+                                TocSubdivisionMode.AS_IS -> MaterialTheme.colorScheme.onSurface
+                                TocSubdivisionMode.BATCH_CHAPTERS -> MaterialTheme.colorScheme.primary
+                                TocSubdivisionMode.VOLUMES -> MaterialTheme.colorScheme.tertiary
+                            }
+                        )
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = "Change division mode",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (subdivisionMode != TocSubdivisionMode.AS_IS) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (subdivisionMode == TocSubdivisionMode.VOLUMES) {
+                            IconButton(
+                                onClick = { showVolumeSplitsDialog = true },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "Configure Volume Ranges",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        val allGroupsExpanded = currentGroups.isNotEmpty() && currentGroups.all { expandedGroupIds.contains(it.id) }
+                        TextButton(
+                            onClick = {
+                                expandedGroupIds = if (allGroupsExpanded) {
+                                    emptySet()
+                                } else {
+                                    currentGroups.map { it.id }.toSet()
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (allGroupsExpanded) Icons.Default.UnfoldLess else Icons.Default.UnfoldMore,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                text = if (allGroupsExpanded) "Collapse All" else "Expand All",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
             
             if (isMultiSelectMode && selectedChapters.isNotEmpty()) {
                 Surface(
@@ -493,14 +651,7 @@ fun ReaderDrawerContent(
                 }
             }
 
-            val currentList = if (chapterSubTab == 0) {
-                val activeFilter = viewModel.chapterTags.activeTagFilter
-                if (activeFilter != null) {
-                    chapters.filter { viewModel.chapterTags.hasTag(it.id, activeFilter) }
-                } else {
-                    chapters
-                }
-            } else archivedChapters
+            val currentList = activeListForTOC
 
             if (currentList.isEmpty()) {
                 Box(
@@ -523,161 +674,71 @@ fun ReaderDrawerContent(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    items(currentList) { ch ->
-                        val isCurrent = ch.id == currentChapterId
-                        val isSelected = selectedChapters.contains(ch.id)
-                        NavigationDrawerItem(
-                            label = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    if (isMultiSelectMode) {
-                                        Checkbox(
-                                            checked = isSelected,
-                                            onCheckedChange = { checked ->
-                                                selectedChapters = if (checked) {
-                                                    selectedChapters + ch.id
-                                                } else {
-                                                    selectedChapters - ch.id
-                                                }
-                                            },
-                                            colors = CheckboxDefaults.colors(
-                                                checkedColor = MaterialTheme.colorScheme.primary
-                                            )
-                                        )
-                                    } else {
-                                        if (chapterSubTab == 0) {
-                                            Icon(
-                                                imageVector = if (ch.isRead) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                                contentDescription = if (ch.isRead) "Read" else "Unread",
-                                                tint = if (ch.isRead) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
-                                                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                                modifier = Modifier.size(20.dp).clickable {
-                                                    viewModel.progress.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
-                                                }
-                                            )
+                    if (subdivisionMode == TocSubdivisionMode.AS_IS) {
+                        items(currentList, key = { it.id }) { ch ->
+                            ChapterDrawerRowItem(
+                                ch = ch,
+                                isCurrent = ch.id == currentChapterId,
+                                isSelected = selectedChapters.contains(ch.id),
+                                isMultiSelectMode = isMultiSelectMode,
+                                chapterSubTab = chapterSubTab,
+                                viewModel = viewModel,
+                                scope = scope,
+                                onSelectChapter = onSelectChapter,
+                                onTagChapter = { chapterForTagging = it },
+                                onToggleSelect = { isChecked ->
+                                    selectedChapters = if (isChecked) selectedChapters + ch.id else selectedChapters - ch.id
+                                }
+                            )
+                        }
+                    } else {
+                        currentGroups.forEach { group ->
+                            val isExpanded = expandedGroupIds.contains(group.id)
+                            item(key = "group_hdr_${group.id}") {
+                                ChapterGroupHeader(
+                                    group = group,
+                                    isExpanded = isExpanded,
+                                    containsActiveChapter = group.chapters.any { it.id == currentChapterId },
+                                    isMultiSelectMode = isMultiSelectMode,
+                                    selectedChapters = selectedChapters,
+                                    onToggleExpand = {
+                                        expandedGroupIds = if (isExpanded) {
+                                            expandedGroupIds - group.id
                                         } else {
-                                            Icon(
-                                                imageVector = Icons.Default.Archive,
-                                                contentDescription = "Archived",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                                modifier = Modifier.size(20.dp).clickable {
-                                                    viewModel.progress.updateChaptersArchiveStatus(listOf(ch.id), false)
-                                                }
-                                            )
+                                            expandedGroupIds + group.id
+                                        }
+                                    },
+                                    onToggleSelectGroup = { selectAll ->
+                                        val gIds = group.chapters.map { it.id }.toSet()
+                                        selectedChapters = if (selectAll) {
+                                            selectedChapters + gIds
+                                        } else {
+                                            selectedChapters - gIds
                                         }
                                     }
-                                    
-                                    val isStub = ch.content.isBlank()
-                                    val chTags = viewModel.chapterTags.getTagsForChapter(ch.id)
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .pointerInput(isMultiSelectMode, isSelected, ch.id) {
-                                                detectTapGestures(
-                                                    onLongPress = {
-                                                        if (!isMultiSelectMode) {
-                                                            isMultiSelectMode = true
-                                                            selectedChapters = setOf(ch.id)
-                                                        }
-                                                    },
-                                                    onTap = {
-                                                        if (isMultiSelectMode) {
-                                                            selectedChapters = if (isSelected) {
-                                                                selectedChapters - ch.id
-                                                            } else {
-                                                                selectedChapters + ch.id
-                                                            }
-                                                        } else {
-                                                            onSelectChapter(ch.id)
-                                                        }
-                                                    }
-                                                )
-                                            }
-                                    ) {
-                                        Text(
-                                            text = ch.title,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isCurrent) MaterialTheme.colorScheme.primary 
-                                                    else if (isStub) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                                    else if (ch.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                                    else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        if (chTags.isNotEmpty()) {
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                modifier = Modifier.padding(top = 2.dp)
-                                            ) {
-                                                chTags.forEach { tag ->
-                                                    val tagColor = Color(tag.colorHex)
-                                                    Surface(
-                                                        shape = RoundedCornerShape(4.dp),
-                                                        color = tagColor.copy(alpha = 0.18f)
-                                                    ) {
-                                                        Text(
-                                                            text = "${tag.icon} ${tag.name}",
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            color = tagColor,
-                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                )
+                            }
 
-                                    if (isStub && !isMultiSelectMode) {
-                                        IconButton(
-                                            onClick = {
-                                                scope.launch {
-                                                    viewModel.scraping.downloadSingleChapter(ch)
-                                                }
-                                            },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.CloudDownload,
-                                                contentDescription = "Download Chapter",
-                                                modifier = Modifier.size(16.dp),
-                                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                                            )
-                                        }
-                                    }
-
-                                    if (!isMultiSelectMode) {
-                                        IconButton(
-                                            onClick = { chapterForTagging = ch },
-                                            modifier = Modifier.size(28.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Label,
-                                                contentDescription = "Tag Chapter",
-                                                modifier = Modifier.size(18.dp),
-                                                tint = if (chTags.isNotEmpty()) Color(chTags.first().colorHex) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                            )
-                                        }
-                                    }
+                            if (isExpanded) {
+                                items(group.chapters, key = { it.id }) { ch ->
+                                    ChapterDrawerRowItem(
+                                        ch = ch,
+                                        isCurrent = ch.id == currentChapterId,
+                                        isSelected = selectedChapters.contains(ch.id),
+                                        isMultiSelectMode = isMultiSelectMode,
+                                        chapterSubTab = chapterSubTab,
+                                        viewModel = viewModel,
+                                        scope = scope,
+                                        onSelectChapter = onSelectChapter,
+                                        onTagChapter = { chapterForTagging = it },
+                                        onToggleSelect = { isChecked ->
+                                            selectedChapters = if (isChecked) selectedChapters + ch.id else selectedChapters - ch.id
+                                        },
+                                        modifier = Modifier.padding(start = 12.dp)
+                                    )
                                 }
-                            },
-                            selected = !isMultiSelectMode && isCurrent,
-                            onClick = {
-                                if (isMultiSelectMode) {
-                                    selectedChapters = if (isSelected) {
-                                        selectedChapters - ch.id
-                                    } else {
-                                        selectedChapters + ch.id
-                                    }
-                                } else {
-                                    onSelectChapter(ch.id)
-                                }
-                            },
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                        )
+                            }
+                        }
                     }
                 }
             }
@@ -691,4 +752,338 @@ fun ReaderDrawerContent(
             onDismiss = { chapterForTagging = null }
         )
     }
+
+    if (showSubdivisionDialog) {
+        SubdivisionModeDialog(
+            currentMode = subdivisionMode,
+            currentBatchSize = batchSize,
+            onSelectMode = { newMode, newBatchSize ->
+                subdivisionMode = newMode
+                batchSize = newBatchSize
+                viewModel.settings.setBookTocSubdivisionMode(bookId, newMode.code)
+                viewModel.settings.setBookTocBatchSize(bookId, newBatchSize)
+            },
+            onOpenVolumeSplits = {
+                showSubdivisionDialog = false
+                showVolumeSplitsDialog = true
+            },
+            onDismiss = { showSubdivisionDialog = false }
+        )
+    }
+
+    if (showVolumeSplitsDialog) {
+        VolumeSplitsDialog(
+            bookId = bookId,
+            bookTitle = chapters.firstOrNull()?.title?.let { "Volume Setup" } ?: "Novel Volumes",
+            chapters = chapters,
+            initialSplits = customVolumeSplits,
+            onSaveSplits = { newSplits ->
+                customVolumeSplits = newSplits
+                viewModel.settings.setBookCustomVolumeSplits(bookId, newSplits)
+            },
+            onDismiss = { showVolumeSplitsDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun ChapterGroupHeader(
+    group: ChapterGroup,
+    isExpanded: Boolean,
+    containsActiveChapter: Boolean,
+    isMultiSelectMode: Boolean,
+    selectedChapters: Set<String>,
+    onToggleExpand: () -> Unit,
+    onToggleSelectGroup: (Boolean) -> Unit
+) {
+    val allGroupChaptersSelected = group.chapters.isNotEmpty() && group.chapters.all { selectedChapters.contains(it.id) }
+
+    Surface(
+        onClick = onToggleExpand,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = if (containsActiveChapter) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        },
+        border = BorderStroke(
+            1.dp,
+            if (containsActiveChapter) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Drop-down chevron icon
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
+                    contentDescription = if (isExpanded) "Collapse ${group.title}" else "Expand ${group.title}",
+                    tint = if (containsActiveChapter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp)
+                )
+
+                // Volume / Batch Icon
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(
+                            if (containsActiveChapter) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            else MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                            RoundedCornerShape(8.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (group.volumeIndex != null) Icons.Default.AutoStories else Icons.Default.Layers,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = if (containsActiveChapter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = group.title,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (containsActiveChapter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (containsActiveChapter) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            ) {
+                                Text(
+                                    text = "READING",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 2.dp)
+                    ) {
+                        Text(
+                            text = "${group.totalCount} ch",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "·",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (group.isAllRead) "✓ All read" else "${group.readCount}/${group.totalCount} read",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (group.isAllRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            fontWeight = if (group.isAllRead) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            // Right side: multi-select checkbox or chevron toggle
+            if (isMultiSelectMode) {
+                Checkbox(
+                    checked = allGroupChaptersSelected,
+                    onCheckedChange = { checked ->
+                        onToggleSelectGroup(checked)
+                    },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            } else {
+                IconButton(
+                    onClick = onToggleExpand,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChapterDrawerRowItem(
+    ch: ChapterEntity,
+    isCurrent: Boolean,
+    isSelected: Boolean,
+    isMultiSelectMode: Boolean,
+    chapterSubTab: Int,
+    viewModel: MainViewModel,
+    scope: kotlinx.coroutines.CoroutineScope,
+    onSelectChapter: (String) -> Unit,
+    onTagChapter: (ChapterEntity) -> Unit,
+    onToggleSelect: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    NavigationDrawerItem(
+        label = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isMultiSelectMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelect(it) },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                } else {
+                    if (chapterSubTab == 0) {
+                        Icon(
+                            imageVector = if (ch.isRead) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                            contentDescription = if (ch.isRead) "Read" else "Unread",
+                            tint = if (ch.isRead) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
+                                   else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(20.dp).clickable {
+                                viewModel.progress.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
+                            }
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Archive,
+                            contentDescription = "Archived",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp).clickable {
+                                viewModel.progress.updateChaptersArchiveStatus(listOf(ch.id), false)
+                            }
+                        )
+                    }
+                }
+                
+                val isStub = ch.content.isBlank()
+                val chTags = viewModel.chapterTags.getTagsForChapter(ch.id)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .pointerInput(isMultiSelectMode, isSelected, ch.id) {
+                            detectTapGestures(
+                                onLongPress = {
+                                    if (!isMultiSelectMode) {
+                                        onToggleSelect(true)
+                                    }
+                                },
+                                onTap = {
+                                    if (isMultiSelectMode) {
+                                        onToggleSelect(!isSelected)
+                                    } else {
+                                        onSelectChapter(ch.id)
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    Text(
+                        text = ch.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isCurrent) MaterialTheme.colorScheme.primary 
+                                else if (isStub) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                else if (ch.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                else MaterialTheme.colorScheme.onSurface
+                    )
+                    if (chTags.isNotEmpty()) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            chTags.forEach { tag ->
+                                val tagColor = Color(tag.colorHex)
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = tagColor.copy(alpha = 0.18f)
+                                ) {
+                                    Text(
+                                        text = "${tag.icon} ${tag.name}",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = tagColor,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (isStub && !isMultiSelectMode) {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                viewModel.scraping.downloadSingleChapter(ch)
+                            }
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudDownload,
+                            contentDescription = "Download Chapter",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+
+                if (!isMultiSelectMode) {
+                    IconButton(
+                        onClick = { onTagChapter(ch) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Label,
+                            contentDescription = "Tag Chapter",
+                            modifier = Modifier.size(18.dp),
+                            tint = if (chTags.isNotEmpty()) Color(chTags.first().colorHex) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+            }
+        },
+        selected = !isMultiSelectMode && isCurrent,
+        onClick = {
+            if (isMultiSelectMode) {
+                onToggleSelect(!isSelected)
+            } else {
+                onSelectChapter(ch.id)
+            }
+        },
+        modifier = modifier.then(Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+    )
 }

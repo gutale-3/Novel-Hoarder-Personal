@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import com.example.ui.theme.MinTouchTarget
 import com.example.ui.theme.isNarrowScreen
+import com.example.util.WebViewFactory
 import com.example.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -758,26 +759,20 @@ fun ScrapeScreen(
                         AndroidView(
                             factory = { ctx ->
                                 WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    settings.databaseEnabled = true
-                                    settings.useWideViewPort = false
-                                    settings.loadWithOverviewMode = false
-                                    settings.builtInZoomControls = true
-                                    settings.displayZoomControls = false
-                                    settings.textZoom = 100
-                                    settings.userAgentString = viewModel.defaultUserAgent
-                                    webViewClient = object : WebViewClient() {
-                                        override fun onPageFinished(view: WebView?, url: String?) {
-                                            super.onPageFinished(view, url)
-                                            // sync cookies dynamically back to CookieManager
+                                    WebViewFactory.applySafeDefaults(this, viewModel.defaultUserAgent)
+                                    webViewClient = object : WebViewFactory.SafeWebViewClient(
+                                        onPageFinishedCallback = { _, url ->
                                             if (url != null) {
                                                 CookieManager.getInstance().flush()
                                             }
                                         }
-                                    }
+                                    ) {}
+                                    webChromeClient = WebViewFactory.SafeWebChromeClient()
                                     loadUrl(viewModel.captchaUrl)
                                 }
+                            },
+                            onRelease = { view ->
+                                WebViewFactory.destroySafely(view)
                             },
                             modifier = Modifier.fillMaxSize()
                         )
@@ -798,10 +793,19 @@ fun ScrapeScreen(
 
         // Intercept back presses globally when the manual browser is open
         BackHandler(enabled = true) {
-            if (canGoBack) {
+            if (canGoBack && webViewInstance?.canGoBack() == true) {
                 webViewInstance?.goBack()
             } else {
                 viewModel.showManualBrowser = false
+            }
+        }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                try {
+                    WebViewFactory.destroySafely(webViewInstance)
+                    webViewInstance = null
+                } catch (_: Throwable) {}
             }
         }
 
@@ -1059,12 +1063,16 @@ fun ScrapeScreen(
                                 keyboardActions = KeyboardActions(
                                     onSearch = {
                                         focusManager.clearFocus()
-                                        var targetUrl = currentWebUrl.trim()
-                                        if (targetUrl.isNotEmpty()) {
-                                            if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
-                                                targetUrl = "https://$targetUrl"
+                                        try {
+                                            var targetUrl = currentWebUrl.trim()
+                                            if (targetUrl.isNotEmpty()) {
+                                                if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+                                                    targetUrl = "https://$targetUrl"
+                                                }
+                                                webViewInstance?.loadUrl(targetUrl)
                                             }
-                                            webViewInstance?.loadUrl(targetUrl)
+                                        } catch (e: Exception) {
+                                            android.util.Log.w("ScrapeScreen", "Invalid URL input", e)
                                         }
                                     }
                                 ),
@@ -1091,7 +1099,7 @@ fun ScrapeScreen(
                         }
                     }
 
-                    // Full Screen WebView Embed
+                    // Full Screen WebView Embed with Crash Prevention
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -1100,26 +1108,15 @@ fun ScrapeScreen(
                         AndroidView(
                             factory = { ctx ->
                                 WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    settings.databaseEnabled = true
-                                    settings.useWideViewPort = false
-                                    settings.loadWithOverviewMode = false
-                                    settings.builtInZoomControls = true
-                                    settings.displayZoomControls = false
-                                    settings.textZoom = 100
-                                    settings.userAgentString = viewModel.defaultUserAgent
-                                    webViewClient = object : WebViewClient() {
-                                        override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                            super.onPageStarted(view, url, favicon)
+                                    WebViewFactory.applySafeDefaults(this, viewModel.defaultUserAgent)
+                                    webViewClient = object : WebViewFactory.SafeWebViewClient(
+                                        onPageStartedCallback = { _, url, _ ->
                                             isWebLoading = true
                                             if (url != null) {
                                                 currentWebUrl = url
                                             }
-                                        }
-
-                                        override fun onPageFinished(view: WebView?, url: String?) {
-                                            super.onPageFinished(view, url)
+                                        },
+                                        onPageFinishedCallback = { view, url ->
                                             isWebLoading = false
                                             canGoBack = view?.canGoBack() == true
                                             canGoForward = view?.canGoForward() == true
@@ -1128,21 +1125,26 @@ fun ScrapeScreen(
                                                 viewModel.scraping.saveBrowserUrl(url)
                                                 CookieManager.getInstance().flush()
                                             }
+                                        },
+                                        onUrlChanged = { url ->
+                                            currentWebUrl = url
                                         }
-                                    }
-                                    webChromeClient = object : WebChromeClient() {
-                                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                            super.onProgressChanged(view, newProgress)
-                                            canGoBack = view?.canGoBack() == true
-                                            canGoForward = view?.canGoForward() == true
+                                    ) {}
+                                    webChromeClient = object : WebViewFactory.SafeWebChromeClient(
+                                        onProgressUpdate = { _ ->
+                                            canGoBack = this@apply.canGoBack()
+                                            canGoForward = this@apply.canGoForward()
                                         }
-                                    }
+                                    ) {}
                                     webViewInstance = this
                                     loadUrl(viewModel.manualBrowserUrl)
                                 }
                             },
                             update = { view ->
                                 webViewInstance = view
+                            },
+                            onRelease = { view ->
+                                WebViewFactory.destroySafely(view)
                             },
                             modifier = Modifier.fillMaxSize()
                         )

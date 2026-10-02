@@ -353,6 +353,25 @@ fun LibraryScreen(
                         )
                     },
                     actions = {
+                        IconButton(
+                            onClick = { viewModel.library.seedSampleNovels(force = true) },
+                            enabled = !viewModel.library.isSeedingSamples
+                        ) {
+                            if (viewModel.library.isSeedingSamples) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.AutoStories,
+                                    contentDescription = "Load 500+ Ch Sample Novels",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
                         IconButton(onClick = onNavigateToSettings) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
@@ -820,6 +839,31 @@ fun LibraryScreen(
                                 modifier = Modifier.padding(top = 4.dp),
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = { viewModel.library.seedSampleNovels(force = true) },
+                                enabled = !viewModel.library.isSeedingSamples,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.testTag("load_sample_novels_btn")
+                            ) {
+                                if (viewModel.library.isSeedingSamples) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Generating 5 Sample Novels...")
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoStories,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Load 5 Sample Novels (500+ Ch Each)")
+                                }
+                            }
                         }
                     }
                 }
@@ -1819,6 +1863,14 @@ fun LibraryBookItem(
                                         onListen()
                                     },
                                     leadingIcon = { Icon(Icons.Default.VolumeUp, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Table of Contents") },
+                                    onClick = {
+                                        expandedMenu = false
+                                        onRead()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.FormatListNumbered, contentDescription = null) }
                                 )
                                 Divider()
                                 // Shelf / Status category selection

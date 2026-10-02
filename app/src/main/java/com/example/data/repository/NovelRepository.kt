@@ -283,4 +283,29 @@ class NovelRepository(private val bookDao: BookDao) {
         }
         return cleanText
     }
+
+    /**
+     * Smart Space Saver:
+     * Prunes text content from read chapters older than the latest [keepLastCount] read chapters for each book.
+     * All metadata, chapter numbers, read flags, and bookmarks are preserved.
+     * Returns the total count of chapters whose text was cleared to free device storage.
+     */
+    suspend fun pruneOldReadChapters(keepLastCount: Int): Int = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val books = getAllBooks()
+        var totalPruned = 0
+        for (book in books) {
+            val chapters = getChapters(book.id)
+            val readWithContent = chapters
+                .filter { it.isRead && it.content.isNotBlank() }
+                .sortedBy { it.chapterNumber }
+
+            if (readWithContent.size > keepLastCount) {
+                val toPrune = readWithContent.take(readWithContent.size - keepLastCount)
+                val ids = toPrune.map { it.id }
+                val prunedCount = bookDao.clearChapterContents(ids)
+                totalPruned += prunedCount
+            }
+        }
+        totalPruned
+    }
 }
