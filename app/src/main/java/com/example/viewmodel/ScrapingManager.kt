@@ -54,11 +54,12 @@ internal fun cleanScrapedBody(
     if (com.example.util.CloudflareDetector.isChallengeText(raw)) {
         throw com.example.util.CloudflareException("${scraper.sourceName} showed a security check instead of the chapter")
     }
-    return if (scraper === com.example.util.TomatoScraper) {
+    val cleaned = if (scraper === com.example.util.TomatoScraper) {
         com.example.util.TomatoScraper.sanitizeText(raw, aggressive)
     } else {
         com.example.util.GenericScraper.sanitizeText(raw, aggressive)
     }
+    return com.example.util.ChapterTextCleaner.stripLeadingHeadings(cleaned)
 }
 
 class ScrapingManager(

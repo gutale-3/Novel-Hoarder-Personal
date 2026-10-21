@@ -53,6 +53,20 @@ class LibraryManager(
                 }
                 prefs.edit().putBoolean("chapter_titles_cleaned_v2", true).apply()
             }
+            // One-time: drop repeated "Chapter N: …" heading lines from the top of stored chapters.
+            if (!prefs.getBoolean("chapter_headings_stripped_v1", false)) {
+                runCatching {
+                    for (b in repository.getAllBooks()) {
+                        if (b.url.startsWith("local://")) continue
+                        for (ch in repository.getChapters(b.id)) {
+                            if (ch.content.isBlank()) continue
+                            val stripped = com.example.util.ChapterTextCleaner.stripLeadingHeadings(ch.content)
+                            if (stripped != ch.content) repository.updateChapterContent(ch.id, stripped)
+                        }
+                    }
+                }
+                prefs.edit().putBoolean("chapter_headings_stripped_v1", true).apply()
+            }
         }
     }
 

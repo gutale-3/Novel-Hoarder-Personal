@@ -178,7 +178,9 @@ class ManualCaptureManager(
                     isCapturing = false
                     return@launch
                 }
-                val cleanBody = GenericScraper.sanitizeText(rawContent, aggressive = false)
+                val cleanBody = com.example.util.ChapterTextCleaner.stripLeadingHeadings(
+                    GenericScraper.sanitizeText(rawContent, aggressive = false)
+                )
                 if (cleanBody.isBlank()) {
                     onResult("No chapter content found on page.")
                     isCapturing = false
