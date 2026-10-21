@@ -182,6 +182,7 @@ class ReadingProgressManager(
         prefs.edit()
             .putInt("progress_para_${bookId}_${chapterId}", paragraphIndex)
             .putString("progress_chapter_${bookId}", chapterId)
+            .putLong("progress_at_${bookId}", System.currentTimeMillis()) // newest position wins in sync
             .putString("active_reading_book_id", bookId)
             .putString("active_reading_chapter_id", chapterId)
             .putInt("active_reading_para_index", paragraphIndex)

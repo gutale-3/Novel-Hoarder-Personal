@@ -25,6 +25,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlinx.coroutines.launch
 import com.example.ui.screens.*
 import com.example.ui.theme.AppTheme
 import com.example.ui.theme.NovelHoarderTheme
@@ -32,6 +33,20 @@ import com.example.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
     private val pendingRoute = mutableStateOf<String?>(null)
+
+    // Device sync: pick up other devices' progress when the app comes forward, publish ours
+    // when it goes away.
+    override fun onStart() {
+        super.onStart()
+        val container = NovelHoarderApp.getContainer(application)
+        container.appScope.launch { container.cloudSync.syncIfDue() }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        val container = NovelHoarderApp.getContainer(application)
+        container.appScope.launch { if (container.cloudSync.isEnabled) container.cloudSync.syncNow() }
+    }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         val code = event.keyCode

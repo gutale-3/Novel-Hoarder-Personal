@@ -53,6 +53,7 @@ class AppContainer(val application: Application) {
         )
     }
 
+    val cloudSync by lazy { com.example.data.sync.CloudSync(application, repository) }
     val novelSearch by lazy { com.example.data.scraper.NovelSearch(application, pluginManager) }
     val sourceFallback by lazy { com.example.data.scraper.SourceFallback(application, novelSearch) }
 

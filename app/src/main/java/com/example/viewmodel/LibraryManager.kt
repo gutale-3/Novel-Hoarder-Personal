@@ -77,6 +77,7 @@ class LibraryManager(
                     prefs.edit().remove("active_reading_book_id").remove("active_reading_chapter_id").remove("active_reading_para_index").apply()
                 }
                 repository.softDeleteBook(bookId)
+                com.example.NovelHoarderApp.getContainer(application).cloudSync.recordRemoval(bookId)
                 scrapingManager.addLog("Moved novel to Trash: $bookId")
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -88,6 +89,7 @@ class LibraryManager(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 repository.restoreBook(bookId)
+                com.example.NovelHoarderApp.getContainer(application).cloudSync.clearRemoval(bookId)
                 scrapingManager.addLog("Restored novel from Trash: $bookId")
             } catch (e: Exception) {
                 e.printStackTrace()

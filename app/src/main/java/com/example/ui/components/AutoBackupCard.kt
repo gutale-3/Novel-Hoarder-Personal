@@ -17,9 +17,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import kotlinx.coroutines.launch
 import com.example.background.AutoBackupWorker
 
-/** Settings card for nightly backups into a user-chosen folder (e.g. Google Drive). */
+/** Settings card for nightly backups and device sync through a user-chosen folder (e.g. Google Drive). */
 @Composable
 fun AutoBackupCard() {
     val context = LocalContext.current
@@ -78,6 +79,73 @@ fun AutoBackupCard() {
                 OutlinedButton(onClick = { picker.launch(null) }) { Text(if (folder == null) "Choose folder" else "Change folder") }
                 Button(enabled = folder != null && !running, onClick = { AutoBackupWorker.backupNow(context) }) { Text("Back up now") }
             }
+
+            HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            DeviceSyncSection(folderChosen = folder != null, onChooseFolder = { picker.launch(null) })
         }
+    }
+}
+
+/**
+ * Sync between devices through the same folder: install the app on each device, choose the
+ * same Google Drive folder, and turn this on.
+ */
+@Composable
+private fun DeviceSyncSection(folderChosen: Boolean, onChooseFolder: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val sync = remember {
+        com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application).cloudSync
+    }
+    var refresh by remember { mutableIntStateOf(0) }
+    var syncing by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    val enabled = remember(refresh, folderChosen) { sync.isEnabled }
+    val last = remember(refresh) { sync.lastSync() }
+    val error = remember(refresh) { sync.lastError() }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Sync across devices", fontWeight = FontWeight.Bold)
+            Text(
+                "Library, reading position, read marks and bookmarks. Use the same Drive folder on every " +
+                    "device; chapters download on each device when opened.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = { on ->
+                if (on && !folderChosen) { onChooseFolder(); return@Switch }
+                sync.setEnabled(on)
+                refresh++
+            }
+        )
+    }
+    when {
+        syncing -> Text("Syncing…", style = MaterialTheme.typography.bodySmall)
+        result != null -> Text(result!!, style = MaterialTheme.typography.bodySmall)
+        error != null -> Text("Last sync failed: $error", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        last > 0 -> Text("Last synced ${DateUtils.getRelativeTimeSpanString(last)}", style = MaterialTheme.typography.bodySmall)
+    }
+    if (enabled) {
+        OutlinedButton(
+            enabled = !syncing,
+            onClick = {
+                syncing = true
+                result = null
+                scope.launch {
+                    result = sync.syncNow().fold(
+                        onSuccess = {
+                            "Synced: ${it.booksAdded} novels added, ${it.positionsUpdated} positions updated, " +
+                                "${it.chaptersMarkedRead} chapters marked read"
+                        },
+                        onFailure = { "Sync failed: ${it.message}" }
+                    )
+                    syncing = false
+                    refresh++
+                }
+            }
+        ) { Text("Sync now") }
     }
 }
