@@ -18,6 +18,7 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    manifestPlaceholders["appLabel"] = "@string/app_name"
 
     ksp {
       arg("room.schemaLocation", "$projectDir/schemas")
@@ -50,6 +51,12 @@ android {
     debug {
       signingConfig = signingConfigs.getByName("debugConfig")
       isDebuggable = false
+      // Opt-in test build that installs next to the normal app instead of replacing it:
+      //   gradle assembleDebug -PsideBySide
+      if (project.hasProperty("sideBySide")) {
+        applicationIdSuffix = ".test"
+        manifestPlaceholders["appLabel"] = "Novel Hoarder Test"
+      }
     }
   }
   compileOptions {
