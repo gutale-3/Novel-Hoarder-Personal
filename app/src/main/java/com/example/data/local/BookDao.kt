@@ -235,6 +235,9 @@ interface BookDao {
     @Query("UPDATE chapters SET content = :content WHERE id = :id")
     suspend fun updateChapterContent(id: String, content: String)
 
+    @Query("UPDATE chapters SET title = :title WHERE id = :id")
+    suspend fun updateChapterTitle(id: String, title: String)
+
     // --- Bookmarks ---
     @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY timestamp DESC")
     fun getBookmarksForBookFlow(bookId: String): Flow<List<BookmarkEntity>>

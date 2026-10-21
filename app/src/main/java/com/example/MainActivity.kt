@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        intent?.getStringExtra("open_route")?.takeIf { it.isNotBlank() }?.let { pendingRoute.value = it }
         val openBookId = intent?.getStringExtra("open_reader_book")
         if (!openBookId.isNullOrEmpty()) {
             val openChapterId = intent.getStringExtra("open_reader_chapter")
@@ -130,6 +131,13 @@ class MainActivity : ComponentActivity() {
                 val pendingUpdateBooks = updateEntries.values.count { it.newCount > 0 }
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route ?: "home"
+
+                // A paused download needs the user: bring the solver window up wherever they are.
+                LaunchedEffect(viewModel.showCaptchaDialog) {
+                    if (viewModel.showCaptchaDialog && navController.currentDestination?.route != "scrape") {
+                        navController.navigate("scrape") { launchSingleTop = true }
+                    }
+                }
 
                 val isFullScreen = currentRoute.startsWith("reader") || currentRoute == "settings" || currentRoute == "plugins"
 

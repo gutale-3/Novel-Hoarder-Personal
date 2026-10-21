@@ -236,6 +236,16 @@ class ScrapingManager(
     }
 
     private val quota by lazy { com.example.data.scraper.DownloadQuota.get(application) }
+
+    /** Chapter title without the novel's name or the site's name around it. */
+    private suspend fun cleanTitleFor(
+        chapter: ChapterEntity,
+        rawTitle: String,
+        scraper: com.example.data.scraper.NovelSource
+    ): String {
+        val bookTitle = repository.getBook(chapter.bookId)?.title.orEmpty()
+        return com.example.util.ChapterTitleCleaner.clean(rawTitle, bookTitle, scraper.sourceName, chapter.chapterNumber)
+    }
     private val sourceFallback by lazy { com.example.NovelHoarderApp.getContainer(application).sourceFallback }
 
     /**
@@ -980,7 +990,7 @@ class ScrapingManager(
                         break
                     }
                     try {
-                        val rawContent = withTimeoutOrNull(40_000L) {
+                        val rawContent = withTimeoutOrNull(com.example.util.ScrapeTimeouts.chapterMs + 15_000L) {
                             scraper.scrapeChapterContent(webView, chapterUrl) { shouldSkipCurrentChapter }
                         } ?: throw IOException("Chapter download timed out (Limbo detected)")
 
@@ -1001,7 +1011,7 @@ class ScrapingManager(
                             bookId = currentBookState.id,
                             chapterId = chapId,
                             chapterNumber = absoluteChapterNum,
-                            title = title,
+                            title = com.example.util.ChapterTitleCleaner.clean(title, currentBookState.title, scraper.sourceName, absoluteChapterNum),
                             url = chapterUrl,
                             content = cleanedBody,
                             hash = hash
@@ -1034,6 +1044,18 @@ class ScrapingManager(
                         if (shouldSkipCurrentChapter) {
                             break
                         }
+                        if (tries == 1) {
+                            // First problem on this chapter: hand it to the user straight away rather
+                            // than retrying blindly — usually it is a check that takes a second to pass.
+                            val secs = com.example.util.ScrapeTimeouts.chapterSeconds
+                            addLog("Chapter $absoluteChapterNum didn't load within ${secs}s (${e.message}). Opening it for you…")
+                            handleCaptchaChallenge(
+                                chapterUrl,
+                                "Chapter $absoluteChapterNum didn't load in ${secs}s. Fix whatever the page shows " +
+                                    "(security check, button, popup), then tap Resume."
+                            )
+                            continue
+                        }
                         addLog("Stall/Limbo on chapter $currentChapterNum, retry $tries/3: ${e.message}")
                         addLog("Auto-recovering: Refreshing web session & restarting WebView...")
                         withContext(Dispatchers.Main) {
@@ -1061,7 +1083,7 @@ class ScrapingManager(
                                     bookId = currentBookState.id,
                                     chapterId = chapId,
                                     chapterNumber = absoluteChapterNum,
-                                    title = alt.first,
+                                    title = com.example.util.ChapterTitleCleaner.clean(alt.first, currentBookState.title, alt.third, absoluteChapterNum),
                                     url = chapterUrl,
                                     content = body,
                                     hash = md5.digest(body.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
@@ -1168,13 +1190,21 @@ class ScrapingManager(
         }
     }
 
-    private suspend fun handleCaptchaChallenge(url: String) {
+    /** Why the solver window is open, shown at its top. */
+    var captchaReason by mutableStateOf("")
+
+    private suspend fun handleCaptchaChallenge(
+        url: String,
+        reason: String = "The site is showing a security check. Solve it below, then tap Resume."
+    ) {
         val pluginUa = (SourceManager.getSourceForUrl(url, pluginManager) as? com.example.data.plugin.PluginExecutionEngine)
             ?.config?.customUserAgent.orEmpty()
         captchaSourceKey = com.example.data.scraper.SourceKeys.keyFor(url)
         withContext(Dispatchers.Main) {
+            captchaReason = reason
             captchaUserAgent = pluginUa.ifBlank { defaultUserAgent }
             captchaUrl = url
+            notifyCheckNeeded(reason)
             showCaptchaDialog = true
             scrapingStatus = "● Captcha Verification Required"
         }
@@ -1190,6 +1220,7 @@ class ScrapingManager(
         // Persist the clearance cookie before the scraping WebView reloads the page.
         CookieManager.getInstance().flush()
         captchaSourceKey?.let { quota.clearChallenge(it) }
+        androidx.core.app.NotificationManagerCompat.from(application).cancel(CHECK_NOTIFICATION_ID)
         showCaptchaDialog = false
         captchaContinuation?.resume(Unit) {
             // Cancellation cleanups
@@ -1243,7 +1274,7 @@ class ScrapingManager(
                 val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
                 val updatedChapter = chapter.copy(
-                    title = if (title.isNotBlank()) title else chapter.title,
+                    title = if (title.isNotBlank()) cleanTitleFor(chapter, title, scraper) else chapter.title,
                     content = cleanedBody,
                     hash = hash,
                     downloadedAt = System.currentTimeMillis()
@@ -1386,7 +1417,7 @@ class ScrapingManager(
                     val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
                     
                     val updatedChapter = chapter.copy(
-                        title = title,
+                        title = cleanTitleFor(chapter, title, scraper),
                         content = cleanedBody,
                         hash = hash,
                         downloadedAt = System.currentTimeMillis()
@@ -1451,7 +1482,7 @@ class ScrapingManager(
                         val md5 = java.security.MessageDigest.getInstance("MD5")
                         val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
                         val updatedChapter = chapter.copy(
-                            title = title,
+                            title = cleanTitleFor(chapter, title, scraper),
                             content = cleanedBody,
                             hash = hash,
                             downloadedAt = System.currentTimeMillis()
@@ -1548,7 +1579,7 @@ class ScrapingManager(
                             val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
                             
                             val updatedChapter = chapter.copy(
-                                title = title,
+                                title = cleanTitleFor(chapter, title, scraper),
                                 content = cleanedBody,
                                 hash = hash,
                                 downloadedAt = System.currentTimeMillis()
@@ -1650,7 +1681,38 @@ class ScrapingManager(
         return updatedBook
     }
 
+    /** Heads-up notification so a check is seen even when the phone is in a pocket or another app is open. */
+    private fun notifyCheckNeeded(reason: String) {
+        val nm = application.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                android.app.NotificationChannel(CHECK_CHANNEL, "Download needs you", android.app.NotificationManager.IMPORTANCE_HIGH)
+                    .apply { description = "A download is paused until you pass a check or look at a page" }
+            )
+        }
+        val intent = android.content.Intent(application, com.example.MainActivity::class.java)
+            .putExtra("open_route", "scrape")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val pending = android.app.PendingIntent.getActivity(
+            application, CHECK_NOTIFICATION_ID, intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val n = androidx.core.app.NotificationCompat.Builder(application, CHECK_CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setContentTitle("Download paused — tap to continue")
+            .setContentText(reason)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(reason))
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .build()
+        runCatching { nm.notify(CHECK_NOTIFICATION_ID, n) }
+    }
+
     private companion object {
+        const val CHECK_CHANNEL = "download_needs_you"
+        const val CHECK_NOTIFICATION_ID = 4242
         const val KEY_ACTIVE_URL = "scrape_active_session_url"
         const val KEY_ACTIVE_NAME = "scrape_active_session_name"
     }

@@ -372,6 +372,21 @@ fun SettingsScreen(
                     )
                 }
 
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text("Chapter wait: ${settingsManager.chapterTimeoutSeconds}s")
+                    Text(
+                        "If a chapter isn't loaded by then, you're asked to look at the page right away",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = settingsManager.chapterTimeoutSeconds.toFloat(),
+                        onValueChange = { settingsManager.updateChapterTimeoutSeconds(it.toInt()) },
+                        valueRange = 5f..40f,
+                        steps = 34
+                    )
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically

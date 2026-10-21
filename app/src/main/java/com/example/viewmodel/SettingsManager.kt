@@ -35,6 +35,16 @@ class SettingsManager(val application: Application) {
     var sourceFallbackEnabled by mutableStateOf(true)
         private set
 
+    /** Seconds a chapter page may take before the user is asked to look at it. */
+    var chapterTimeoutSeconds by mutableStateOf(com.example.util.ScrapeTimeouts.DEFAULT_CHAPTER_SECONDS)
+        private set
+
+    fun updateChapterTimeoutSeconds(seconds: Int) {
+        chapterTimeoutSeconds = seconds.coerceIn(5, 40)
+        com.example.util.ScrapeTimeouts.chapterSeconds = chapterTimeoutSeconds
+        prefs.edit().putInt("chapter_timeout_seconds", chapterTimeoutSeconds).apply()
+    }
+
     fun updateSourceFallbackEnabled(enabled: Boolean) {
         sourceFallbackEnabled = enabled
         prefs.edit().putBoolean("source_fallback_enabled", enabled).apply()
@@ -142,6 +152,8 @@ class SettingsManager(val application: Application) {
         autoDownloadNextEnabled = prefs.getBoolean("auto_download_next", true)
         requestDelayMs = prefs.getInt("request_delay_ms", 3000)
         sourceFallbackEnabled = prefs.getBoolean("source_fallback_enabled", true)
+        chapterTimeoutSeconds = prefs.getInt("chapter_timeout_seconds", com.example.util.ScrapeTimeouts.DEFAULT_CHAPTER_SECONDS)
+        com.example.util.ScrapeTimeouts.chapterSeconds = chapterTimeoutSeconds
         batchSize = prefs.getInt("batch_size", 10)
         autoFetchWhileReading = prefs.getBoolean("auto_fetch_while_reading", true)
         readerTheme = prefs.getString("reader_theme", "follow_app") ?: "follow_app"

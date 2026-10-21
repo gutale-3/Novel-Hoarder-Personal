@@ -131,7 +131,7 @@ object GenericScraper : NovelSource {
         var ready = false
 
         val watch = CloudflareDetector.ChallengeWatch(sourceName)
-        while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
+        while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < ScrapeTimeouts.chapterMs) {
             if (shouldSkip()) break
             watch.check(webView)
             val eval = evaluateJs(webView, readyJs)
@@ -236,7 +236,7 @@ object GenericScraper : NovelSource {
     }
 
     private suspend fun loadUrlAndWait(webView: WebView, url: String) {
-        withTimeoutOrNull(25000) {
+        withTimeoutOrNull(ScrapeTimeouts.chapterMs) {
             suspendCancellableCoroutine<Unit> { continuation ->
                 webView.webViewClient = object : WebViewFactory.SafeWebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {

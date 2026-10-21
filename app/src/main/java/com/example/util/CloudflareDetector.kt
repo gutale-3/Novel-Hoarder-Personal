@@ -106,7 +106,7 @@ object CloudflareDetector {
      * [check] on every poll; it throws [CloudflareException] once the challenge has persisted
      * for [graceMs].
      */
-    class ChallengeWatch(private val sourceName: String, private val graceMs: Long = 7000L) {
+    class ChallengeWatch(private val sourceName: String, private val graceMs: Long = ScrapeTimeouts.CHALLENGE_GRACE_MS) {
         private var firstSeenAt = 0L
 
         suspend fun check(webView: WebView) {

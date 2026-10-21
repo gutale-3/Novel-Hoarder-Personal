@@ -11,7 +11,6 @@ import com.example.data.local.BookmarkEntity
 import com.example.data.repository.NovelRepository
 import com.example.data.scraper.SourceManager
 import com.example.util.NovelCompiler
-import com.example.util.SampleNovels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -30,42 +29,43 @@ class LibraryManager(
     var onClearSelection: (() -> Unit)? = null
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    var isSeedingSamples by mutableStateOf(false)
-        private set
-
     init {
+        // The generated sample novels are gone; remove any copies seeded by older versions.
         coroutineScope.launch(Dispatchers.IO) {
             val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
-            val alreadySeeded = prefs.getBoolean("sample_novels_seeded_v2", false)
-            if (!alreadySeeded) {
-                val existing = repository.getAllBooks()
-                if (existing.isEmpty()) {
-                    seedSampleNovels(force = false)
+            if (!prefs.getBoolean("sample_novels_removed", false)) {
+                SAMPLE_BOOK_IDS.forEach { id ->
+                    if (repository.getBook(id) != null) repository.deleteBook(id)
                 }
+                prefs.edit().putBoolean("sample_novels_removed", true).apply()
+            }
+            // One-time tidy of chapter names saved before titles were cleaned on download.
+            if (!prefs.getBoolean("chapter_titles_cleaned_v1", false)) {
+                runCatching { cleanAllChapterTitles() }
+                prefs.edit().putBoolean("chapter_titles_cleaned_v1", true).apply()
             }
         }
     }
 
-    fun seedSampleNovels(force: Boolean = false, onComplete: ((Int) -> Unit)? = null) {
-        if (isSeedingSamples) return
-        isSeedingSamples = true
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                scrapingManager.addLog("Generating and seeding 5 sample novels (500+ chapters each)...")
-                val count = SampleNovels.seedSampleNovels(application, repository, force)
-                withContext(Dispatchers.Main) {
-                    isSeedingSamples = false
-                    scrapingManager.addLog("Successfully seeded $count sample novels with 500+ chapters each into library.")
-                    onComplete?.invoke(count)
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    isSeedingSamples = false
-                    scrapingManager.addLog("Failed to seed sample novels: ${e.message}")
-                    onComplete?.invoke(0)
+    /**
+     * Strips the novel's name and site names out of every stored chapter title
+     * ("ABCD Chapter 4 - WTR-LAB" becomes "Chapter 4"). Imported EPUBs are left as they are.
+     * @return number of chapters renamed.
+     */
+    suspend fun cleanAllChapterTitles(): Int {
+        var renamed = 0
+        for (book in repository.getAllBooks()) {
+            if (book.url.startsWith("local://")) continue
+            val source = com.example.data.scraper.SourceManager.getSourceForUrl(book.url).sourceName
+            for (ch in repository.getChapters(book.id)) {
+                val clean = com.example.util.ChapterTitleCleaner.clean(ch.title, book.title, source, ch.chapterNumber)
+                if (clean != ch.title) {
+                    repository.updateChapterTitle(ch.id, clean)
+                    renamed++
                 }
             }
         }
+        return renamed
     }
 
     // --- Book & Chapter Soft-Delete / Restore / Trash Helpers ---
@@ -589,5 +589,12 @@ class LibraryManager(
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    private companion object {
+        val SAMPLE_BOOK_IDS = listOf(
+            "sample_cultivator_ascension", "sample_shadow_monarch", "sample_cyber_alchemist",
+            "sample_starlight_archmage", "sample_dungeon_sovereign"
+        )
     }
 }

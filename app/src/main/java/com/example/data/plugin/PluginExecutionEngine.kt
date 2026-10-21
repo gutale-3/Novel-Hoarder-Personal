@@ -6,6 +6,7 @@ import com.example.data.scraper.NovelSource
 import com.example.util.CloudflareDetector
 import com.example.util.CloudflareException
 import com.example.util.SelectorDiagnostics
+import com.example.util.ScrapeTimeouts
 import com.example.util.GenericScraper
 import com.example.util.JsResultParser
 import com.example.util.PageExtractors
@@ -186,7 +187,7 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         val startTime = System.currentTimeMillis()
 
         val watch = CloudflareDetector.ChallengeWatch(config.name)
-        while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
+        while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < ScrapeTimeouts.chapterMs) {
             if (shouldSkip()) break
             watch.check(webView)
             val eval = evaluateJs(webView, script)
@@ -442,7 +443,7 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         if (config.customUserAgent.isNotBlank()) {
             webView.settings.userAgentString = config.customUserAgent
         }
-        withTimeoutOrNull(25000) {
+        withTimeoutOrNull(ScrapeTimeouts.chapterMs) {
             suspendCancellableCoroutine<Unit> { continuation ->
                 webView.webViewClient = object : WebViewFactory.SafeWebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {

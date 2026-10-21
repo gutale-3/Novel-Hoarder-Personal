@@ -736,7 +736,7 @@ fun ScrapeScreen(
                                 )
                             )
                             Text(
-                                text = "Solve CAPTCHA / Cloudflare check below.",
+                                text = viewModel.scraping.captchaReason.ifBlank { "Solve CAPTCHA / Cloudflare check below." },
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

@@ -374,7 +374,7 @@ object TomatoScraper : NovelSource {
             })()
         """.trimIndent()
 
-        val jsonStr = loadUrlAndWait(webView, chapterUrl, checkJs, 35, shouldSkip)
+        val jsonStr = loadUrlAndWait(webView, chapterUrl, checkJs, ScrapeTimeouts.chapterSeconds, shouldSkip)
         if (jsonStr == "null" || jsonStr == "\"null\"" || jsonStr.trim().isEmpty()) {
             throw IOException("Failed to scrape chapter text content")
         }
