@@ -58,4 +58,40 @@ object RawTranslation {
             title to body
         }
     }
+
+    /** Translates stored chapters of [bookId] that are still raw; returns a short summary. */
+    suspend fun translateStoredChapters(
+        context: Context,
+        repository: com.example.data.repository.NovelRepository,
+        bookId: String,
+        allowMobileData: Boolean
+    ): String {
+        val glossaries = repository.getGlossary(bookId)
+        val raw = repository.getChapters(bookId).filter {
+            it.content.isNotBlank() && com.example.data.scraper.RawTranslation.looksUntranslated(it.content)
+        }
+        var done = 0
+        var failed = 0
+        for (ch in raw) {
+            try {
+                val body = com.example.util.TranslatorEngine.translateText(
+                    context, ch.content, glossary = glossaries, allowMobileData = allowMobileData
+                )
+                val title = if (com.example.data.scraper.RawTranslation.looksUntranslated(ch.title))
+                    com.example.util.TranslatorEngine.translateText(context, ch.title, allowMobileData = allowMobileData).trim()
+                else ch.title
+                repository.updateChapterContent(ch.id, body)
+                repository.updateChapterTitle(ch.id, title)
+                done++
+            } catch (e: Exception) {
+                failed++
+                if (failed >= 3 && done == 0) break // model unavailable; no point continuing
+            }
+        }
+        return when {
+            raw.isEmpty() -> "No untranslated chapters."
+            done == 0 -> "Couldn't translate (the translation model downloads on Wi-Fi first)."
+            else -> "Translated $done of ${raw.size} chapters."
+        }
+    }
 }

@@ -1262,89 +1262,29 @@ fun SettingsScreen(
 
     // Local Snapshots Management Dialog
     if (showLocalBackupsDialog) {
-        AlertDialog(
-            onDismissRequest = { showLocalBackupsDialog = false },
-            title = { Text("Local Offline Snapshots") },
-            text = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 350.dp)
-                ) {
-                    if (localBackupsList.isEmpty()) {
-                        Text(
-                            "No local snapshots saved yet. Tap 'Save Snapshot' to create one.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        val sdf = remember { java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.getDefault()) }
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(localBackupsList.size) { index ->
-                                val file = localBackupsList[index]
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(file.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
-                                            Text(
-                                                "${StorageMaintenanceManager.formatBytes(file.length())} • ${sdf.format(java.util.Date(file.lastModified()))}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-
-                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            IconButton(
-                                                onClick = {
-                                                    coroutineScope.launch {
-                                                        isRestoring = true
-                                                        val res = com.example.util.BackupRestoreManager.restoreLocalBackup(context, viewModel.repository, file)
-                                                        isRestoring = false
-                                                        res.fold(
-                                                            onSuccess = { count ->
-                                                                Toast.makeText(context, "Restored snapshot ($count novels)", Toast.LENGTH_LONG).show()
-                                                                showLocalBackupsDialog = false
-                                                            },
-                                                            onFailure = { e ->
-                                                                Toast.makeText(context, "Restore failed: ${e.message}", Toast.LENGTH_LONG).show()
-                                                            }
-                                                        )
-                                                    }
-                                                },
-                                                enabled = !isRestoring && !isBackingUp
-                                            ) {
-                                                Icon(Icons.Default.Unarchive, contentDescription = "Restore Snapshot", tint = MaterialTheme.colorScheme.primary)
-                                            }
-
-                                            IconButton(
-                                                onClick = {
-                                                    com.example.util.BackupRestoreManager.deleteLocalBackup(file)
-                                                    localBackupsList = com.example.util.BackupRestoreManager.listLocalBackups(context)
-                                                    Toast.makeText(context, "Snapshot deleted", Toast.LENGTH_SHORT).show()
-                                                }
-                                            ) {
-                                                Icon(Icons.Default.Delete, contentDescription = "Delete Snapshot", tint = MaterialTheme.colorScheme.error)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+        LocalSnapshotsDialog(
+            snapshots = localBackupsList,
+            busy = isRestoring || isBackingUp,
+            onRestore = { file ->
+                coroutineScope.launch {
+                    isRestoring = true
+                    val res = com.example.util.BackupRestoreManager.restoreLocalBackup(context, viewModel.repository, file)
+                    isRestoring = false
+                    res.fold(
+                        onSuccess = { count ->
+                            Toast.makeText(context, "Restored snapshot ($count novels)", Toast.LENGTH_LONG).show()
+                            showLocalBackupsDialog = false
+                        },
+                        onFailure = { e -> Toast.makeText(context, "Restore failed: ${e.message}", Toast.LENGTH_LONG).show() }
+                    )
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showLocalBackupsDialog = false }) {
-                    Text("Close")
-                }
-            }
+            onDelete = { file ->
+                com.example.util.BackupRestoreManager.deleteLocalBackup(file)
+                localBackupsList = com.example.util.BackupRestoreManager.listLocalBackups(context)
+                Toast.makeText(context, "Snapshot deleted", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showLocalBackupsDialog = false }
         )
     }
 }
@@ -1370,4 +1310,65 @@ private fun getFolderSize(file: File): Long {
         size = file.length()
     }
     return size
+}
+
+/** Lists the on-device snapshots with restore/delete buttons. */
+@Composable
+private fun LocalSnapshotsDialog(
+    snapshots: List<File>,
+    busy: Boolean,
+    onRestore: (File) -> Unit,
+    onDelete: (File) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Local Offline Snapshots") },
+        text = {
+            Box(modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp)) {
+                if (snapshots.isEmpty()) {
+                    Text(
+                        "No local snapshots saved yet. Tap 'Save Snapshot' to create one.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    val sdf = remember { java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.getDefault()) }
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(snapshots.size) { index ->
+                            val file = snapshots[index]
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(file.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+                                        Text(
+                                            "${StorageMaintenanceManager.formatBytes(file.length())} • ${sdf.format(java.util.Date(file.lastModified()))}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        IconButton(onClick = { onRestore(file) }, enabled = !busy) {
+                                            Icon(Icons.Default.Unarchive, contentDescription = "Restore Snapshot", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                        IconButton(onClick = { onDelete(file) }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete Snapshot", tint = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
 }

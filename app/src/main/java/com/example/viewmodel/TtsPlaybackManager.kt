@@ -324,58 +324,40 @@ class TtsPlaybackManager(
     fun voicesSharingFolder(voice: PiperVoice): List<PiperVoice> =
         sherpaOnnxTtsEngine.modelManager.voicesSharingFolder(voice)
 
-    fun downloadPremiumVoice(voice: PiperVoice) {
-        if (premiumVoiceDownloading) return
-        sherpaOnnxTtsEngine.selectedVoiceId = voice.id
-        premiumVoiceDownloading = true
-        premiumVoiceDownloadError = null
-        premiumVoiceDownloadProgress = 0
-        coroutineScope.launch(Dispatchers.Main) {
-            sherpaOnnxTtsEngine.downloadModel(
-                onProgress = { progress ->
-                    premiumVoiceDownloadProgress = progress
-                },
-                onSuccess = {
-                    premiumVoiceDownloading = false
-                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
-                    setTtsVoice(VoiceOption(voice.id, "$prefix - ${voice.name}", Locale.US))
-                    initTts()
-                    addLog("$prefix Voice (${voice.name}) downloaded successfully.")
-                },
-                onFailure = { error ->
-                    premiumVoiceDownloadError = error
-                    premiumVoiceDownloading = false
-                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
-                    addLog("Error downloading $prefix Voice (${voice.name}): $error")
-                }
-            )
-        }
+    fun downloadPremiumVoice(voice: PiperVoice) = installPremiumVoice(voice, "downloaded successfully", "downloading") { onProgress, onSuccess, onFailure ->
+        sherpaOnnxTtsEngine.downloadModel(onProgress = onProgress, onSuccess = onSuccess, onFailure = onFailure)
     }
 
-    fun importPremiumVoice(uri: Uri, voice: PiperVoice) {
+    fun importPremiumVoice(uri: Uri, voice: PiperVoice) = installPremiumVoice(voice, "imported from archive", "importing") { onProgress, onSuccess, onFailure ->
+        sherpaOnnxTtsEngine.importModel(uri = uri, onProgress = onProgress, onSuccess = onSuccess, onFailure = onFailure)
+    }
+
+    /** Shared by download and import: progress state, switching to the voice, and logging. */
+    private fun installPremiumVoice(
+        voice: PiperVoice,
+        doneText: String,
+        failVerb: String,
+        install: suspend (onProgress: (Int) -> Unit, onSuccess: () -> Unit, onFailure: (String) -> Unit) -> Unit
+    ) {
         if (premiumVoiceDownloading) return
         sherpaOnnxTtsEngine.selectedVoiceId = voice.id
         premiumVoiceDownloading = true
         premiumVoiceDownloadError = null
         premiumVoiceDownloadProgress = 0
+        val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
         coroutineScope.launch(Dispatchers.Main) {
-            sherpaOnnxTtsEngine.importModel(
-                uri = uri,
-                onProgress = { progress ->
-                    premiumVoiceDownloadProgress = progress
-                },
-                onSuccess = {
+            install(
+                { progress -> premiumVoiceDownloadProgress = progress },
+                {
                     premiumVoiceDownloading = false
-                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
                     setTtsVoice(VoiceOption(voice.id, "$prefix - ${voice.name}", Locale.US))
                     initTts()
-                    addLog("$prefix Voice (${voice.name}) imported from archive.")
+                    addLog("$prefix Voice (${voice.name}) $doneText.")
                 },
-                onFailure = { error ->
+                { error ->
                     premiumVoiceDownloadError = error
                     premiumVoiceDownloading = false
-                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
-                    addLog("Error importing $prefix Voice (${voice.name}): $error")
+                    addLog("Error $failVerb $prefix Voice (${voice.name}): $error")
                 }
             )
         }
@@ -677,25 +659,9 @@ class TtsPlaybackManager(
         val file = File(coverPath)
         if (!file.exists()) return null
 
-        return try {
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            BitmapFactory.decodeFile(file.absolutePath, options)
-            val reqSize = 256
-            var sample = 1
-            while (options.outWidth / sample > reqSize || options.outHeight / sample > reqSize) {
-                sample *= 2
-            }
-            val decodeOptions = BitmapFactory.Options().apply {
-                inSampleSize = sample
-            }
-            val bmp = BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
+        return com.example.util.CoverBitmaps.decodeDownsampled(file, 256)?.also {
             cachedCoverBookId = bookId
-            cachedCoverBitmap = bmp
-            bmp
-        } catch (e: Exception) {
-            null
+            cachedCoverBitmap = it
         }
     }
 

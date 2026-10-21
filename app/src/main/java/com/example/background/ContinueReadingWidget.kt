@@ -7,7 +7,6 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.view.View
 import android.widget.RemoteViews
 import com.example.MainActivity
@@ -67,9 +66,9 @@ class ContinueReadingWidget : AppWidgetProvider() {
                 views.setTextViewText(R.id.widget_title, book.title)
                 views.setTextViewText(R.id.widget_chapter, chapter?.title ?: "${book.totalChapters} chapters")
                 val cover = book.coverLocalPath?.let { File(it) }?.takeIf { it.exists() }
-                if (cover != null) {
-                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
-                    BitmapFactory.decodeFile(cover.path, opts)?.let { views.setImageViewBitmap(R.id.widget_cover, it) }
+                val bitmap = cover?.let { com.example.util.CoverBitmaps.decodeDownsampled(it, 240) }
+                if (bitmap != null) {
+                    views.setImageViewBitmap(R.id.widget_cover, bitmap)
                 } else {
                     views.setImageViewResource(R.id.widget_cover, R.drawable.inkvault_logo)
                 }

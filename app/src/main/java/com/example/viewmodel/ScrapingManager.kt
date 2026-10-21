@@ -923,7 +923,7 @@ class ScrapingManager(
                     finalBook.copy(title = t.trim(), synopsis = s)
                 }.getOrDefault(finalBook)
             } else finalBook
-            var currentBookState = downloadCoverAndSaveMetadata(localizedBook, cookies)
+            var currentBookState = BookMetadataWriter.downloadCoverAndSaveMetadata(application, localizedBook, cookies, defaultUserAgent, ::addLog)
             repository.insertBook(currentBookState)
             addLog("Successfully saved book info: ${currentBookState.title} by ${currentBookState.author}")
 
@@ -1052,8 +1052,7 @@ class ScrapingManager(
                         }
 
                         // Create MD5 Hash
-                        val md5 = java.security.MessageDigest.getInstance("MD5")
-                        val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                        val hash = com.example.util.ContentHash.of(cleanedBody)
 
                         val chapterEntity = ChapterEntity(
                             id = fullChapId,
@@ -1125,7 +1124,6 @@ class ScrapingManager(
                         if (alt != null) {
                             var body = cleanScrapedBody(scraper, alt.second, aggressiveClean)
                             if (glossaries.isNotEmpty()) body = repository.applyGlossary(body, glossaries)
-                            val md5 = java.security.MessageDigest.getInstance("MD5")
                             repository.insertChapter(
                                 ChapterEntity(
                                     id = fullChapId,
@@ -1135,7 +1133,7 @@ class ScrapingManager(
                                     title = com.example.util.ChapterTitleCleaner.clean(alt.first, currentBookState.title, alt.third, absoluteChapterNum),
                                     url = chapterUrl,
                                     content = body,
-                                    hash = md5.digest(body.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                                    hash = com.example.util.ContentHash.of(body)
                                 )
                             )
                             sessionDownloadedCount++
@@ -1253,7 +1251,7 @@ class ScrapingManager(
             captchaReason = reason
             captchaUserAgent = pluginUa.ifBlank { defaultUserAgent }
             captchaUrl = url
-            notifyCheckNeeded(reason)
+            ScrapeNotifications.checkNeeded(application, reason)
             showCaptchaDialog = true
             scrapingStatus = "● Captcha Verification Required"
         }
@@ -1269,7 +1267,7 @@ class ScrapingManager(
         // Persist the clearance cookie before the scraping WebView reloads the page.
         CookieManager.getInstance().flush()
         captchaSourceKey?.let { quota.clearChallenge(it) }
-        androidx.core.app.NotificationManagerCompat.from(application).cancel(CHECK_NOTIFICATION_ID)
+        ScrapeNotifications.cancelCheckNeeded(application)
         showCaptchaDialog = false
         captchaContinuation?.resume(Unit) {
             // Cancellation cleanups
@@ -1323,8 +1321,7 @@ class ScrapingManager(
                     cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
                 }
 
-                val md5 = java.security.MessageDigest.getInstance("MD5")
-                val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                val hash = com.example.util.ContentHash.of(cleanedBody)
 
                 val updatedChapter = chapter.copy(
                     title = if (title.isNotBlank()) cleanTitleFor(chapter, title, scraper) else chapter.title,
@@ -1446,38 +1443,42 @@ class ScrapingManager(
     /** Translates every stored chapter of [bookId] that is still raw Chinese (e.g. saved offline). */
     fun translateRawChapters(bookId: String, onComplete: (String) -> Unit) {
         coroutineScope.launch(Dispatchers.IO) {
-            val glossaries = repository.getGlossary(bookId)
-            val raw = repository.getChapters(bookId).filter {
-                it.content.isNotBlank() && com.example.data.scraper.RawTranslation.looksUntranslated(it.content)
-            }
-            var done = 0
-            var failed = 0
-            for (ch in raw) {
-                try {
-                    val body = com.example.util.TranslatorEngine.translateText(
-                        application, ch.content, glossary = glossaries, allowMobileData = !settings.translationRequireWifi
-                    )
-                    val title = if (com.example.data.scraper.RawTranslation.looksUntranslated(ch.title))
-                        com.example.util.TranslatorEngine.translateText(application, ch.title, allowMobileData = !settings.translationRequireWifi).trim()
-                    else ch.title
-                    repository.updateChapterContent(ch.id, body)
-                    repository.updateChapterTitle(ch.id, title)
-                    done++
-                } catch (e: Exception) {
-                    failed++
-                    if (failed >= 3 && done == 0) break // model unavailable; no point continuing
-                }
-            }
-            withContext(Dispatchers.Main) {
-                onComplete(
-                    when {
-                        raw.isEmpty() -> "No untranslated chapters."
-                        done == 0 -> "Couldn't translate (the translation model downloads on Wi-Fi first)."
-                        else -> "Translated $done of ${raw.size} chapters."
-                    }
-                )
-            }
+            val msg = com.example.data.scraper.RawTranslation.translateStoredChapters(
+                application, repository, bookId, allowMobileData = !settings.translationRequireWifi
+            )
+            withContext(Dispatchers.Main) { onComplete(msg) }
         }
+    }
+
+    /**
+     * Downloads [chapter] again and replaces its text: the shared step behind every "re-download"
+     * action (single, selected, corrupted). Cleans, translates raw sources, applies the glossary,
+     * and drops cached polish/recap for the old text. Returns the new title.
+     */
+    private suspend fun refetchChapter(chapter: ChapterEntity, webView: WebView): String {
+        val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
+        val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
+        var title = rawContent.first
+        var body = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
+        val glossaries = repository.getGlossary(chapter.bookId)
+        com.example.data.scraper.RawTranslation.localize(
+            application, chapter.bookId, chapter.url, title, body, glossaries,
+            allowMobileData = !settings.translationRequireWifi
+        ).let { (t, b) -> title = t; body = b }
+        if (glossaries.isNotEmpty()) body = repository.applyGlossary(body, glossaries)
+        val cleanTitle = cleanTitleFor(chapter, title, scraper)
+        repository.deletePolishedChapter(chapter.id)
+        repository.deleteChapterRecap(chapter.id)
+        repository.insertChapter(
+            chapter.copy(
+                title = cleanTitle,
+                content = body,
+                hash = com.example.util.ContentHash.of(body),
+                downloadedAt = System.currentTimeMillis()
+            )
+        )
+        quota.record(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
+        return cleanTitle
     }
 
     fun rescrapeSingleChapter(chapter: ChapterEntity, onComplete: (Boolean, String) -> Unit) {
@@ -1487,58 +1488,18 @@ class ScrapingManager(
         }
         rescrapingChapterId = chapter.id
         coroutineScope.launch(Dispatchers.IO) {
-            try {
-                val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
-                val webView = createFreshWebView()
-                
-                try {
-                    val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
-                    val title = rawContent.first
-                    var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
-                    
-                    // Apply customized glossaries if any exist
-                    val glossaries = repository.getGlossary(chapter.bookId)
-                    if (glossaries.isNotEmpty()) {
-                        cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
-                    }
-                    
-                    // Create MD5 Hash
-                    val md5 = java.security.MessageDigest.getInstance("MD5")
-                    val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-                    
-                    val updatedChapter = chapter.copy(
-                        title = cleanTitleFor(chapter, title, scraper),
-                        content = cleanedBody,
-                        hash = hash,
-                        downloadedAt = System.currentTimeMillis()
-                    )
-                    
-                    // Delete any cached polished/translated or recap data
-                    repository.deletePolishedChapter(chapter.id)
-                    repository.deleteChapterRecap(chapter.id)
-                    
-                    // Insert the fresh chapter content
-                    repository.insertChapter(updatedChapter)
-                    quota.record(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
-                    
-                    withContext(Dispatchers.Main) {
-                        rescrapingChapterId = null
-                        onComplete(true, "Successfully rescraped chapter: $title")
-                    }
-                } finally {
-                    withContext(Dispatchers.Main) {
-                        try {
-                            webView.destroy()
-                        } catch (e: Exception) {
-                            // ignore
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    rescrapingChapterId = null
-                    onComplete(false, "Error: ${e.message}")
-                }
+            val webView = createFreshWebView()
+            val result = try {
+                runCatching { refetchChapter(chapter, webView) }
+            } finally {
+                withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
+            }
+            withContext(Dispatchers.Main) {
+                rescrapingChapterId = null
+                result.fold(
+                    onSuccess = { onComplete(true, "Successfully rescraped chapter: $it") },
+                    onFailure = { onComplete(false, "Error: ${it.message}") }
+                )
             }
         }
     }
@@ -1555,40 +1516,15 @@ class ScrapingManager(
         coroutineScope.launch(Dispatchers.IO) {
             var successCount = 0
             for (chapter in chapters) {
-                withContext(Dispatchers.Main) {
-                    rescrapingChapterId = chapter.id
-                }
+                withContext(Dispatchers.Main) { rescrapingChapterId = chapter.id }
+                val webView = createFreshWebView()
                 try {
-                    val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
-                    val webView = createFreshWebView()
-                    try {
-                        val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
-                        val title = rawContent.first
-                        var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
-                        val glossaries = repository.getGlossary(chapter.bookId)
-                        if (glossaries.isNotEmpty()) {
-                            cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
-                        }
-                        val md5 = java.security.MessageDigest.getInstance("MD5")
-                        val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-                        val updatedChapter = chapter.copy(
-                            title = cleanTitleFor(chapter, title, scraper),
-                            content = cleanedBody,
-                            hash = hash,
-                            downloadedAt = System.currentTimeMillis()
-                        )
-                        repository.deletePolishedChapter(chapter.id)
-                        repository.deleteChapterRecap(chapter.id)
-                        repository.insertChapter(updatedChapter)
-                        quota.record(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
-                        successCount++
-                    } finally {
-                        withContext(Dispatchers.Main) {
-                            try { webView.destroy() } catch (_: Exception) {}
-                        }
-                    }
+                    refetchChapter(chapter, webView)
+                    successCount++
                 } catch (e: Exception) {
                     e.printStackTrace()
+                } finally {
+                    withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
                 }
             }
             withContext(Dispatchers.Main) {
@@ -1605,41 +1541,20 @@ class ScrapingManager(
         }
         isRescrapingBookId = bookId
         rescrapeBookProgress = 0f
-        
+
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val chapters = repository.getChapters(bookId)
-                val book = repository.getBook(bookId)
-                if (book == null) {
+                if (repository.getBook(bookId) == null) {
                     withContext(Dispatchers.Main) {
                         isRescrapingBookId = null
                         onComplete(false, "Novel not found.")
                     }
                     return@launch
                 }
-                
-                val corrupted = chapters.filter { chapter ->
-                    val body = chapter.content
-                    val bodyLower = body.lowercase()
-                    body.length < 2500 && (
-                        bodyLower.contains("login to") || 
-                        bodyLower.contains("log in") || 
-                        bodyLower.contains("sign in to") || 
-                        bodyLower.contains("limit exceeded") || 
-                        bodyLower.contains("rate limit") || 
-                        bodyLower.contains("too many requests") || 
-                        bodyLower.contains("access denied") || 
-                        bodyLower.contains("unauthorized") || 
-                        bodyLower.contains("forbidden") || 
-                        bodyLower.contains("create an account") || 
-                        bodyLower.contains("membership") || 
-                        bodyLower.contains("please register") ||
-                        bodyLower.contains("sign in with") ||
-                        bodyLower.contains("google login") ||
-                        bodyLower.contains("facebook login")
-                    )
+                // Login/limit/locked notices and bot-check pages saved as chapter text.
+                val corrupted = repository.getChapters(bookId).filter {
+                    it.content.isNotBlank() && com.example.util.ChapterQualityChecker.looksLikeErrorPage(it.content)
                 }
-                
                 if (corrupted.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         isRescrapingBookId = null
@@ -1647,53 +1562,26 @@ class ScrapingManager(
                     }
                     return@launch
                 }
-                
-                val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
+
                 val webView = createFreshWebView()
-                
                 var successCount = 0
-                val glossaries = repository.getGlossary(bookId)
-                
                 try {
                     corrupted.forEachIndexed { index, chapter ->
                         try {
-                            val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
-                            val title = rawContent.first
-                            var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
-                            
-                            if (glossaries.isNotEmpty()) {
-                                cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
-                            }
-                            
-                            val md5 = java.security.MessageDigest.getInstance("MD5")
-                            val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-                            
-                            val updatedChapter = chapter.copy(
-                                title = cleanTitleFor(chapter, title, scraper),
-                                content = cleanedBody,
-                                hash = hash,
-                                downloadedAt = System.currentTimeMillis()
-                            )
-                            
-                            repository.deletePolishedChapter(chapter.id)
-                            repository.deleteChapterRecap(chapter.id)
-                            repository.insertChapter(updatedChapter)
+                            refetchChapter(chapter, webView)
                             successCount++
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
-                        
                         withContext(Dispatchers.Main) {
                             rescrapeBookProgress = (index + 1).toFloat() / corrupted.size
                         }
                         delay(1500)
                     }
                 } finally {
-                    withContext(Dispatchers.Main) {
-                        com.example.util.WebViewFactory.destroySafely(webView)
-                    }
+                    withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
                 }
-                
+
                 withContext(Dispatchers.Main) {
                     isRescrapingBookId = null
                     onComplete(true, "Completed! Successfully rescraped $successCount out of ${corrupted.size} corrupted chapters.")
@@ -1707,102 +1595,7 @@ class ScrapingManager(
         }
     }
 
-    private fun downloadCoverAndSaveMetadata(book: BookEntity, cookies: String): BookEntity {
-        val context = application.applicationContext
-        val outputFolder = File(context.filesDir, book.id)
-        if (!outputFolder.exists()) outputFolder.mkdirs()
-
-        // 1. Download Cover Image
-        var updatedBook = book
-        val coverUrl = book.coverUrl
-        if (!coverUrl.isNullOrEmpty()) {
-            try {
-                addLog("Downloading book cover from $coverUrl...")
-                val coverFile = File(outputFolder, "cover.jpg")
-                val url = java.net.URL(coverUrl)
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("User-Agent", defaultUserAgent)
-                if (cookies.isNotEmpty()) {
-                    conn.setRequestProperty("Cookie", cookies)
-                }
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
-                
-                val responseCode = conn.responseCode
-                if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                    conn.inputStream.use { input ->
-                        java.io.FileOutputStream(coverFile).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    updatedBook = book.copy(coverLocalPath = coverFile.absolutePath)
-                    addLog("Book cover downloaded successfully to: ${coverFile.name}")
-                } else {
-                    addLog("Failed to download book cover (HTTP $responseCode)")
-                }
-            } catch (e: Exception) {
-                addLog("Error downloading book cover: ${e.message}")
-                e.printStackTrace()
-            }
-        }
-
-        // 2. Save info.json metadata
-        try {
-            val infoFile = File(outputFolder, "info.json")
-            val json = org.json.JSONObject().apply {
-                put("id", updatedBook.id)
-                put("url", updatedBook.url)
-                put("title", updatedBook.title)
-                put("author", updatedBook.author)
-                put("synopsis", updatedBook.synopsis)
-                put("coverUrl", updatedBook.coverUrl ?: "")
-                put("coverLocalPath", updatedBook.coverLocalPath ?: "")
-                put("totalChapters", updatedBook.totalChapters)
-                put("updatedAt", updatedBook.updatedAt)
-            }
-            infoFile.writeText(json.toString(4))
-            addLog("Saved metadata info.json for book: ${updatedBook.title}")
-        } catch (e: Exception) {
-            addLog("Error saving info.json: ${e.message}")
-            e.printStackTrace()
-        }
-
-        return updatedBook
-    }
-
-    /** Heads-up notification so a check is seen even when the phone is in a pocket or another app is open. */
-    private fun notifyCheckNeeded(reason: String) {
-        val nm = application.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(
-                android.app.NotificationChannel(CHECK_CHANNEL, "Download needs you", android.app.NotificationManager.IMPORTANCE_HIGH)
-                    .apply { description = "A download is paused until you pass a check or look at a page" }
-            )
-        }
-        val intent = android.content.Intent(application, com.example.MainActivity::class.java)
-            .putExtra("open_route", "scrape")
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val pending = android.app.PendingIntent.getActivity(
-            application, CHECK_NOTIFICATION_ID, intent,
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        val n = androidx.core.app.NotificationCompat.Builder(application, CHECK_CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
-            .setContentTitle("Download paused — tap to continue")
-            .setContentText(reason)
-            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(reason))
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
-            .setContentIntent(pending)
-            .setAutoCancel(true)
-            .build()
-        runCatching { nm.notify(CHECK_NOTIFICATION_ID, n) }
-    }
-
     private companion object {
-        const val CHECK_CHANNEL = "download_needs_you"
-        const val CHECK_NOTIFICATION_ID = 4242
         const val KEY_ACTIVE_URL = "scrape_active_session_url"
         const val KEY_ACTIVE_NAME = "scrape_active_session_name"
     }
