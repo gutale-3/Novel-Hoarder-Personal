@@ -1,7 +1,7 @@
 {
   "id": "wuxiabox",
   "name": "WuxiaBox",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "baseUrl": "wuxiabox.com",
   "extraHosts": [],
   "author": "Built-in",
@@ -23,5 +23,6 @@
   "isEnabled": true,
   "searchUrlTemplate": "https://www.wuxiabox.com/e/search/index.php",
   "searchPostBody": "show=title&tempid=1&tbname=news&keyboard={query}",
-  "searchResultSelector": "li.novel-item a[href*='/novel/']"
+  "searchResultSelector": "li.novel-item a[href*='/novel/']",
+  "browseUrl": "https://www.wuxiabox.com/list/all/all-onclick-0.html"
 }

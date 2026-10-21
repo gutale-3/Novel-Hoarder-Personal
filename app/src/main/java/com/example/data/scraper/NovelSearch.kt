@@ -45,6 +45,17 @@ class NovelSearch(private val context: Context, private val pluginManager: Plugi
 
     data class SourceResults(val source: SearchSource, val status: Status, val results: List<Result>, val message: String = "")
 
+    /** Each site's "popular" page, for Discover. */
+    fun browseSources(): List<SearchSource> = pluginManager.plugins.value
+        .filter { it.isEnabled && it.browseUrl.isNotBlank() }
+        .map {
+            SearchSource(
+                key = it.id, name = it.name, urlTemplate = it.browseUrl,
+                resultSelector = it.browseResultSelector.ifBlank { it.searchResultSelector },
+                customJs = it.customSearchJs
+            )
+        }
+
     fun sources(): List<SearchSource> {
         val fromPlugins = pluginManager.plugins.value
             .filter { it.isEnabled && it.searchUrlTemplate.isNotBlank() }

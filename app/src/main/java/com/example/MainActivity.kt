@@ -190,7 +190,7 @@ class MainActivity : ComponentActivity() {
                                     IconButton(onClick = { navController.navigate("search") }) {
                                         Icon(
                                             imageVector = Icons.Default.Search,
-                                            contentDescription = "Search all sites",
+                                            contentDescription = "Search & discover",
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }

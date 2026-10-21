@@ -1,7 +1,7 @@
 {
   "id": "novelbin",
   "name": "NovelBin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "baseUrl": "novelbin.me",
   "extraHosts": [
     "novelbin.com",
@@ -30,5 +30,6 @@
   "testUrl": "https://novelbin.me/novel-book/a-blossom-a-cup-of-wine-an-immortal-life",
   "isEnabled": true,
   "searchUrlTemplate": "https://novelbin.me/search?keyword={query}",
-  "searchResultSelector": ".list-novel .row h3 a"
+  "searchResultSelector": ".list-novel .row h3 a",
+  "browseUrl": "https://novelbin.me/sort/top-hot-novel"
 }

@@ -1,7 +1,7 @@
 {
   "id": "novelfire",
   "name": "NovelFire",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "baseUrl": "novelfire.net",
   "extraHosts": [
     "www.novelfire.net",
@@ -32,5 +32,7 @@
   "testUrl": "https://novelfire.net/book/advent-of-the-three-calamities",
   "isEnabled": true,
   "searchUrlTemplate": "https://novelfire.net/search?keyword={query}",
-  "searchResultSelector": "li.novel-item > a, .novel-list .novel-item a[href*='/book/']"
+  "searchResultSelector": "li.novel-item > a, .novel-list .novel-item a[href*='/book/']",
+  "browseUrl": "https://novelfire.net/ranking",
+  "browseResultSelector": "li.novel-item .title a"
 }

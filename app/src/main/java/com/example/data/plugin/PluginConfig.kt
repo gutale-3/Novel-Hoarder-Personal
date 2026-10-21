@@ -126,6 +126,8 @@ data class PluginConfig(
 
     /** A page listing popular novels, shown under Discover. Uses [searchResultSelector]. */
     @Json(name = "browseUrl") val browseUrl: String = "",
+    /** Links to books on [browseUrl]; defaults to [searchResultSelector]. */
+    @Json(name = "browseResultSelector") val browseResultSelector: String = "",
 
     /** A known book on this site, used by the source health check. */
     @Json(name = "testUrl") val testUrl: String = "",

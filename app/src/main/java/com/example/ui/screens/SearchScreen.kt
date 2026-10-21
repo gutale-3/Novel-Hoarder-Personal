@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -46,7 +47,8 @@ fun SearchScreen(
     val scope = rememberCoroutineScope()
     val search = remember { NovelHoarderApp.getContainer(context.applicationContext as Application).novelSearch }
     var query by rememberSaveable { mutableStateOf("") }
-    val sources = remember { search.sources() }
+    var sources by remember { mutableStateOf(search.sources()) }
+    var browsing by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<Map<String, NovelSearch.SourceResults>>(emptyMap()) }
     var job by remember { mutableStateOf<Job?>(null) }
     val running = job?.isActive == true && results.size < sources.size
@@ -55,9 +57,25 @@ fun SearchScreen(
         if (query.isBlank()) return
         focus.clearFocus()
         job?.cancel()
+        browsing = false
+        sources = search.sources()
         results = emptyMap()
+        val list = sources
         job = scope.launch {
-            search.searchAll(query, sources) { r -> results = results + (r.source.key to r) }
+            search.searchAll(query, list) { r -> results = results + (r.source.key to r) }
+        }
+    }
+
+    /** Discover: each site's popular list, side by side. */
+    fun browse() {
+        focus.clearFocus()
+        job?.cancel()
+        browsing = true
+        sources = search.browseSources()
+        results = emptyMap()
+        val list = sources
+        job = scope.launch {
+            search.searchAll("", list) { r -> results = results + (r.source.key to r) }
         }
     }
 
@@ -77,7 +95,7 @@ fun SearchScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Search all sites") },
+                title = { Text(if (browsing) "Popular now" else "Search all sites") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 }
@@ -99,6 +117,15 @@ fun SearchScreen(
                 keyboardActions = KeyboardActions(onSearch = { run() }),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             )
+
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = browsing,
+                    onClick = { browse() },
+                    label = { Text("Popular now") },
+                    leadingIcon = { Icon(Icons.Default.Whatshot, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                )
+            }
 
             LazyColumn(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),

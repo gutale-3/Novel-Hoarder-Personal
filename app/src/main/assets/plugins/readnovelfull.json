@@ -1,7 +1,7 @@
 {
   "id": "readnovelfull",
   "name": "ReadNovelFull",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "baseUrl": "readnovelfull.com",
   "extraHosts": [
     "www.readnovelfull.com"
@@ -27,5 +27,6 @@
   "testUrl": "https://readnovelfull.com/advent-of-the-three-calamities.html",
   "isEnabled": true,
   "searchUrlTemplate": "https://readnovelfull.com/novel-list/search?keyword={query}",
-  "searchResultSelector": ".list-novel .row h3 a"
+  "searchResultSelector": ".list-novel .row h3 a",
+  "browseUrl": "https://readnovelfull.com/novel-list/most-popular-novel"
 }
