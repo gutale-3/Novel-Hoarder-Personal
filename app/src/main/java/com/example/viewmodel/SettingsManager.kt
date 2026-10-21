@@ -52,6 +52,10 @@ class SettingsManager(val application: Application) {
 
     // --- Reader Settings ---
     var readerTheme by mutableStateOf("follow_app") // "follow_app", "light", "dark", "sepia", "night", "mint", "nord", "oled"
+    /** Book-style pages (swipe/tap to turn) instead of scrolling. */
+    var readerPageTurnMode by mutableStateOf(false)
+        private set
+
     var readerPagingMode by mutableStateOf("paged") // "paged" (Single Chapter with Next Button), "continuous" (Infinite Vertical Scroll)
     var readerLineHeight by mutableStateOf(1.4f)
     var readerParagraphSpacing by mutableStateOf(12) // in dp (0..24)
@@ -158,6 +162,7 @@ class SettingsManager(val application: Application) {
         autoFetchWhileReading = prefs.getBoolean("auto_fetch_while_reading", true)
         readerTheme = prefs.getString("reader_theme", "follow_app") ?: "follow_app"
         readerPagingMode = prefs.getString("reader_paging_mode", "paged") ?: "paged"
+        readerPageTurnMode = prefs.getBoolean("reader_page_turn_mode", false)
         readerLineHeight = prefs.getFloat("reader_line_height", 1.4f)
         readerParagraphSpacing = prefs.getInt("reader_paragraph_spacing", 12)
         readerFirstLineIndentEnabled = prefs.getBoolean("reader_first_line_indent_enabled", false)
@@ -252,6 +257,11 @@ class SettingsManager(val application: Application) {
     fun updateReaderTheme(theme: String) {
         readerTheme = theme
         prefs.edit().putString("reader_theme", theme).apply()
+    }
+
+    fun updateReaderPageTurnMode(on: Boolean) {
+        readerPageTurnMode = on
+        prefs.edit().putBoolean("reader_page_turn_mode", on).apply()
     }
 
     fun updateReaderPagingMode(mode: String) {

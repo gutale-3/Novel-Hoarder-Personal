@@ -53,6 +53,22 @@ fun ReaderSettingsDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // 0. Book-style page turning instead of scrolling
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Turn pages like a book", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(
+                            "Swipe or tap the edges to turn; tap the middle for controls",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = viewModel.settings.readerPageTurnMode,
+                        onCheckedChange = { viewModel.settings.updateReaderPageTurnMode(it) }
+                    )
+                }
+
                 // 1. Navigation / Paging Mode (Continuous Scroll vs Manual Button)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(

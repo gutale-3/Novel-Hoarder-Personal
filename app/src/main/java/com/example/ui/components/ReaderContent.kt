@@ -83,7 +83,10 @@ fun ReaderContent(
         onDispose { ReaderPaging.readerVisible = false }
     }
     LaunchedEffect(lazyListState) {
-        ReaderPaging.turns.collect { direction -> lazyListState.turnPage(direction) }
+        ReaderPaging.turns.collect { direction ->
+            // In page-turn mode the PagedReader handles the keys instead.
+            if (!viewModel.settings.readerPageTurnMode) lazyListState.turnPage(direction)
+        }
     }
 
     val chapterParagraphs = remember(

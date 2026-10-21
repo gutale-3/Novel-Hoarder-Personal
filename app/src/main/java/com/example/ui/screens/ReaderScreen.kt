@@ -358,31 +358,57 @@ fun ReaderScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                ReaderContent(
-                    bookState = bookState,
-                    activeChapter = activeChapter,
-                    chapters = chapters,
-                    bookmarks = bookmarks,
-                    glossaries = glossaries,
-                    textReplacementRules = textReplacementRules,
-                    viewModel = viewModel,
-                    context = context,
-                    lazyListState = lazyListState,
-                    selectedFontFamily = selectedFontFamily,
-                    readerBgColor = readerBgColor,
-                    readerTextColor = readerTextColor,
-                    showControls = showControls,
-                    onToggleControls = { showControls = !showControls },
-                    onOpenFindReplace = { showFindReplaceDialog = true },
-                    onOpenRsvp = { showRsvpModal = true },
-                    onSelectChapter = { chId -> currentChapterId = chId },
-                    onParagraphLongClick = { idx, text ->
-                        selectedParaIndexForBookmark = idx
-                        selectedParaTextForBookmark = text
-                        showBookmarkDialog = true
-                    },
-                    onOpenTags = { showTagDialogForChapter = activeChapter }
-                )
+                val pageTurnChapter = activeChapter?.takeIf {
+                    viewModel.settings.readerPageTurnMode && it.content.isNotBlank()
+                }
+                if (pageTurnChapter != null) {
+                    val pageParagraphs = remember(pageTurnChapter.content, viewModel.settings.watermarkRemovalEnabled) {
+                        WatermarkCleaner.cleanParagraphs(
+                            paragraphs = pageTurnChapter.content.split("\n\n", "\n").filter { it.isNotBlank() },
+                            enabled = viewModel.settings.watermarkRemovalEnabled,
+                            customPhrases = viewModel.settings.getCustomWatermarkPhrasesList()
+                        )
+                    }
+                    Box(Modifier.fillMaxSize().background(readerBgColor)) {
+                        PagedReader(
+                            activeChapter = pageTurnChapter,
+                            chapters = chapters,
+                            paragraphs = pageParagraphs,
+                            viewModel = viewModel,
+                            bookId = bookId,
+                            fontFamily = selectedFontFamily,
+                            textColor = readerTextColor,
+                            onToggleControls = { showControls = !showControls },
+                            onSelectChapter = { chId -> currentChapterId = chId }
+                        )
+                    }
+                } else {
+                    ReaderContent(
+                        bookState = bookState,
+                        activeChapter = activeChapter,
+                        chapters = chapters,
+                        bookmarks = bookmarks,
+                        glossaries = glossaries,
+                        textReplacementRules = textReplacementRules,
+                        viewModel = viewModel,
+                        context = context,
+                        lazyListState = lazyListState,
+                        selectedFontFamily = selectedFontFamily,
+                        readerBgColor = readerBgColor,
+                        readerTextColor = readerTextColor,
+                        showControls = showControls,
+                        onToggleControls = { showControls = !showControls },
+                        onOpenFindReplace = { showFindReplaceDialog = true },
+                        onOpenRsvp = { showRsvpModal = true },
+                        onSelectChapter = { chId -> currentChapterId = chId },
+                        onParagraphLongClick = { idx, text ->
+                            selectedParaIndexForBookmark = idx
+                            selectedParaTextForBookmark = text
+                            showBookmarkDialog = true
+                        },
+                        onOpenTags = { showTagDialogForChapter = activeChapter }
+                    )
+                }
 
                 PreviouslyOnCard(
                     bookId = bookId,
