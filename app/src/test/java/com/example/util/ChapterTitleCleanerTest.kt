@@ -36,4 +36,13 @@ class ChapterTitleCleanerTest {
         assertEquals("Chapter 2", c("Chapter 2 | Read Martial Peak Online Free", "Martial Peak", 2))
         assertEquals("Chapter 5", c("Chapter 5 - MyNovelSite", "X Y Z", 5, site = "MyNovelSite"))
     }
+
+    @Test
+    fun wtrLabBookTitleAndItsChapters() {
+        val book = ChapterCleaner.cleanBookTitle("Read Master of Fangcun RAW English Translation - WTR-LAB")
+        assertEquals("Master of Fangcun", book)
+        assertEquals("Chapter 84", c("Master of Fangcun Chapter 84", book, 84))
+        assertEquals("Reading Glasses", ChapterCleaner.cleanBookTitle("Reading Glasses"))
+        assertEquals("Read My Lips", ChapterCleaner.cleanBookTitle("Read My Lips"))
+    }
 }

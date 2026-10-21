@@ -314,6 +314,7 @@ fun ReaderScreen(
         }
     ) {
         Scaffold(
+            containerColor = readerBgColor,
             topBar = {
                 ReaderTopBar(
                     visible = showControls,

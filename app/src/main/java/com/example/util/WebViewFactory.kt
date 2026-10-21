@@ -129,6 +129,15 @@ object WebViewFactory {
             if (url != null) onUrlChanged?.invoke(url)
             onPageFinishedCallback?.invoke(view, url)
         }
+
+        /**
+         * Fires for every history change, including single-page-app navigation (history.pushState)
+         * that never starts a new page load — how WTR Lab and similar sites move between chapters.
+         */
+        override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+            super.doUpdateVisitedHistory(view, url, isReload)
+            if (url != null) onUrlChanged?.invoke(url)
+        }
     }
 
     /**

@@ -252,12 +252,22 @@ object ChapterCleaner {
         return result.joinToString("\n\n")
     }
 
+    private val TRANSLATION_SUFFIX = Regex(
+        "(?i)\\s+(raw\\s+english\\s+translation|english\\s+translation|raw\\s+translation|raw|novel\\s+online(\\s+free)?|online(\\s+free)?)\\s*$"
+    )
+
     fun cleanBookTitle(raw: String): String {
-        return raw.split("|")[0]
+        var t = raw.split("|")[0]
             .split(" - ")[0]
             .replace(Regex("(?i)\\s*-\\s*Read\\s+Online.*"), "")
             .replace(Regex("(?i)\\s*\\|?\\s*TomatoMTL.*"), "")
             .trim()
+        // Page titles like "Read Master of Fangcun RAW English Translation" (WTR Lab): the leading
+        // "Read" is only dropped together with such a suffix, so a real title starting "Read" stays.
+        if (TRANSLATION_SUFFIX.containsMatchIn(t)) {
+            t = t.replace(TRANSLATION_SUFFIX, "").replace(Regex("(?i)^read\\s+"), "").trim()
+        }
+        return t.ifBlank { raw.trim() }
     }
 
     fun cleanTitle(raw: String): String {

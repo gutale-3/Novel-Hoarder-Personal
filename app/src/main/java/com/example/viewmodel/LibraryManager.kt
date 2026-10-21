@@ -40,9 +40,18 @@ class LibraryManager(
                 prefs.edit().putBoolean("sample_novels_removed", true).apply()
             }
             // One-time tidy of chapter names saved before titles were cleaned on download.
-            if (!prefs.getBoolean("chapter_titles_cleaned_v1", false)) {
-                runCatching { cleanAllChapterTitles() }
-                prefs.edit().putBoolean("chapter_titles_cleaned_v1", true).apply()
+            if (!prefs.getBoolean("chapter_titles_cleaned_v2", false)) {
+                // v2: book titles such as "Read X RAW English Translation - WTR-LAB" are cleaned
+                // first, so chapter names like "X Chapter 84" can then lose the novel's name.
+                runCatching {
+                    for (b in repository.getAllBooks()) {
+                        if (b.url.startsWith("local://")) continue
+                        val clean = com.example.util.ChapterCleaner.cleanBookTitle(b.title)
+                        if (clean != b.title) repository.updateBook(b.copy(title = clean))
+                    }
+                    cleanAllChapterTitles()
+                }
+                prefs.edit().putBoolean("chapter_titles_cleaned_v2", true).apply()
             }
         }
     }

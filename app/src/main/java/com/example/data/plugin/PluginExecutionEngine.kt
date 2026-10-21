@@ -98,7 +98,8 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         }
 
         val jsonObj = JsResultParser.toJsonObject(jsonResult)
-        val title = jsonObj?.optString("title")?.ifBlank { "Unknown Book" } ?: "Unknown Book"
+        val title = jsonObj?.optString("title")?.ifBlank { null }
+            ?.let { com.example.util.ChapterCleaner.cleanBookTitle(it) } ?: "Unknown Book"
         val author = jsonObj?.optString("author")?.ifBlank { "Unknown Author" } ?: "Unknown Author"
         val synopsis = jsonObj?.optString("synopsis") ?: ""
         val cover = jsonObj?.optString("cover") ?: ""

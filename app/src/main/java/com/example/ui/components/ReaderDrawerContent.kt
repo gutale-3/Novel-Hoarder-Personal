@@ -278,11 +278,16 @@ fun ReaderDrawerContent(
                         IconButton(onClick = { showSubdivisionDialog = true }) {
                             Icon(imageVector = Icons.Default.FolderSpecial, contentDescription = "Subdivide Table of Contents", tint = MaterialTheme.colorScheme.primary)
                         }
-                        IconButton(onClick = {
-                            isMultiSelectMode = true
-                            selectedChapters = emptySet()
-                        }) {
-                            Icon(imageVector = Icons.Default.EditCalendar, contentDescription = "Enable Multi-select")
+                        FilledTonalButton(
+                            onClick = {
+                                isMultiSelectMode = true
+                                selectedChapters = emptySet()
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Checklist, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Select", maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -310,7 +315,7 @@ fun ReaderDrawerContent(
                         isMultiSelectMode = false
                         selectedChapters = emptySet()
                     },
-                    text = { Text("Archived (${archivedChapters.size})", fontSize = 14.sp) }
+                    text = { Text("Hidden (${archivedChapters.size})", fontSize = 14.sp) }
                 )
             }
             
@@ -456,6 +461,38 @@ fun ReaderDrawerContent(
                 }
             }
             
+            if (isMultiSelectMode) {
+                // One-tap selections for the usual clean-ups: chapters already read, and empty
+                // ones (listed but never downloaded, or blanked).
+                val pool = if (chapterSubTab == 0) chapters else archivedChapters
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    item {
+                        AssistChip(
+                            onClick = { selectedChapters = pool.filter { it.isRead }.map { it.id }.toSet() },
+                            label = { Text("Read (${pool.count { it.isRead }})", fontSize = 12.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { selectedChapters = pool.filter { it.content.isBlank() }.map { it.id }.toSet() },
+                            label = { Text("Empty (${pool.count { it.content.isBlank() }})", fontSize = 12.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { selectedChapters = pool.map { it.id }.toSet() },
+                            label = { Text("All", fontSize = 12.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(onClick = { selectedChapters = emptySet() }, label = { Text("None", fontSize = 12.sp) })
+                    }
+                }
+            }
+
             if (isMultiSelectMode && selectedChapters.isNotEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -578,7 +615,7 @@ fun ReaderDrawerContent(
                             ) {
                                 Icon(imageVector = Icons.Default.Archive, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(3.dp))
-                                Text("Archive", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Hide", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         } else {
                             // Restore in archived tab - has words

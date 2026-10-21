@@ -24,18 +24,17 @@ fun NovelHoarderTheme(
 }
 
 /**
- * Makes the layout fit the phone it is on. Screens were laid out for a ~400 dp wide phone; on
- * narrower screens, or with a large system "display size", buttons and rows wrapped ("Sto / p").
- * Scaling everything by the width ratio (never below 85%) and capping the system font scale at
- * 115% keeps every screen proportioned the same way on any phone. Reader text keeps its own
- * size setting on top of this.
+ * Makes the layout fit the phone it is on. Very narrow screens (< 360 dp) are scaled down a
+ * little (never below 85%), and the system font scale is capped at 115% so huge system fonts
+ * cannot wrap button labels ("Sto / p"). Normal phones are untouched.
  */
 @Composable
 private fun adaptiveDensity(): Density {
   val base = LocalDensity.current
   val widthDp = LocalConfiguration.current.screenWidthDp
-  val widthScale = (widthDp / DESIGN_WIDTH_DP).coerceIn(0.85f, 1f)
+  // Only phones narrower than ~360 dp are scaled; normal and large phones keep full size.
+  val widthScale = if (widthDp >= NARROW_WIDTH_DP) 1f else (widthDp / NARROW_WIDTH_DP).coerceIn(0.85f, 1f)
   return Density(density = base.density * widthScale, fontScale = base.fontScale.coerceAtMost(1.15f))
 }
 
-private const val DESIGN_WIDTH_DP = 400f
+private const val NARROW_WIDTH_DP = 360f

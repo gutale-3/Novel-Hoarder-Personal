@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -171,6 +172,9 @@ class MainActivity : ComponentActivity() {
                 val isFullScreen = currentRoute.startsWith("reader") || currentRoute == "settings" || currentRoute == "plugins"
 
                 Scaffold(
+                    // Full-screen pages (reader, settings, sites) handle the system bars themselves;
+                    // padding them here painted white bands above and below the reader.
+                    contentWindowInsets = if (isFullScreen) WindowInsets(0, 0, 0, 0) else ScaffoldDefaults.contentWindowInsets,
                     modifier = Modifier.fillMaxSize(),
                     topBar = {
                         if (!isFullScreen && currentRoute != "library") {

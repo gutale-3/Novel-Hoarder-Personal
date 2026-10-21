@@ -754,6 +754,13 @@ fun ScrapeScreen(
             )
         }
         var currentWebUrl by remember { mutableStateOf(viewModel.manualBrowserUrl) }
+        var isEditingUrl by remember { mutableStateOf(false) }
+        // Remembers every page visited (in-page navigation included) so reopening the browser
+        // returns to exactly where it was left.
+        fun onPageUrl(url: String) {
+            if (!isEditingUrl) currentWebUrl = url
+            if (url.startsWith("http")) viewModel.scraping.saveBrowserUrl(url)
+        }
         var isWebLoading by remember { mutableStateOf(false) }
         var canGoBack by remember { mutableStateOf(false) }
         var canGoForward by remember { mutableStateOf(false) }
@@ -1020,58 +1027,22 @@ fun ScrapeScreen(
                                 }
                             }
 
-                            // Row 2: Full Width URL Address Field
-                            OutlinedTextField(
+                            // Row 2: slim address bar. It follows the page (including in-page
+                            // navigation) except while the user is typing in it.
+                            com.example.ui.components.CompactAddressBar(
                                 value = currentWebUrl,
                                 onValueChange = { currentWebUrl = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                                shape = RoundedCornerShape(12.dp),
-                                placeholder = { Text("Enter URL...", fontSize = 14.sp) },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-                                ),
-                                keyboardOptions = KeyboardOptions(
-                                    keyboardType = KeyboardType.Uri,
-                                    imeAction = ImeAction.Search
-                                ),
-                                keyboardActions = KeyboardActions(
-                                    onSearch = {
-                                        focusManager.clearFocus()
-                                        try {
-                                            var targetUrl = currentWebUrl.trim()
-                                            if (targetUrl.isNotEmpty()) {
-                                                if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
-                                                    targetUrl = "https://$targetUrl"
-                                                }
-                                                webViewInstance?.loadUrl(targetUrl)
-                                            }
-                                        } catch (e: Exception) {
-                                            android.util.Log.w("ScrapeScreen", "Invalid URL input", e)
+                                onFocusChange = { isEditingUrl = it },
+                                isLoading = isWebLoading,
+                                onGo = {
+                                    focusManager.clearFocus()
+                                    var targetUrl = currentWebUrl.trim()
+                                    if (targetUrl.isNotEmpty()) {
+                                        if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+                                            targetUrl = if (targetUrl.contains('.') && !targetUrl.contains(' ')) "https://$targetUrl"
+                                            else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(targetUrl, "UTF-8")
                                         }
-                                    }
-                                ),
-                                trailingIcon = {
-                                    if (isWebLoading) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(18.dp),
-                                            strokeWidth = 2.dp
-                                        )
-                                    } else if (currentWebUrl.isNotEmpty()) {
-                                        IconButton(
-                                            onClick = { currentWebUrl = "" },
-                                            modifier = Modifier.size(28.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Clear,
-                                                contentDescription = "Clear",
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
+                                        webViewInstance?.loadUrl(targetUrl)
                                     }
                                 }
                             )
@@ -1091,22 +1062,21 @@ fun ScrapeScreen(
                                     webViewClient = object : WebViewFactory.SafeWebViewClient(
                                         onPageStartedCallback = { _, url, _ ->
                                             isWebLoading = true
-                                            if (url != null) {
-                                                currentWebUrl = url
-                                            }
+                                            if (url != null) onPageUrl(url)
                                         },
                                         onPageFinishedCallback = { view, url ->
                                             isWebLoading = false
                                             canGoBack = view?.canGoBack() == true
                                             canGoForward = view?.canGoForward() == true
                                             if (url != null) {
-                                                currentWebUrl = url
-                                                viewModel.scraping.saveBrowserUrl(url)
+                                                onPageUrl(url)
                                                 CookieManager.getInstance().flush()
                                             }
                                         },
                                         onUrlChanged = { url ->
-                                            currentWebUrl = url
+                                            onPageUrl(url)
+                                            canGoBack = this@apply.canGoBack()
+                                            canGoForward = this@apply.canGoForward()
                                         }
                                     ) {}
                                     webChromeClient = object : WebViewFactory.SafeWebChromeClient(
