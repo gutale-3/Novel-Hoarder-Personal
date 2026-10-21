@@ -21,6 +21,7 @@ class ChapterUpdatesStore private constructor(context: Context) {
         val error: String? = null
     )
 
+    private val appContext = context.applicationContext
     private val prefs = context.applicationContext.getSharedPreferences("chapter_updates", Context.MODE_PRIVATE)
     private val _entries = MutableStateFlow(load())
     val entries: StateFlow<Map<String, Entry>> = _entries.asStateFlow()
@@ -46,6 +47,7 @@ class ChapterUpdatesStore private constructor(context: Context) {
             .put("err", entry.error ?: "")
         prefs.edit().putString(entry.bookId, o.toString()).apply()
         _entries.value = _entries.value + (entry.bookId to entry)
+        ContinueReadingWidget.refresh(appContext)
     }
 
     /** Called once the new chapters have been queued for download. */

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Inkvault</string>
+    <string name="widget_description">Pick up where you left off, and see new chapters</string>
 </resources>

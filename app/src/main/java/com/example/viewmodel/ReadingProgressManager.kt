@@ -205,6 +205,9 @@ class ReadingProgressManager(
 
     fun setActiveReaderSession(bookId: String, chapterId: String? = null, paraIndex: Int = -1) {
         if (bookId.isBlank()) return
+        if (chapterId != null && chapterId != prefs.getString("active_reading_chapter_id", null)) {
+            com.example.background.ContinueReadingWidget.refresh(application) // new chapter → widget
+        }
         val editor = prefs.edit().putString("active_reading_book_id", bookId)
         if (!chapterId.isNullOrBlank()) {
             editor.putString("active_reading_chapter_id", chapterId)
