@@ -12,7 +12,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -22,12 +21,9 @@ import com.example.util.WebViewFactory
 import kotlinx.coroutines.delay
 
 /**
- * Full-screen page where the user passes a site's bot check or looks at a chapter that did not
- * load. Drawn edge to edge with the system bars padded, a short header, and the Resume button in
- * a bar at the bottom so it is always on screen whatever the message length.
- *
- * When the page was showing a bot check and the check disappears (the user passed it), Resume
- * happens by itself after a moment — no hunting for the button.
+ * Full-screen page where the user passes a site's bot check or fixes a chapter that did not load.
+ * No instructions — just the page and a big Resume button at the bottom, clear of the gesture bar.
+ * When a bot check that was showing disappears, it resumes by itself after a moment.
  *
  * Uses the scraper's User-Agent and cookie store, so the pass carries over to the next download.
  */
@@ -37,9 +33,9 @@ fun SecurityCheckDialog(
     userAgent: String,
     onDone: () -> Unit,
     onCancel: () -> Unit,
-    reason: String = "Complete the check below. It continues by itself once the page passes.",
+    @Suppress("UNUSED_PARAMETER") reason: String = "",
     doneLabel: String = "Resume",
-    cancelLabel: String = "Cancel"
+    cancelLabel: String = "Stop"
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var sawChallenge by remember { mutableStateOf(false) }
@@ -81,29 +77,7 @@ fun SecurityCheckDialog(
         )
     ) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxSize().systemBarsPadding()) {
-                // Header: text only, so it can never push a button off screen.
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        if (passed) "Check passed — continuing…" else "Security check",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (passed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                HorizontalDivider()
-
+            Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
@@ -120,7 +94,6 @@ fun SecurityCheckDialog(
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
 
-                // Action bar pinned to the bottom, always visible.
                 Surface(tonalElevation = 3.dp, shadowElevation = 6.dp) {
                     Row(
                         Modifier
@@ -129,15 +102,17 @@ fun SecurityCheckDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) { Text(cancelLabel) }
+                        OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) {
+                            Text(cancelLabel, maxLines = 1, softWrap = false)
+                        }
                         Button(
                             onClick = { finish() },
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f).height(52.dp)
+                            modifier = Modifier.weight(1f).height(56.dp)
                         ) {
                             Icon(if (passed) Icons.Default.CheckCircle else Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text(doneLabel, fontWeight = FontWeight.Bold)
+                            Text(doneLabel, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                         }
                     }
                 }

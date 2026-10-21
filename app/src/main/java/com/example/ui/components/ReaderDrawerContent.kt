@@ -56,6 +56,7 @@ fun ReaderDrawerContent(
     var chapterSubTab by remember { mutableIntStateOf(0) } // 0 = Active, 1 = Archived
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var selectedChapters by remember { mutableStateOf(setOf<String>()) }
+    var expandedHiddenRuns by remember { mutableStateOf(setOf<String>()) }
     var chapterForTagging by remember { mutableStateOf<ChapterEntity?>(null) }
 
     var subdivisionMode by remember(bookId) {
@@ -263,31 +264,51 @@ fun ReaderDrawerContent(
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel Multi-select")
                         }
                     } else {
-                        IconButton(onClick = onOpenAddChapterDialog) {
-                            Icon(imageVector = Icons.Default.PostAdd, contentDescription = "Add Single Chapter", tint = MaterialTheme.colorScheme.primary)
-                        }
-                        IconButton(onClick = onOpenResequenceDialog) {
-                            Icon(imageVector = Icons.Default.List, contentDescription = "Auto-Resequence Chapters", tint = MaterialTheme.colorScheme.primary)
-                        }
-                        IconButton(onClick = onOpenAutoArchiveDialog) {
-                            Icon(imageVector = Icons.Default.Settings, contentDescription = "Auto-Archive Settings", tint = MaterialTheme.colorScheme.primary)
-                        }
-                        IconButton(onClick = onOpenRevisionHistory) {
-                            Icon(imageVector = Icons.Default.History, contentDescription = "Undo & Revision History", tint = MaterialTheme.colorScheme.primary)
-                        }
-                        IconButton(onClick = { showSubdivisionDialog = true }) {
-                            Icon(imageVector = Icons.Default.FolderSpecial, contentDescription = "Subdivide Table of Contents", tint = MaterialTheme.colorScheme.primary)
-                        }
+                        // Select stays visible; the less used tools live in a menu so the row
+                        // never pushes buttons off the edge of the drawer.
                         FilledTonalButton(
                             onClick = {
                                 isMultiSelectMode = true
                                 selectedChapters = emptySet()
                             },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
                         ) {
                             Icon(imageVector = Icons.Default.Checklist, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Select", maxLines = 1, softWrap = false)
+                        }
+                        Box {
+                            var toolsMenu by remember { mutableStateOf(false) }
+                            IconButton(onClick = { toolsMenu = true }) {
+                                Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Chapter tools")
+                            }
+                            DropdownMenu(expanded = toolsMenu, onDismissRequest = { toolsMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Add a chapter") },
+                                    leadingIcon = { Icon(Icons.Default.PostAdd, null) },
+                                    onClick = { toolsMenu = false; onOpenAddChapterDialog() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Re-number chapters") },
+                                    leadingIcon = { Icon(Icons.Default.List, null) },
+                                    onClick = { toolsMenu = false; onOpenResequenceDialog() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Auto-hide settings") },
+                                    leadingIcon = { Icon(Icons.Default.Settings, null) },
+                                    onClick = { toolsMenu = false; onOpenAutoArchiveDialog() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Undo & history") },
+                                    leadingIcon = { Icon(Icons.Default.History, null) },
+                                    onClick = { toolsMenu = false; onOpenRevisionHistory() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Group chapters") },
+                                    leadingIcon = { Icon(Icons.Default.FolderSpecial, null) },
+                                    onClick = { toolsMenu = false; showSubdivisionDialog = true }
+                                )
+                            }
                         }
                     }
                 }
@@ -715,7 +736,51 @@ fun ReaderDrawerContent(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    if (subdivisionMode == TocSubdivisionMode.AS_IS) {
+                    val hiddenInPlace = subdivisionMode == TocSubdivisionMode.AS_IS && chapterSubTab == 0 &&
+                        viewModel.chapterTags.activeTagFilter == null && archivedChapters.isNotEmpty()
+                    if (hiddenInPlace) {
+                        // Hidden chapters stay where they are in the list, folded into one row per
+                        // run ("3 hidden · Ch. 12–14"); tap to look inside and unhide any of them.
+                        hiddenRunSegments(chapters, archivedChapters).forEach { seg ->
+                            if (seg.size == 1 && !seg[0].isArchived) {
+                                val ch = seg[0]
+                                item(key = ch.id) {
+                                    ChapterDrawerRowItem(
+                                        ch = ch,
+                                        isCurrent = ch.id == currentChapterId,
+                                        isSelected = selectedChapters.contains(ch.id),
+                                        isMultiSelectMode = isMultiSelectMode,
+                                        chapterSubTab = chapterSubTab,
+                                        viewModel = viewModel,
+                                        scope = scope,
+                                        onSelectChapter = onSelectChapter,
+                                        onTagChapter = { chapterForTagging = it },
+                                        onToggleSelect = { isChecked ->
+                                            selectedChapters = if (isChecked) selectedChapters + ch.id else selectedChapters - ch.id
+                                        }
+                                    )
+                                }
+                            } else {
+                                val runKey = "hidden_" + seg.first().id
+                                item(key = runKey) {
+                                    HiddenRunRow(
+                                        run = seg,
+                                        expanded = expandedHiddenRuns.contains(runKey),
+                                        onToggle = {
+                                            expandedHiddenRuns = if (expandedHiddenRuns.contains(runKey))
+                                                expandedHiddenRuns - runKey else expandedHiddenRuns + runKey
+                                        },
+                                        onUnhide = { ids -> viewModel.progress.updateChaptersArchiveStatus(ids, false) },
+                                        // The reader skips hidden chapters, so opening one unhides it first.
+                                        onOpen = { id ->
+                                            viewModel.progress.updateChaptersArchiveStatus(listOf(id), false)
+                                            onSelectChapter(id)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else if (subdivisionMode == TocSubdivisionMode.AS_IS) {
                         items(currentList, key = { it.id }) { ch ->
                             ChapterDrawerRowItem(
                                 ch = ch,
@@ -1127,4 +1192,71 @@ private fun ChapterDrawerRowItem(
         },
         modifier = modifier.then(Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
     )
+}
+
+/**
+ * Splits the book into display segments in chapter order: a visible chapter on its own, or a run
+ * of consecutive hidden chapters together.
+ */
+private fun hiddenRunSegments(visible: List<ChapterEntity>, hidden: List<ChapterEntity>): List<List<ChapterEntity>> {
+    val all = (visible + hidden).sortedWith(compareBy({ it.chapterNumber }, { it.id }))
+    val out = mutableListOf<MutableList<ChapterEntity>>()
+    for (ch in all) {
+        val last = out.lastOrNull()
+        if (ch.isArchived && last != null && last.first().isArchived) last += ch
+        else out += mutableListOf(ch)
+    }
+    return out
+}
+
+@Composable
+private fun HiddenRunRow(
+    run: List<ChapterEntity>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onUnhide: (List<String>) -> Unit,
+    onOpen: (String) -> Unit
+) {
+    val range = if (run.size == 1) "Ch. ${run.first().chapterNumber}"
+    else "Ch. ${run.first().chapterNumber}–${run.last().chapterNumber}"
+    Surface(
+        onClick = onToggle,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.VisibilityOff,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${run.size} hidden · $range",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { onUnhide(run.map { it.id }) }) {
+                    Text(if (run.size == 1) "Unhide" else "Unhide all", maxLines = 1, softWrap = false)
+                }
+            }
+            if (expanded) {
+                run.forEach { ch ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = { onOpen(ch.id) }, modifier = Modifier.weight(1f)) {
+                            Text(
+                                ch.title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        TextButton(onClick = { onUnhide(listOf(ch.id)) }) { Text("Unhide", maxLines = 1, softWrap = false) }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -720,7 +720,7 @@ fun ScrapeScreen(
                 viewModel.showCaptchaDialog = false
                 viewModel.scraping.stopScraping()
             },
-            doneLabel = "Resume download",
+            doneLabel = "Resume",
             cancelLabel = "Stop"
         )
     }
@@ -797,7 +797,13 @@ fun ScrapeScreen(
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(
-                        modifier = Modifier.fillMaxSize()
+                        // The dialog is drawn edge to edge: keep the page clear of the gesture /
+                        // navigation bar (which hid the site's bottom panel and its settings) and
+                        // the keyboard. The toolbar below pads the status bar itself.
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .navigationBarsPadding()
+                            .imePadding()
                     ) {
                     // Streamlined Navigation & Full Width Address Bar
                     Surface(
