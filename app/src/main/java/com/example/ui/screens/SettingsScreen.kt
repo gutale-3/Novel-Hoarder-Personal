@@ -796,6 +796,8 @@ fun SettingsScreen(
                     }
                 }
 
+                com.example.ui.components.AutoBackupCard()
+
                 // Local Offline Snapshots
                 Row(
                     modifier = Modifier.padding(vertical = 4.dp),
