@@ -149,6 +149,13 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 actions = {
+                                    IconButton(onClick = { navController.navigate("search") }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Search,
+                                            contentDescription = "Search all sites",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                     IconButton(onClick = { navController.navigate("plugins") }) {
                                         Icon(
                                             imageVector = Icons.Default.Extension,
@@ -328,6 +335,20 @@ class MainActivity : ComponentActivity() {
 
                             composable("scrape") {
                                 ScrapeScreen(viewModel = viewModel)
+                            }
+
+                            composable("search") {
+                                SearchScreen(
+                                    viewModel = viewModel,
+                                    onBack = { navController.popBackStack() },
+                                    onPickResult = {
+                                        viewModel.progress.setLastActiveTab("scrape")
+                                        navController.navigate("scrape") {
+                                            popUpTo("home") { saveState = true }
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
                             }
 
                             composable("updates") {

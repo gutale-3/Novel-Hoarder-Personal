@@ -376,6 +376,24 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Use Backup Sites")
+                        Text(
+                            "If a chapter fails, fetch it from another site that has the same novel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settingsManager.sourceFallbackEnabled,
+                        onCheckedChange = { settingsManager.updateSourceFallbackEnabled(it) }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text("Aggressive Ad & Furniture Cleanup", modifier = Modifier.weight(1f))
                     Switch(
                         checked = settingsManager.aggressiveCleanDefault,

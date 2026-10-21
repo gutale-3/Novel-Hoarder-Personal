@@ -7,12 +7,12 @@
     },
     {
       "id": "novelbin",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "file": "novelbin.json"
     },
     {
       "id": "novelfire",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "file": "novelfire.json"
     },
     {
@@ -27,7 +27,7 @@
     },
     {
       "id": "readnovelfull",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "file": "readnovelfull.json"
     },
     {
@@ -42,12 +42,12 @@
     },
     {
       "id": "wtrlab",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "file": "wtrlab.json"
     },
     {
       "id": "wuxiabox",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "file": "wuxiabox.json"
     }
   ]

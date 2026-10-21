@@ -110,6 +110,17 @@ data class PluginConfig(
      */
     @Json(name = "tocUrlTemplate") val tocUrlTemplate: String = "",
 
+    /**
+     * In-app search. `{query}` is replaced with the URL-encoded search text. With [searchPostBody]
+     * set the page is fetched with a form POST of that body instead of a GET.
+     */
+    @Json(name = "searchUrlTemplate") val searchUrlTemplate: String = "",
+    @Json(name = "searchPostBody") val searchPostBody: String = "",
+    /** Links to book pages on the search results page. */
+    @Json(name = "searchResultSelector") val searchResultSelector: String = "",
+    /** Replaces the generated results script. Must return `[{ title, url, cover }]` or `{ ready:false }`. */
+    @Json(name = "customSearchJs") val customSearchJs: String? = null,
+
     /** A known book on this site, used by the source health check. */
     @Json(name = "testUrl") val testUrl: String = "",
 

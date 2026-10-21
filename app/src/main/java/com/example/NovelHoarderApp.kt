@@ -53,6 +53,9 @@ class AppContainer(val application: Application) {
         )
     }
 
+    val novelSearch by lazy { com.example.data.scraper.NovelSearch(application, pluginManager) }
+    val sourceFallback by lazy { com.example.data.scraper.SourceFallback(application, novelSearch) }
+
     val aiFeatures by lazy {
         AiFeaturesManager(repository, aiRegistry, settings)
     }

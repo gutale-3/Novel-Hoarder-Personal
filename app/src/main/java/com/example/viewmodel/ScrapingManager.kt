@@ -225,6 +225,7 @@ class ScrapingManager(
     }
 
     private val quota by lazy { com.example.data.scraper.DownloadQuota.get(application) }
+    private val sourceFallback by lazy { com.example.NovelHoarderApp.getContainer(application).sourceFallback }
 
     /**
      * Holds the session while [sourceKey]'s hourly/daily limit is used up, rather than fetching
@@ -1028,6 +1029,40 @@ class ScrapingManager(
                     }
                 }
 
+                if (!downloadSuccess && isScraping && !shouldSkipCurrentChapter && settings.sourceFallbackEnabled) {
+                    addLog("Chapter $absoluteChapterNum failed on ${scraper.sourceName}; trying backup sites…")
+                    val altWebView = createFreshWebView()
+                    try {
+                        val alt = runCatching {
+                            sourceFallback.fetchChapter(currentBookState, absoluteChapterNum, altWebView)
+                        }.getOrNull()
+                        if (alt != null) {
+                            var body = cleanScrapedBody(scraper, alt.second, aggressiveClean)
+                            if (glossaries.isNotEmpty()) body = repository.applyGlossary(body, glossaries)
+                            val md5 = java.security.MessageDigest.getInstance("MD5")
+                            repository.insertChapter(
+                                ChapterEntity(
+                                    id = fullChapId,
+                                    bookId = currentBookState.id,
+                                    chapterId = chapId,
+                                    chapterNumber = absoluteChapterNum,
+                                    title = alt.first,
+                                    url = chapterUrl,
+                                    content = body,
+                                    hash = md5.digest(body.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                                )
+                            )
+                            sessionDownloadedCount++
+                            downloadSuccess = true
+                            addLog("Saved Chapter $absoluteChapterNum from backup site ${alt.third}.")
+                        } else {
+                            addLog("No backup site could provide chapter $absoluteChapterNum.")
+                        }
+                    } finally {
+                        withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(altWebView) }
+                    }
+                }
+
                 if (shouldSkipCurrentChapter) {
                     addLog("Skipped Chapter $absoluteChapterNum by user request.")
                     shouldSkipCurrentChapter = false
@@ -1146,7 +1181,16 @@ class ScrapingManager(
             }
             val webView = createFreshWebView()
             try {
-                val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
+                var usedBackup = false
+                val rawContent = try {
+                    scraper.scrapeChapterContent(webView, chapter.url) { false }
+                } catch (e: Exception) {
+                    if (e is CancellationException || !settings.sourceFallbackEnabled) throw e
+                    val book = repository.getBook(chapter.bookId) ?: throw e
+                    val alt = sourceFallback.fetchChapter(book, chapter.chapterNumber, webView) ?: throw e
+                    usedBackup = true
+                    alt.first to alt.second
+                }
                 val title = rawContent.first
                 var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
 
@@ -1168,7 +1212,7 @@ class ScrapingManager(
                 repository.deletePolishedChapter(chapter.id)
                 repository.deleteChapterRecap(chapter.id)
                 repository.insertChapter(updatedChapter)
-                quota.record(sourceKey)
+                if (!usedBackup) quota.record(sourceKey)
             } finally {
                 withContext(Dispatchers.Main) {
                     try { webView.destroy() } catch (_: Exception) {}

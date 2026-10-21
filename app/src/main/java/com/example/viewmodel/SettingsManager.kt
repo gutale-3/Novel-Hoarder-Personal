@@ -31,6 +31,14 @@ class SettingsManager(val application: Application) {
     var requestDelayMs by mutableStateOf(3000)     // pause between consecutive page loads
     var batchSize by mutableStateOf(10)            // default "download next N"
     var autoFetchWhileReading by mutableStateOf(true)
+    /** Fetch a failed chapter from another site that has the same novel. */
+    var sourceFallbackEnabled by mutableStateOf(true)
+        private set
+
+    fun updateSourceFallbackEnabled(enabled: Boolean) {
+        sourceFallbackEnabled = enabled
+        prefs.edit().putBoolean("source_fallback_enabled", enabled).apply()
+    }
 
     // --- Reader Settings ---
     var readerTheme by mutableStateOf("follow_app") // "follow_app", "light", "dark", "sepia", "night", "mint", "nord", "oled"
@@ -133,6 +141,7 @@ class SettingsManager(val application: Application) {
 
         autoDownloadNextEnabled = prefs.getBoolean("auto_download_next", true)
         requestDelayMs = prefs.getInt("request_delay_ms", 3000)
+        sourceFallbackEnabled = prefs.getBoolean("source_fallback_enabled", true)
         batchSize = prefs.getInt("batch_size", 10)
         autoFetchWhileReading = prefs.getBoolean("auto_fetch_while_reading", true)
         readerTheme = prefs.getString("reader_theme", "follow_app") ?: "follow_app"

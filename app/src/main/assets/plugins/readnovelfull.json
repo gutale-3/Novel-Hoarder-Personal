@@ -1,26 +1,31 @@
 {
   "id": "readnovelfull",
   "name": "ReadNovelFull",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "baseUrl": "readnovelfull.com",
-  "extraHosts": ["www.readnovelfull.com"],
+  "extraHosts": [
+    "www.readnovelfull.com"
+  ],
   "author": "Built-in",
   "description": "Clean mirror of popular translated novels. Chapter list comes from the site's archive endpoint.",
-
   "titleSelector": "h3.title, h1",
   "authorSelector": ".info a[href*='author']",
   "synopsisSelector": ".desc-text",
   "coverSelector": ".book img, meta[property='og:image']",
-
   "tocUrlTemplate": "{origin}/ajax/chapter-archive?novelId={novelId}",
   "chapterListSelector": "a[href*='/chapter-']",
   "chapterTitleSelector": ".chr-text, .chr-title, h2",
   "chapterBodySelector": "#chr-content",
   "chapterReadySelector": "#chr-content",
-
-  "junkSelectors": [".ads", "[id^='pf-']", ".chapter-unlock-panel"],
+  "junkSelectors": [
+    ".ads",
+    "[id^='pf-']",
+    ".chapter-unlock-panel"
+  ],
   "tocPaginationMode": "none",
   "requestDelayMs": 1500,
   "testUrl": "https://readnovelfull.com/advent-of-the-three-calamities.html",
-  "isEnabled": true
+  "isEnabled": true,
+  "searchUrlTemplate": "https://readnovelfull.com/novel-list/search?keyword={query}",
+  "searchResultSelector": ".list-novel .row h3 a"
 }

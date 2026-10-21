@@ -1,17 +1,18 @@
 {
   "id": "novelfire",
   "name": "NovelFire",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "baseUrl": "novelfire.net",
-  "extraHosts": ["www.novelfire.net", "novelfire.docsachhay.net"],
+  "extraHosts": [
+    "www.novelfire.net",
+    "novelfire.docsachhay.net"
+  ],
   "author": "Built-in",
   "description": "Successor of LightNovelPub. Large catalogue of translated and original novels with a paginated chapter list.",
-
   "titleSelector": "h1.novel-title, h1",
   "authorSelector": ".author span[itemprop='author'], .author a span",
   "synopsisSelector": ".summary .content",
   "coverSelector": ".cover img, meta[property='og:image']",
-
   "tocUrlTemplate": "{url}/chapters",
   "chapterListSelector": "ul.chapter-list li a",
   "tocPaginationMode": "query",
@@ -19,13 +20,17 @@
   "tocFirstPage": 1,
   "tocLastPageSelector": ".pagination a",
   "tocMaxPages": 300,
-
   "chapterTitleSelector": "span.chapter-title, .chapter-title",
   "chapterBodySelector": "#content",
   "chapterReadySelector": "#content",
-
-  "junkSelectors": [".box-notification", "[class*='ads']", ".chapternav"],
+  "junkSelectors": [
+    ".box-notification",
+    "[class*='ads']",
+    ".chapternav"
+  ],
   "requestDelayMs": 1500,
   "testUrl": "https://novelfire.net/book/advent-of-the-three-calamities",
-  "isEnabled": true
+  "isEnabled": true,
+  "searchUrlTemplate": "https://novelfire.net/search?keyword={query}",
+  "searchResultSelector": "li.novel-item > a, .novel-list .novel-item a[href*='/book/']"
 }

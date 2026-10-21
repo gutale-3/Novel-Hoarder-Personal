@@ -1,26 +1,34 @@
 {
   "id": "novelbin",
   "name": "NovelBin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "baseUrl": "novelbin.me",
-  "extraHosts": ["novelbin.com", "www.novelbin.me", "www.novelbin.com"],
+  "extraHosts": [
+    "novelbin.com",
+    "www.novelbin.me",
+    "www.novelbin.com"
+  ],
   "author": "Built-in",
   "description": "Huge library of translated web novels with fast updates. The full chapter list is read from the site's chapter archive.",
-
   "titleSelector": "h3.title, h1",
   "authorSelector": ".info-meta li a[href*='author']",
   "synopsisSelector": ".desc-text",
   "coverSelector": ".book img, meta[property='og:image']",
-
   "tocUrlTemplate": "{origin}/ajax/chapter-archive?novelId={novelId}",
   "chapterListSelector": "a[href*='/chapter-']",
   "chapterTitleSelector": "h2, .chr-title, .chr-text",
   "chapterBodySelector": "#chr-content",
   "chapterReadySelector": "#chr-content",
-
-  "junkSelectors": [".chapter-unlock-panel", ".ads", "[id^='pf-']", ".unlock-buttons"],
+  "junkSelectors": [
+    ".chapter-unlock-panel",
+    ".ads",
+    "[id^='pf-']",
+    ".unlock-buttons"
+  ],
   "tocPaginationMode": "none",
   "requestDelayMs": 1500,
   "testUrl": "https://novelbin.me/novel-book/a-blossom-a-cup-of-wine-an-immortal-life",
-  "isEnabled": true
+  "isEnabled": true,
+  "searchUrlTemplate": "https://novelbin.me/search?keyword={query}",
+  "searchResultSelector": ".list-novel .row h3 a"
 }
