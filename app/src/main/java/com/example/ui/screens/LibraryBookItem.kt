@@ -335,6 +335,7 @@ fun LibraryBookItem(
                                         leadingIcon = { Icon(Icons.Default.CloudDownload, contentDescription = null) }
                                     )
                                     AutoDownloadMenuItem(book)
+                                    QueueMenuItem(book) { expandedMenu = false }
                                     DropdownMenuItem(
                                         text = { Text("Check Chapter Quality") },
                                         onClick = {
@@ -609,5 +610,34 @@ private fun AutoDownloadMenuItem(book: BookEntity) {
         },
         leadingIcon = { Icon(Icons.Default.Autorenew, contentDescription = null) },
         trailingIcon = { Checkbox(checked = effective, onCheckedChange = null) }
+    )
+}
+
+/** Adds the novel to the background download queue (after refreshing its chapter list), or removes it. */
+@Composable
+private fun QueueMenuItem(book: BookEntity, onDone: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val queue = remember { com.example.background.DownloadQueue.get(context) }
+    val queued by queue.books.collectAsState()
+    val inQueue = book.id in queued
+    DropdownMenuItem(
+        text = { Text(if (inQueue) "Remove from download queue" else "Add to download queue") },
+        leadingIcon = { Icon(if (inQueue) Icons.Default.RemoveCircleOutline else Icons.Default.PlaylistAdd, contentDescription = null) },
+        onClick = {
+            onDone()
+            if (inQueue) {
+                queue.remove(book.id)
+                com.example.background.DownloadQueue.schedule(context)
+            } else {
+                val scraping = com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application).scraping
+                android.widget.Toast.makeText(context, "Getting the chapter list…", android.widget.Toast.LENGTH_SHORT).show()
+                scraping.refreshTableOfContents(book.id) { _, msg ->
+                    queue.add(book.id)
+                    com.example.background.DownloadQueue.schedule(context)
+                    com.example.background.DownloadQueue.runNow(context)
+                    android.widget.Toast.makeText(context, "Queued ${book.title}. $msg", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     )
 }

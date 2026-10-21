@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Refresh
@@ -90,6 +91,8 @@ fun UpdatesScreen(
                 }
             }
         }
+
+        DownloadQueueSection(viewModel)
 
         if (withNew.isEmpty() && withErrors.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -195,6 +198,55 @@ private fun UpdateRow(
             } else {
                 IconButton(onClick = onDownload) {
                     Icon(Icons.Default.Download, contentDescription = "Download new chapters")
+                }
+            }
+        }
+    }
+}
+
+/** Novels waiting for their remaining chapters, worked through in the background. */
+@Composable
+private fun DownloadQueueSection(viewModel: MainViewModel) {
+    val context = LocalContext.current
+    val queue = remember { com.example.background.DownloadQueue.get(context) }
+    val queued by queue.books.collectAsState()
+    if (queued.isEmpty()) return
+    val books by viewModel.repository.allBooks.collectAsState(initial = emptyList())
+    val running by remember {
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(com.example.background.DownloadQueue.WORK_NOW)
+    }.collectAsState(initial = emptyList())
+    val isRunning = running.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Download queue", fontWeight = FontWeight.Bold)
+                    Text(
+                        queue.lastRunSummary.ifBlank { "Runs hourly on Wi-Fi, a few chapters per novel in turn, within site limits" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FilledTonalButton(enabled = !isRunning, onClick = { com.example.background.DownloadQueue.runNow(context) }) {
+                    Text(if (isRunning) "Running…" else "Run now", maxLines = 1, softWrap = false)
+                }
+            }
+            queued.forEach { id ->
+                val book = books.firstOrNull { it.id == id } ?: return@forEach
+                val pending by produceState(initialValue = -1, id, isRunning) {
+                    value = viewModel.repository.getPendingVisibleCount(id)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(
+                        if (pending < 0) "…" else "$pending left",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    IconButton(onClick = { queue.remove(id); com.example.background.DownloadQueue.schedule(context) }) {
+                        Icon(Icons.Default.Close, contentDescription = "Remove from queue")
+                    }
                 }
             }
         }

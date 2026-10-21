@@ -186,6 +186,16 @@ interface BookDao {
     @Query("SELECT * FROM chapters WHERE bookId = :bookId AND content = '' AND isDeleted = 0 ORDER BY chapterNumber ASC LIMIT :limit")
     suspend fun getPendingChapters(bookId: String, limit: Int): List<ChapterEntity>
 
+    /** Not-yet-downloaded chapters the user still wants (hidden ones are skipped). */
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId AND content = '' AND isDeleted = 0 AND isArchived = 0 ORDER BY chapterNumber ASC LIMIT :limit")
+    suspend fun getPendingVisibleChapters(bookId: String, limit: Int): List<ChapterEntity>
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId AND content = '' AND isDeleted = 0 AND isArchived = 0")
+    fun getPendingVisibleCountFlow(bookId: String): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId AND content = '' AND isDeleted = 0 AND isArchived = 0")
+    suspend fun getPendingVisibleCount(bookId: String): Int
+
     @Query("SELECT * FROM chapters WHERE bookId = :bookId AND content = '' AND isDeleted = 0 AND chapterNumber > :afterNumber ORDER BY chapterNumber ASC LIMIT 1")
     suspend fun getNextPendingChapter(bookId: String, afterNumber: Int): ChapterEntity?
 
