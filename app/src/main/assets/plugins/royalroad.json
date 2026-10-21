@@ -1,0 +1,24 @@
+{
+  "id": "royalroad",
+  "name": "Royal Road",
+  "version": "1.1.0",
+  "baseUrl": "royalroad.com",
+  "extraHosts": ["www.royalroad.com"],
+  "author": "Built-in",
+  "description": "Premier platform for English web fiction, LitRPG, progression fantasy, and original novels.",
+
+  "titleSelector": "h1.font-white, .fiction-title h1, h1",
+  "authorSelector": "h4 span a, .fiction-info .author a, .author a",
+  "synopsisSelector": ".description, .fiction-info .description",
+  "coverSelector": ".fiction-cover img, img.thumbnail, meta[property='og:image']",
+
+  "chapterListSelector": "#chapters tr[data-url] td a, #chapters a[href*='/chapter/'], a.chapter-link",
+  "chapterTitleSelector": "h1.font-white, .chapter-title, h1",
+  "chapterBodySelector": ".chapter-inner.chapter-content, .chapter-content",
+  "chapterReadySelector": ".chapter-inner.chapter-content",
+
+  "junkSelectors": [".portlet-body", ".author-note-portlet", ".author-note", ".ad", ".banner", ".sharedaddy"],
+  "tocPaginationMode": "none",
+  "requestDelayMs": 1500,
+  "isEnabled": true
+}

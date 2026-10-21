@@ -1,0 +1,24 @@
+{
+  "id": "scribblehub",
+  "name": "Scribble Hub",
+  "version": "1.0.0",
+  "baseUrl": "scribblehub.com",
+  "extraHosts": ["www.scribblehub.com"],
+  "author": "Built-in",
+  "description": "Original web fiction community featuring progression, fantasy, isekai, and romance.",
+
+  "titleSelector": ".fic_title, h1",
+  "authorSelector": ".auth_name_fic a, span.auth_name_fic",
+  "synopsisSelector": ".wi_fic_desc, .fic_desc",
+  "coverSelector": ".fic_image img, meta[property='og:image']",
+
+  "chapterListSelector": "a.toc_a, ul.toc_ul li a",
+  "chapterTitleSelector": ".chapter-title, h1",
+  "chapterBodySelector": "#chp_raw, .chp_raw",
+  "chapterReadySelector": "#chp_raw",
+
+  "junkSelectors": [".sp-head", ".sp-body", ".ad", ".sp_head", ".author_note", ".btn_wrapper"],
+  "tocPaginationMode": "none",
+  "requestDelayMs": 1500,
+  "isEnabled": true
+}

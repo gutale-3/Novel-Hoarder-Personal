@@ -1,0 +1,24 @@
+{
+  "id": "freewebnovel",
+  "name": "FreeWebNovel",
+  "version": "1.0.0",
+  "baseUrl": "freewebnovel.com",
+  "extraHosts": ["www.freewebnovel.com"],
+  "author": "Built-in",
+  "description": "Comprehensive web novel library with clean chapter texts.",
+
+  "titleSelector": "h1.tit, h1.title, h1",
+  "authorSelector": ".m-desc .item a, .author a",
+  "synopsisSelector": ".inner .txt, .m-desc .desc",
+  "coverSelector": ".pic img, meta[property='og:image']",
+
+  "chapterListSelector": ".m-newest2 ul.ul-list5 li a, .ul-list5 a",
+  "chapterTitleSelector": "h1.tit, h1",
+  "chapterBodySelector": ".txt #article, .m-read .txt",
+  "chapterReadySelector": "#article",
+
+  "junkSelectors": [".ad", ".ads", ".notice", ".chapter-nav"],
+  "tocPaginationMode": "none",
+  "requestDelayMs": 1500,
+  "isEnabled": true
+}

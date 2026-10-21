@@ -227,6 +227,7 @@ class NovelRepository(private val bookDao: BookDao) {
     fun getTotalWordsReadFlow(): Flow<Long> = bookDao.getTotalWordsReadFlow()
     suspend fun getDistinctReadingDates(): List<String> = bookDao.getDistinctReadingDates()
     suspend fun insertReadingSessions(sessions: List<ReadingSessionEntity>) = bookDao.insertReadingSessions(sessions)
+    suspend fun clearAllReadingSessions() = bookDao.clearAllReadingSessions()
 
     // --- Text Replacement Rules ---
     fun getAllReplacementRulesFlow(): Flow<List<TextReplacementRuleEntity>> = bookDao.getAllReplacementRulesFlow()
@@ -308,4 +309,106 @@ class NovelRepository(private val bookDao: BookDao) {
         }
         totalPruned
     }
+
+    // --- Chapter Revision History & Undo/Redo ---
+    suspend fun saveChapterHistorySnapshot(chapterId: String, bookId: String, currentContent: String, description: String) {
+        bookDao.insertChapterHistory(
+            ChapterHistoryEntity(
+                chapterId = chapterId,
+                bookId = bookId,
+                content = currentContent,
+                description = description,
+                timestamp = System.currentTimeMillis(),
+                isRedo = false
+            )
+        )
+    }
+
+    suspend fun undoChapterContent(chapterId: String): Boolean {
+        val undos = bookDao.getUndoHistoriesForChapter(chapterId)
+        if (undos.isEmpty()) return false
+        val targetSnapshot = undos.first()
+        val chapter = bookDao.getChapterById(chapterId) ?: return false
+
+        // Save current state as Redo candidate
+        bookDao.insertChapterHistory(
+            ChapterHistoryEntity(
+                chapterId = chapterId,
+                bookId = chapter.bookId,
+                content = chapter.content,
+                description = "State before Undo",
+                timestamp = System.currentTimeMillis(),
+                isRedo = true
+            )
+        )
+
+        // Apply undone content
+        bookDao.updateChapterContent(chapterId, targetSnapshot.content)
+        bookDao.deleteChapterHistory(targetSnapshot.id)
+        return true
+    }
+
+    suspend fun redoChapterContent(chapterId: String): Boolean {
+        val redos = bookDao.getRedoHistoriesForChapter(chapterId)
+        if (redos.isEmpty()) return false
+        val targetSnapshot = redos.first()
+        val chapter = bookDao.getChapterById(chapterId) ?: return false
+
+        // Save current state as Undo candidate
+        bookDao.insertChapterHistory(
+            ChapterHistoryEntity(
+                chapterId = chapterId,
+                bookId = chapter.bookId,
+                content = chapter.content,
+                description = "State before Redo",
+                timestamp = System.currentTimeMillis(),
+                isRedo = false
+            )
+        )
+
+        // Apply redone content
+        bookDao.updateChapterContent(chapterId, targetSnapshot.content)
+        bookDao.deleteChapterHistory(targetSnapshot.id)
+        return true
+    }
+
+    suspend fun canUndoChapter(chapterId: String): Boolean =
+        bookDao.getUndoHistoriesForChapter(chapterId).isNotEmpty()
+
+    suspend fun canRedoChapter(chapterId: String): Boolean =
+        bookDao.getRedoHistoriesForChapter(chapterId).isNotEmpty()
+
+    suspend fun getChapterHistories(chapterId: String): List<ChapterHistoryEntity> =
+        bookDao.getAllHistoryForChapter(chapterId)
+
+    suspend fun getRecentHistoriesForBook(bookId: String): List<ChapterHistoryEntity> =
+        bookDao.getAllHistoryForBook(bookId)
+
+    suspend fun restoreChapterToSnapshot(chapterId: String, historyId: String): Boolean {
+        val allHist = bookDao.getAllHistoryForChapter(chapterId)
+        val snap = allHist.find { it.id == historyId } ?: return false
+        val chapter = bookDao.getChapterById(chapterId) ?: return false
+
+        // Save current before restoring
+        bookDao.insertChapterHistory(
+            ChapterHistoryEntity(
+                chapterId = chapterId,
+                bookId = chapter.bookId,
+                content = chapter.content,
+                description = "State before restoring revision",
+                timestamp = System.currentTimeMillis(),
+                isRedo = false
+            )
+        )
+
+        bookDao.updateChapterContent(chapterId, snap.content)
+        return true
+    }
+
+    // --- Book-level Deleted Chapters Restoration ---
+    fun getDeletedChaptersForBookFlow(bookId: String): Flow<List<ChapterEntity>> =
+        bookDao.getDeletedChaptersForBookFlow(bookId)
+
+    suspend fun getDeletedChaptersForBook(bookId: String): List<ChapterEntity> =
+        bookDao.getDeletedChaptersForBook(bookId)
 }

@@ -198,4 +198,122 @@ class PluginManager(private val context: Context) {
             candidates.any { host == it || host.endsWith(".$it") }
         }
     }
+
+    fun exportPluginJson(config: PluginConfig): String {
+        return adapter.indent("  ").toJson(config)
+    }
+
+    suspend fun duplicatePlugin(pluginId: String, newName: String? = null): Result<PluginConfig> = withContext(Dispatchers.IO) {
+        val original = _plugins.value.find { it.id == pluginId }
+            ?: return@withContext Result.failure(IllegalArgumentException("Plugin $pluginId not found"))
+
+        var baseId = "${original.id}_copy"
+        var counter = 1
+        while (pluginFile(baseId).exists() || _plugins.value.any { it.id == baseId }) {
+            counter++
+            baseId = "${original.id}_copy$counter"
+        }
+
+        val copyConfig = original.copy(
+            id = baseId,
+            name = newName ?: "${original.name} (Copy)",
+            isBuiltIn = false
+        )
+        val file = pluginFile(copyConfig.id)
+        file.writeText(adapter.toJson(copyConfig))
+        loadPlugins()
+        Result.success(copyConfig)
+    }
+
+    fun getBuiltInCatalog(): List<PluginConfig> {
+        val list = mutableListOf<PluginConfig>()
+        try {
+            val names = context.assets.list("plugins").orEmpty().filter { it.endsWith(".json") }
+            for (name in names) {
+                try {
+                    val json = context.assets.open("plugins/$name").bufferedReader().use { it.readText() }
+                    adapter.fromJson(json)?.let { cfg ->
+                        list.add(cfg.copy(isBuiltIn = true))
+                    }
+                } catch (e: Exception) {
+                    Log.e("PluginManager", "Failed to load catalog plugin $name", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("PluginManager", "Failed to list catalog plugins", e)
+        }
+        return list
+    }
+
+    fun createDefaultPlugin(template: String = "standard", initialUrl: String = ""): PluginConfig {
+        val host = try {
+            java.net.URI(initialUrl).host?.lowercase()?.removePrefix("www.") ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+        val safeId = if (host.isNotBlank()) host.replace(".", "_") else "custom_site"
+        val displayName = if (host.isNotBlank()) host.replaceFirstChar { it.uppercase() } else "Custom Novel Site"
+
+        return when (template) {
+            "paginated" -> PluginConfig(
+                id = safeId,
+                name = displayName,
+                version = "1.0.0",
+                baseUrl = host.ifBlank { "example.com" },
+                author = "User",
+                description = "Custom add-on for $displayName with paginated table of contents",
+                titleSelector = "h3.title, h1.title, h1",
+                authorSelector = ".author, span.author, a[href*='author']",
+                synopsisSelector = ".description, .synopsis, meta[name='description']",
+                coverSelector = ".cover img, img.cover, meta[property='og:image']",
+                chapterListSelector = "ul.chapter-list li a, .chapters a, a[href*='chapter']",
+                chapterTitleSelector = "h1.chapter-title, h1",
+                chapterBodySelector = ".chapter-content, #content, article",
+                chapterReadySelector = ".chapter-content, #content",
+                tocPaginationMode = "query",
+                tocPageParam = "page",
+                tocFirstPage = 1,
+                tocLastPageSelector = ".pagination a, ul.pagination li a",
+                tocMaxPages = 100,
+                requestDelayMs = 1500,
+                isEnabled = true
+            )
+            "spa" -> PluginConfig(
+                id = safeId,
+                name = displayName,
+                version = "1.0.0",
+                baseUrl = host.ifBlank { "example.com" },
+                author = "User",
+                description = "Custom add-on for $displayName Single-Page App with dynamic content",
+                titleSelector = "h1, .book-title",
+                authorSelector = ".author, .book-author",
+                synopsisSelector = ".description, .summary",
+                coverSelector = "img.cover, meta[property='og:image']",
+                chapterListSelector = "a[href*='chapter'], a[href*='read']",
+                chapterTitleSelector = "h1.title, h1",
+                chapterBodySelector = "#chapter-content, .reader-body, main",
+                chapterReadySelector = "#chapter-content, .reader-body",
+                requestDelayMs = 2500,
+                isEnabled = true
+            )
+            else -> PluginConfig(
+                id = safeId,
+                name = displayName,
+                version = "1.0.0",
+                baseUrl = host.ifBlank { "example.com" },
+                author = "User",
+                description = "Custom add-on for $displayName",
+                titleSelector = "h1, .title",
+                authorSelector = ".author, a[href*='author']",
+                synopsisSelector = ".description, .synopsis, meta[name='description']",
+                coverSelector = "img.cover, meta[property='og:image']",
+                chapterListSelector = "a[href*='chapter'], a[href*='ch-']",
+                chapterTitleSelector = "h1, .chapter-title",
+                chapterBodySelector = "article, main, .chapter-content, #content",
+                chapterReadySelector = ".chapter-content, #content",
+                requestDelayMs = 1200,
+                isEnabled = true
+            )
+        }
+    }
 }

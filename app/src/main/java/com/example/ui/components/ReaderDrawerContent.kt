@@ -48,7 +48,8 @@ fun ReaderDrawerContent(
     onOpenAddChapterDialog: () -> Unit,
     onOpenResequenceDialog: () -> Unit,
     onOpenAutoArchiveDialog: () -> Unit,
-    onConfirmDeleteChapters: (List<String>) -> Unit
+    onConfirmDeleteChapters: (List<String>) -> Unit,
+    onOpenRevisionHistory: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var drawerTabSelected by remember { mutableIntStateOf(0) } // 0 = Chapters, 1 = Bookmarks
@@ -270,6 +271,9 @@ fun ReaderDrawerContent(
                         }
                         IconButton(onClick = onOpenAutoArchiveDialog) {
                             Icon(imageVector = Icons.Default.Settings, contentDescription = "Auto-Archive Settings", tint = MaterialTheme.colorScheme.primary)
+                        }
+                        IconButton(onClick = onOpenRevisionHistory) {
+                            Icon(imageVector = Icons.Default.History, contentDescription = "Undo & Revision History", tint = MaterialTheme.colorScheme.primary)
                         }
                         IconButton(onClick = { showSubdivisionDialog = true }) {
                             Icon(imageVector = Icons.Default.FolderSpecial, contentDescription = "Subdivide Table of Contents", tint = MaterialTheme.colorScheme.primary)

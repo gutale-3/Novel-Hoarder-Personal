@@ -1,0 +1,28 @@
+{
+  "id": "novelfull",
+  "name": "NovelFull",
+  "version": "1.1.0",
+  "baseUrl": "novelfull.com",
+  "extraHosts": ["novelfull.net", "www.novelfull.com", "www.novelfull.net"],
+  "author": "Built-in",
+  "description": "Popular translated web novel aggregator with paginated table of contents.",
+
+  "titleSelector": "h3.title, .desc h3, h1",
+  "authorSelector": ".info a[href*='/author/'], .info div a",
+  "synopsisSelector": ".desc-text, .desc",
+  "coverSelector": ".book img, .desc .book img, meta[property='og:image']",
+
+  "chapterListSelector": "ul.list-chapter li a, .list-chapter a",
+  "chapterTitleSelector": "h2 a.chr-title, .chapter-title, h1",
+  "chapterBodySelector": "#chr-content, .chr-c",
+  "chapterReadySelector": "#chr-content",
+
+  "junkSelectors": [".ad", ".ads", ".adsbygoogle", ".chr-nav", ".banner-container"],
+  "tocPaginationMode": "query",
+  "tocPageParam": "page",
+  "tocFirstPage": 1,
+  "tocLastPageSelector": "ul.pagination li.last a, .pagination a",
+  "tocMaxPages": 150,
+  "requestDelayMs": 1800,
+  "isEnabled": true
+}

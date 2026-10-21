@@ -480,11 +480,73 @@ fun ParagraphBookmarkActionDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "Ad & Content Cleaning",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    var canUndo by remember { mutableStateOf(false) }
+                    var canRedo by remember { mutableStateOf(false) }
+
+                    LaunchedEffect(activeChapter?.id) {
+                        if (activeChapter != null) {
+                            canUndo = viewModel.repository.canUndoChapter(activeChapter.id)
+                            canRedo = viewModel.repository.canRedoChapter(activeChapter.id)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Content Editing & Truncation",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.error
+                        )
+
+                        // Inline Undo & Redo buttons
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (canUndo) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        scope.launch {
+                                            if (activeChapter != null) {
+                                                val ok = viewModel.repository.undoChapterContent(activeChapter.id)
+                                                if (ok) {
+                                                    android.widget.Toast.makeText(context, "Undid last truncation!", android.widget.Toast.LENGTH_SHORT).show()
+                                                    onDismiss()
+                                                }
+                                            }
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Icon(Icons.Default.Undo, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Undo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            if (canRedo) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        scope.launch {
+                                            if (activeChapter != null) {
+                                                val ok = viewModel.repository.redoChapterContent(activeChapter.id)
+                                                if (ok) {
+                                                    android.widget.Toast.makeText(context, "Redid truncation!", android.widget.Toast.LENGTH_SHORT).show()
+                                                    onDismiss()
+                                                }
+                                            }
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Icon(Icons.Default.Redo, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Redo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
 
                     // Action 3A: Delete strictly after this line
                     Row(
@@ -497,9 +559,16 @@ fun ParagraphBookmarkActionDialog(
                                         val lines = activeChapter.content.split("\n")
                                         val indexInLines = lines.indexOfFirst { it.trim() == paragraphText.trim() }
                                         if (indexInLines != -1) {
+                                            // Save snapshot into revision history before truncating
+                                            viewModel.repository.saveChapterHistorySnapshot(
+                                                chapterId = activeChapter.id,
+                                                bookId = bookId,
+                                                currentContent = activeChapter.content,
+                                                description = "Truncated after line: ${paragraphText.trim().take(30)}..."
+                                            )
                                             val newContent = lines.subList(0, indexInLines + 1).joinToString("\n").trim()
                                             viewModel.repository.updateChapterContent(activeChapter.id, newContent)
-                                            android.widget.Toast.makeText(context, "Deleted all content after this line.", android.widget.Toast.LENGTH_SHORT).show()
+                                            android.widget.Toast.makeText(context, "Truncated following lines. (Undo available)", android.widget.Toast.LENGTH_LONG).show()
                                         }
                                     }
                                     onDismiss()
@@ -522,7 +591,7 @@ fun ParagraphBookmarkActionDialog(
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                             Text(
-                                text = "Keep this line and delete all following lines in this chapter",
+                                text = "Keep this line and delete all following lines (Snapshot saved, can be undone)",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
                             )
@@ -540,9 +609,16 @@ fun ParagraphBookmarkActionDialog(
                                         val lines = activeChapter.content.split("\n")
                                         val indexInLines = lines.indexOfFirst { it.trim() == paragraphText.trim() }
                                         if (indexInLines != -1) {
+                                            // Save snapshot into revision history before truncating
+                                            viewModel.repository.saveChapterHistorySnapshot(
+                                                chapterId = activeChapter.id,
+                                                bookId = bookId,
+                                                currentContent = activeChapter.content,
+                                                description = "Deleted from line: ${paragraphText.trim().take(30)}..."
+                                            )
                                             val newContent = lines.subList(0, indexInLines).joinToString("\n").trim()
                                             viewModel.repository.updateChapterContent(activeChapter.id, newContent)
-                                            android.widget.Toast.makeText(context, "Deleted this line and following content.", android.widget.Toast.LENGTH_SHORT).show()
+                                            android.widget.Toast.makeText(context, "Deleted line & following. (Undo available)", android.widget.Toast.LENGTH_LONG).show()
                                         }
                                     }
                                     onDismiss()
@@ -565,7 +641,7 @@ fun ParagraphBookmarkActionDialog(
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                             Text(
-                                text = "Delete this line and all following lines in this chapter",
+                                text = "Delete this line and all following lines (Snapshot saved, can be undone)",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
                             )
@@ -589,6 +665,13 @@ fun ParagraphBookmarkActionDialog(
                                                 it.contains(query, ignoreCase = true) 
                                             }
                                             if (matchIdx != -1) {
+                                                // Save snapshot before truncation
+                                                viewModel.repository.saveChapterHistorySnapshot(
+                                                    chapterId = chap.id,
+                                                    bookId = bookId,
+                                                    currentContent = chap.content,
+                                                    description = "Bulk truncated matching: ${query.take(30)}..."
+                                                )
                                                 val newContent = lines.subList(0, matchIdx).joinToString("\n").trim()
                                                 viewModel.repository.updateChapterContent(chap.id, newContent)
                                                 countUpdated++
@@ -597,7 +680,7 @@ fun ParagraphBookmarkActionDialog(
                                         if (countUpdated > 0) {
                                             android.widget.Toast.makeText(
                                                 context, 
-                                                "Successfully cleaned and truncated $countUpdated chapters!", 
+                                                "Cleaned and truncated $countUpdated chapters! (Revisions saved)", 
                                                 android.widget.Toast.LENGTH_LONG
                                             ).show()
                                         }
@@ -622,7 +705,7 @@ fun ParagraphBookmarkActionDialog(
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                             Text(
-                                text = "Scan all chapters, deleting from any line containing this text to the end (e.g. for recurring end ads)",
+                                text = "Scan all chapters, deleting from matching line to end. (Revisions saved for every chapter)",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
                             )

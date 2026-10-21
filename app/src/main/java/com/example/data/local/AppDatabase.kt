@@ -16,9 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChapterRecapEntity::class,
         BookmarkEntity::class,
         ReadingSessionEntity::class,
-        TextReplacementRuleEntity::class
+        TextReplacementRuleEntity::class,
+        ChapterHistoryEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 /**
@@ -168,6 +169,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `chapter_history` (" +
+                    "`id` TEXT NOT NULL, " +
+                    "`chapterId` TEXT NOT NULL, " +
+                    "`bookId` TEXT NOT NULL, " +
+                    "`content` TEXT NOT NULL, " +
+                    "`description` TEXT NOT NULL, " +
+                    "`timestamp` INTEGER NOT NULL, " +
+                    "`isRedo` INTEGER NOT NULL DEFAULT 0, " +
+                    "PRIMARY KEY(`id`)" +
+                    ")"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapter_history_chapterId` ON `chapter_history` (`chapterId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapter_history_bookId` ON `chapter_history` (`bookId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapter_history_timestamp` ON `chapter_history` (`timestamp`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -184,7 +205,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
-                    MIGRATION_9_10
+                    MIGRATION_9_10,
+                    MIGRATION_10_11
                 )
                 .fallbackToDestructiveMigration()
                 .fallbackToDestructiveMigrationOnDowngrade()

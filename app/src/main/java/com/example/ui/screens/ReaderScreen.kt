@@ -73,8 +73,10 @@ fun ReaderScreen(
     var showSourceMigrationDialog by remember { mutableStateOf(false) }
     var showTapZonesDialog by remember { mutableStateOf(false) }
     var showTagDialogForChapter by remember { mutableStateOf<ChapterEntity?>(null) }
+    var showRevisionHistoryDialog by remember { mutableStateOf(false) }
 
     var sessionStartTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var lastLoggedParagraphIndex by remember { mutableIntStateOf(0) }
 
     val isDark = isSystemInDarkTheme()
     val readerColors = when (viewModel.readerTheme) {
@@ -250,10 +252,16 @@ fun ReaderScreen(
                     paragraphIndex = currentParagraphIndex,
                     paragraphText = currentParaText
                 )
-                val durationSec = ((System.currentTimeMillis() - sessionStartTime) / 1000)
+                val durationSec = ((System.currentTimeMillis() - sessionStartTime) / 1000).coerceIn(5L, 1800L)
                 if (viewModel.settings.enableReadingStats && durationSec >= 5) {
-                    val wordsInSession = lines.take(currentParagraphIndex + 1).sumOf { it.split("\\s+".toRegex()).size }.coerceAtLeast(10)
-                    viewModel.stats.recordReadingSession(bookId, activeChapter.id, durationSec, wordsInSession)
+                    val newlyReadWords = if (currentParagraphIndex > lastLoggedParagraphIndex) {
+                        val end = minOf(currentParagraphIndex + 1, lines.size)
+                        lines.subList(lastLoggedParagraphIndex, end).sumOf { it.split("\\s+".toRegex()).size }
+                    } else {
+                        lines.getOrNull(currentParagraphIndex)?.split("\\s+".toRegex())?.size ?: 30
+                    }.coerceIn(10, 8000)
+                    lastLoggedParagraphIndex = currentParagraphIndex
+                    viewModel.stats.recordReadingSession(bookId, activeChapter.id, durationSec, newlyReadWords)
                 }
             }
         }
@@ -316,7 +324,8 @@ fun ReaderScreen(
                 onConfirmDeleteChapters = { toDel ->
                     chaptersToDelete = toDel
                     showDeleteChaptersConfirmDialog = true
-                }
+                },
+                onOpenRevisionHistory = { showRevisionHistoryDialog = true }
             )
         }
     ) {
@@ -338,7 +347,8 @@ fun ReaderScreen(
                     onOpenTextRules = { showTextRulesDialog = true },
                     onOpenTapZones = { showTapZonesDialog = true },
                     onOpenSourceMigration = { showSourceMigrationDialog = true },
-                    onOpenTags = { showTagDialogForChapter = activeChapter }
+                    onOpenTags = { showTagDialogForChapter = activeChapter },
+                    onOpenRevisionHistory = { showRevisionHistoryDialog = true }
                 )
             },
             bottomBar = {
@@ -576,6 +586,16 @@ fun ReaderScreen(
             chapter = showTagDialogForChapter,
             tagManager = viewModel.chapterTags,
             onDismiss = { showTagDialogForChapter = null }
+        )
+    }
+
+    if (showRevisionHistoryDialog) {
+        ChapterRevisionHistoryDialog(
+            bookId = bookId,
+            activeChapter = activeChapter,
+            viewModel = viewModel,
+            context = context,
+            onDismiss = { showRevisionHistoryDialog = false }
         )
     }
 }

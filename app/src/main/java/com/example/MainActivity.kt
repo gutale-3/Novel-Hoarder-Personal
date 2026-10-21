@@ -126,11 +126,19 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 actions = {
+                                    IconButton(onClick = { navController.navigate("plugins") }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Extension,
+                                            contentDescription = "Sites & Add-ons Studio",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
                                     IconButton(onClick = { navController.navigate("settings") }) {
                                         Icon(
                                             imageVector = Icons.Default.Settings,
                                             contentDescription = "Settings",
-                                            tint = MaterialTheme.colorScheme.primary
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
 

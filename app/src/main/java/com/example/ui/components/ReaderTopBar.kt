@@ -36,7 +36,8 @@ fun ReaderTopBar(
     onOpenTextRules: () -> Unit,
     onOpenTapZones: () -> Unit,
     onOpenSourceMigration: () -> Unit,
-    onOpenTags: () -> Unit = {}
+    onOpenTags: () -> Unit = {},
+    onOpenRevisionHistory: () -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -239,6 +240,15 @@ fun ReaderTopBar(
                                 }
                             )
                         }
+
+                        DropdownMenuItem(
+                            text = { Text("Undo & Revision History") },
+                            leadingIcon = { Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) },
+                            onClick = {
+                                showMenu = false
+                                onOpenRevisionHistory()
+                            }
+                        )
 
                         if (viewModel.settings.enableAutoApplyTextRules) {
                             DropdownMenuItem(

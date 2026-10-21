@@ -76,6 +76,32 @@ data class PluginConfig(
     /** Minimum gap between page loads for this site, in milliseconds. 0 uses the global setting. */
     @Json(name = "requestDelayMs") val requestDelayMs: Int = 0,
 
+    /**
+     * Additional CSS selectors for junk/ad elements inside the chapter body to be stripped
+     * (e.g. [".ad", ".author-note", ".watermark"]).
+     */
+    @Json(name = "junkSelectors") val junkSelectors: List<String> = emptyList(),
+
+    /**
+     * When true, reverses the collected chapter list so that sites listing newest-first are ordered 1..N.
+     */
+    @Json(name = "reverseOrder") val reverseOrder: Boolean = false,
+
+    /**
+     * Optional regex pattern that chapter URLs must match (e.g. ".*\/chapter-\d+.*").
+     */
+    @Json(name = "chapterLinkFilterRegex") val chapterLinkFilterRegex: String = "",
+
+    /**
+     * Optional regex pattern that chapter URLs must NOT match (e.g. ".*\/comments.*").
+     */
+    @Json(name = "chapterLinkExcludeRegex") val chapterLinkExcludeRegex: String = "",
+
+    /**
+     * Optional custom User-Agent string for sites with specific browser requirements.
+     */
+    @Json(name = "customUserAgent") val customUserAgent: String = "",
+
     /** True for plugins shipped inside the app. Set by the loader, never read from JSON. */
     @Transient val isBuiltIn: Boolean = false
 )

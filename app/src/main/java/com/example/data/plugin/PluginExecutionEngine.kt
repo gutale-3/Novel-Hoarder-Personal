@@ -107,7 +107,27 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
             }
 
             val entries = GenericScraper.parseTocEntries(jsonResult)
-            GenericScraper.buildChapterList(entries)
+            var urls = GenericScraper.buildChapterList(entries)
+
+            if (config.chapterLinkFilterRegex.isNotBlank()) {
+                try {
+                    val filterRe = Regex(config.chapterLinkFilterRegex, RegexOption.IGNORE_CASE)
+                    urls = urls.filter { filterRe.containsMatchIn(it) }
+                } catch (_: Exception) {}
+            }
+
+            if (config.chapterLinkExcludeRegex.isNotBlank()) {
+                try {
+                    val excludeRe = Regex(config.chapterLinkExcludeRegex, RegexOption.IGNORE_CASE)
+                    urls = urls.filterNot { excludeRe.containsMatchIn(it) }
+                } catch (_: Exception) {}
+            }
+
+            if (config.reverseOrder) {
+                urls = urls.reversed()
+            }
+
+            urls
         }
 
     override suspend fun scrapeChapterContent(
@@ -297,6 +317,13 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         val bSel = JsResultParser.jsLiteral(config.chapterBodySelector)
         val readySel = JsResultParser.jsLiteral(config.chapterReadySelector)
 
+        val defaultJunk = "script, style, noscript, nav, header, footer, iframe, form, button, " +
+            "select, textarea, .ad, .ads, .advertisement, .comments, #comments, " +
+            ".share, .social, .chapter-nav, .nav-links, .toolbar"
+        val customJunk = config.junkSelectors.filter { it.isNotBlank() }.joinToString(", ")
+        val combinedJunk = if (customJunk.isNotBlank()) "$defaultJunk, $customJunk" else defaultJunk
+        val jSel = JsResultParser.jsLiteral(combinedJunk)
+
         return """
             (() => {
                 const READY_SEL = $readySel;
@@ -316,11 +343,7 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
                 if (!body) return { ready: false };
 
                 const clone = body.cloneNode(true);
-                clone.querySelectorAll(
-                    'script, style, noscript, nav, header, footer, iframe, form, button, ' +
-                    'select, textarea, .ad, .ads, .advertisement, .comments, #comments, ' +
-                    '.share, .social, .chapter-nav, .nav-links, .toolbar'
-                ).forEach(el => el.remove());
+                clone.querySelectorAll($jSel).forEach(el => el.remove());
 
                 // A cloned node is detached, so innerText is unavailable and every read silently falls
                 // through to textContent — which drops all line breaks. Turn the breaks into text nodes
@@ -355,6 +378,9 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
     }
 
     private suspend fun loadUrlAndWait(webView: WebView, url: String) {
+        if (config.customUserAgent.isNotBlank()) {
+            webView.settings.userAgentString = config.customUserAgent
+        }
         withTimeoutOrNull(25000) {
             suspendCancellableCoroutine<Unit> { continuation ->
                 webView.webViewClient = object : WebViewFactory.SafeWebViewClient() {

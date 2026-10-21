@@ -159,6 +159,43 @@ class LibraryManager(
         }
     }
 
+    // --- Chapter Revision History & Undo/Redo ---
+    fun undoChapterContent(chapterId: String, onComplete: (Boolean) -> Unit = {}) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val success = repository.undoChapterContent(chapterId)
+            withContext(Dispatchers.Main) {
+                if (success) {
+                    scrapingManager.addLog("Undid chapter content change for: $chapterId")
+                }
+                onComplete(success)
+            }
+        }
+    }
+
+    fun redoChapterContent(chapterId: String, onComplete: (Boolean) -> Unit = {}) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val success = repository.redoChapterContent(chapterId)
+            withContext(Dispatchers.Main) {
+                if (success) {
+                    scrapingManager.addLog("Redid chapter content change for: $chapterId")
+                }
+                onComplete(success)
+            }
+        }
+    }
+
+    fun restoreChapterRevision(chapterId: String, historyId: String, onComplete: (Boolean) -> Unit = {}) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val success = repository.restoreChapterToSnapshot(chapterId, historyId)
+            withContext(Dispatchers.Main) {
+                if (success) {
+                    scrapingManager.addLog("Restored chapter revision for: $chapterId")
+                }
+                onComplete(success)
+            }
+        }
+    }
+
     fun permanentlyDeleteChapter(chapterId: String) {
         coroutineScope.launch(Dispatchers.IO) {
             try {

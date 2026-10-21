@@ -1,13 +1,14 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
-import android.webkit.CookieManager
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -28,15 +29,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.plugin.PluginConfig
 import com.example.data.plugin.PluginManager
 import com.example.data.scraper.SourceManager
+import com.example.ui.components.PluginStudioDialog
+import com.example.ui.components.WebInspectorDialog
 import com.example.ui.theme.MinTouchTarget
 import com.example.ui.theme.TextDefaults
-import com.example.ui.theme.screenContentPadding
 import com.example.util.WebViewFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -54,40 +56,47 @@ fun PluginManagementScreen(
     val coroutineScope = rememberCoroutineScope()
     val plugins by pluginManager.plugins.collectAsState()
 
-    var showPasteDialog by remember { mutableStateOf(false) }
+    var activeTopTab by remember { mutableIntStateOf(0) } // 0 = Installed, 1 = Catalog & Presets, 2 = Diagnostic Lab
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Dialog & Studio States
+    var showStudioDialog by remember { mutableStateOf(false) }
+    var studioConfigToEdit by remember { mutableStateOf<PluginConfig?>(null) }
+    var studioIsNew by remember { mutableStateOf(false) }
+
+    var showInspectorDialog by remember { mutableStateOf(false) }
+    var inspectorInitialUrl by remember { mutableStateOf("") }
+
+    var showTemplatePickerDialog by remember { mutableStateOf(false) }
+    var showPasteJsonDialog by remember { mutableStateOf(false) }
     var pasteJsonText by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+
     var pluginToDelete by remember { mutableStateOf<PluginConfig?>(null) }
-    var showHelpCard by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Inspect Page tool state
-    var showInspectDialog by remember { mutableStateOf(false) }
-    var inspectUrl by remember { mutableStateOf("https://wtr-lab.com") }
-    var isInspecting by remember { mutableStateOf(false) }
-    var inspectResultText by remember { mutableStateOf("") }
-    var webViewInstance by remember { mutableStateOf<WebView?>(null) }
-
-    // Diagnostic Site Tester state
-    var diagnosticUrl by remember { mutableStateOf("") }
-    var isRunningDiagnostic by remember { mutableStateOf(false) }
-    var diagnosticOutput by remember { mutableStateOf("") }
-    var diagnosticJob by remember { mutableStateOf<Job?>(null) }
-
-    val builtInIds = remember {
-        try {
-            context.assets.list("plugins").orEmpty()
-                .filter { it.endsWith(".json") }
-                .map { it.removeSuffix(".json") }
-                .toSet()
-        } catch (e: Exception) {
-            emptySet()
+    // Export plugin launcher
+    var pendingExportPlugin by remember { mutableStateOf<PluginConfig?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null && pendingExportPlugin != null) {
+            coroutineScope.launch {
+                try {
+                    val json = pluginManager.exportPluginJson(pendingExportPlugin!!)
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(json.toByteArray())
+                    }
+                    Toast.makeText(context, "Exported ${pendingExportPlugin!!.name} add-on", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    errorMessage = "Export failed: ${e.message}"
+                } finally {
+                    pendingExportPlugin = null
+                }
+            }
         }
     }
 
-    // Partition plugins
-    val builtInPlugins = plugins.filter { builtInIds.contains(it.id) }
-    val myPlugins = plugins.filter { !builtInIds.contains(it.id) }
-
+    // Import plugin file launcher
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -98,7 +107,7 @@ fun PluginManagementScreen(
                     if (content != null) {
                         val result = pluginManager.savePlugin(content)
                         result.onSuccess {
-                            Toast.makeText(context, "Plugin '${it.name}' installed", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Add-on '${it.name}' installed successfully!", Toast.LENGTH_SHORT).show()
                         }.onFailure {
                             errorMessage = it.message
                         }
@@ -110,10 +119,34 @@ fun PluginManagementScreen(
         }
     }
 
+    // Diagnostic Site Tester state
+    var diagnosticUrl by remember { mutableStateOf("") }
+    var isRunningDiagnostic by remember { mutableStateOf(false) }
+    var diagnosticOutput by remember { mutableStateOf("") }
+    var diagnosticJob by remember { mutableStateOf<Job?>(null) }
+
+    // Filter plugins
+    val filteredPlugins = remember(plugins, searchQuery) {
+        if (searchQuery.isBlank()) plugins
+        else {
+            val q = searchQuery.trim().lowercase()
+            plugins.filter {
+                it.name.lowercase().contains(q) ||
+                it.id.lowercase().contains(q) ||
+                it.baseUrl.lowercase().contains(q) ||
+                it.extraHosts.any { host -> host.lowercase().contains(q) }
+            }
+        }
+    }
+
+    val builtInPlugins = filteredPlugins.filter { it.isBuiltIn }
+    val customPlugins = filteredPlugins.filter { !it.isBuiltIn }
+    val catalogPresets = remember { pluginManager.getBuiltInCatalog() }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Sites & Plugins", maxLines = 1, overflow = TextDefaults.OVERFLOW) },
+                title = { Text("Sites & Add-ons Studio", maxLines = 1, overflow = TextDefaults.OVERFLOW) },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -121,218 +154,434 @@ fun PluginManagementScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = { showInspectDialog = true },
+                        onClick = {
+                            inspectorInitialUrl = ""
+                            showInspectorDialog = true
+                        },
                         modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
                     ) {
-                        Icon(Icons.Default.BugReport, contentDescription = "Inspect Page")
+                        Icon(Icons.Default.TravelExplore, contentDescription = "Inspect Web Page")
                     }
                     IconButton(
-                        onClick = { filePicker.launch(arrayOf("application/json", "text/plain")) },
+                        onClick = { showTemplatePickerDialog = true },
                         modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
                     ) {
-                        Icon(Icons.Default.FileOpen, contentDescription = "Import Plugin File")
-                    }
-                    IconButton(
-                        onClick = { showPasteDialog = true },
-                        modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Paste Plugin JSON")
+                        Icon(Icons.Default.Add, contentDescription = "Add New Site")
                     }
                 }
             )
         }
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = screenContentPadding()
+                .padding(padding)
         ) {
-            item {
-                Card(
+            // Top Tabs
+            TabRow(selectedTabIndex = activeTopTab) {
+                Tab(
+                    selected = activeTopTab == 0,
+                    onClick = { activeTopTab = 0 },
+                    text = { Text("Installed (${plugins.size})") },
+                    icon = { Icon(Icons.Default.Extension, contentDescription = null) }
+                )
+                Tab(
+                    selected = activeTopTab == 1,
+                    onClick = { activeTopTab = 1 },
+                    text = { Text("Catalog & Presets") },
+                    icon = { Icon(Icons.Default.AutoStories, contentDescription = null) }
+                )
+                Tab(
+                    selected = activeTopTab == 2,
+                    onClick = { activeTopTab = 2 },
+                    text = { Text("Diagnostic Lab") },
+                    icon = { Icon(Icons.Default.Speed, contentDescription = null) }
+                )
+            }
+
+            if (errorMessage != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Info, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "How to write a plugin",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { showHelpCard = !showHelpCard }) {
-                                Icon(
-                                    if (showHelpCard) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = "Toggle instructions"
-                                )
-                            }
-                        }
-                        AnimatedVisibility(visible = showHelpCard) {
-                            Column(modifier = Modifier.padding(top = 8.dp)) {
-                                Text(
-                                    "Plugins define CSS selectors for novel websites. Example JSON:\n",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    """
-                                    {
-                                      "id": "my_site",
-                                      "name": "My Novel Site",
-                                      "version": "1.0.0",
-                                      "baseUrl": "example.com",
-                                      "author": "User",
-                                      "titleSelector": "h1.book-title",
-                                      "authorSelector": ".author-name",
-                                      "synopsisSelector": ".description",
-                                      "chapterListSelector": "a.chapter-link",
-                                      "chapterTitleSelector": "h1.chap-title",
-                                      "chapterBodySelector": ".chapter-content"
-                                    }
-                                    """.trimIndent(),
-                                    fontFamily = FontFamily.Monospace,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            errorMessage ?: "",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { errorMessage = null }) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss")
                         }
                     }
                 }
             }
 
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Speed, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Site Diagnostic Tester",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
+            when (activeTopTab) {
+                // Tab 0: Installed Sites
+                0 -> {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Search bar
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            placeholder = { Text("Search installed sites by name or domain...") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear")
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // Section: Custom Sites
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "My Custom Add-ons (${customPlugins.size})",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    TextButton(onClick = { showTemplatePickerDialog = true }) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("New Add-on")
+                                    }
+                                }
+                            }
+
+                            if (customPlugins.isEmpty()) {
+                                item {
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(20.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Icon(Icons.Default.DesignServices, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text("No custom add-ons yet", fontWeight = FontWeight.Bold)
+                                            Text(
+                                                "Tap '+ New Add-on' or pick from the Catalog to create tailored scrapers for any website.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                items(customPlugins, key = { it.id }) { plugin ->
+                                    PluginCardItem(
+                                        plugin = plugin,
+                                        isBuiltIn = false,
+                                        onToggle = { enabled ->
+                                            coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
+                                        },
+                                        onEdit = {
+                                            studioConfigToEdit = plugin
+                                            studioIsNew = false
+                                            showStudioDialog = true
+                                        },
+                                        onDuplicate = {
+                                            coroutineScope.launch {
+                                                pluginManager.duplicatePlugin(plugin.id)
+                                                    .onSuccess {
+                                                        Toast.makeText(context, "Duplicated '${plugin.name}'", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    .onFailure { errorMessage = it.message }
+                                            }
+                                        },
+                                        onExport = {
+                                            pendingExportPlugin = plugin
+                                            exportLauncher.launch("${plugin.id}.json")
+                                        },
+                                        onCopyJson = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("Plugin JSON", pluginManager.exportPluginJson(plugin)))
+                                            Toast.makeText(context, "Copied JSON to clipboard", Toast.LENGTH_SHORT).show()
+                                        },
+                                        onTest = {
+                                            diagnosticUrl = "https://${plugin.baseUrl}"
+                                            activeTopTab = 2
+                                        },
+                                        onDelete = { pluginToDelete = plugin }
+                                    )
+                                }
+                            }
+
+                            // Section: Built-in Site Engines
+                            item {
+                                Text(
+                                    "Built-in Site Engines (${builtInPlugins.size})",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(top = 12.dp)
+                                )
+                            }
+
+                            items(builtInPlugins, key = { it.id }) { plugin ->
+                                PluginCardItem(
+                                    plugin = plugin,
+                                    isBuiltIn = true,
+                                    onToggle = { enabled ->
+                                        coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
+                                    },
+                                    onEdit = {
+                                        coroutineScope.launch {
+                                            pluginManager.forkBuiltIn(plugin.id)
+                                                .onSuccess { forked ->
+                                                    studioConfigToEdit = forked
+                                                    studioIsNew = false
+                                                    showStudioDialog = true
+                                                }
+                                                .onFailure { errorMessage = "Could not edit copy: ${it.message}" }
+                                        }
+                                    },
+                                    onDuplicate = {
+                                        coroutineScope.launch {
+                                            pluginManager.duplicatePlugin(plugin.id)
+                                                .onSuccess { Toast.makeText(context, "Cloned '${plugin.name}' to custom add-ons", Toast.LENGTH_SHORT).show() }
+                                                .onFailure { errorMessage = it.message }
+                                        }
+                                    },
+                                    onExport = {
+                                        pendingExportPlugin = plugin
+                                        exportLauncher.launch("${plugin.id}.json")
+                                    },
+                                    onCopyJson = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Plugin JSON", pluginManager.exportPluginJson(plugin)))
+                                        Toast.makeText(context, "Copied JSON to clipboard", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onTest = {
+                                        diagnosticUrl = "https://${plugin.baseUrl}"
+                                        activeTopTab = 2
+                                    },
+                                    onDelete = {
+                                        // Restores original if modified
+                                        coroutineScope.launch {
+                                            pluginManager.deletePlugin(plugin.id)
+                                            Toast.makeText(context, "Restored original ${plugin.name}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                }
+
+                // Tab 1: Catalog & Presets Gallery
+                1 -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                                shape = RoundedCornerShape(16.dp)
+                            ) {
+                                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.AutoStories, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text("Curated Site Add-ons Gallery", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                        Text(
+                                            "Pre-configured, battle-tested scrapers for top novel platforms. Tap 'Install / Customize' to customize any site in the Visual Studio.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        items(catalogPresets, key = { it.id }) { preset ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(preset.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        SuggestionChip(
+                                            onClick = { },
+                                            label = { Text(preset.baseUrl, fontSize = 11.sp) }
+                                        )
+                                    }
+
+                                    if (preset.description.isNotBlank()) {
+                                        Text(preset.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+
+                                    // Tags & features
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+                                        if (preset.tocPaginationMode == "query") {
+                                            AssistChip(onClick = {}, label = { Text("Paginated TOC", fontSize = 10.sp) })
+                                        }
+                                        if (preset.junkSelectors.isNotEmpty()) {
+                                            AssistChip(onClick = {}, label = { Text("Ad Filtering", fontSize = 10.sp) })
+                                        }
+                                        if (preset.customTocJs != null) {
+                                            AssistChip(onClick = {}, label = { Text("API Engine", fontSize = 10.sp) })
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 8.dp),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                studioConfigToEdit = preset.copy(
+                                                    id = "${preset.id}_custom",
+                                                    name = "${preset.name} (Custom)",
+                                                    isBuiltIn = false
+                                                )
+                                                studioIsNew = true
+                                                showStudioDialog = true
+                                            }
+                                        ) {
+                                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Customize in Studio")
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Button(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    pluginManager.savePluginConfig(preset.copy(isBuiltIn = false))
+                                                    Toast.makeText(context, "Installed ${preset.name} Add-on!", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        ) {
+                                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Install")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Tab 2: Diagnostic Lab
+                2 -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("End-to-End Scraper Diagnostic Lab", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Test any novel URL to check scraper detection, metadata, chapter list, and first chapter extraction without saving anything to the library.",
+                            "Validate any novel URL against all installed add-ons and scrapers. Tests metadata parsing, TOC link extraction, and first chapter scraping without saving to library.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+
                         OutlinedTextField(
                             value = diagnosticUrl,
                             onValueChange = { diagnosticUrl = it },
                             label = { Text("Novel or Chapter URL") },
-                            placeholder = { Text("https://example.com/novel/...") },
+                            placeholder = { Text("https://royalroad.com/fiction/12345/...") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Button(
                                 onClick = {
                                     val url = diagnosticUrl.trim()
                                     if (url.isBlank()) return@Button
                                     isRunningDiagnostic = true
                                     diagnosticOutput = "=== STARTING SITE DIAGNOSTIC ===\nTarget URL: $url\n"
-                                    
+
                                     diagnosticJob?.cancel()
                                     diagnosticJob = coroutineScope.launch(Dispatchers.IO) {
                                         var testWebView: WebView? = null
                                         try {
-                                            withTimeout(180_000L) { // 3-minute overall timeout
-                                                // 1. Resolve source
+                                            withTimeout(180_000L) {
                                                 val scraper = SourceManager.getSourceForUrl(url, pluginManager)
-                                                val scraperType = when (scraper) {
-                                                    is com.example.util.TomatoScraper -> "TomatoMTL"
-                                                    is com.example.data.plugin.PluginExecutionEngine -> "Plugin (${scraper.config.name})"
-                                                    else -> "Universal Web Scraper"
-                                                }
                                                 withContext(Dispatchers.Main) {
-                                                    diagnosticOutput += "\n[STEP 1] Source Resolution:\n  Scraper Chosen: $scraperType\n  Source Name: ${scraper.sourceName}\n"
+                                                    diagnosticOutput += "\n[STEP 1] Source Match: ${scraper.sourceName}\n"
+                                                    diagnosticOutput += "\n[STEP 2] Scraping Metadata...\n"
+                                                    testWebView = WebViewFactory.create(context)
                                                 }
 
-                                                // 2. Create WebView & scrapeBookInfo
+                                                val book = scraper.scrapeBookInfo(testWebView!!, url)
                                                 withContext(Dispatchers.Main) {
-                                                    diagnosticOutput += "\n[STEP 2] Scraping Book Metadata...\n"
-                                                }
-                                                testWebView = withContext(Dispatchers.Main) {
-                                                    WebViewFactory.create(context)
-                                                }
-                                                val bookInfo = scraper.scrapeBookInfo(testWebView!!, url)
-                                                val hasCover = !bookInfo.coverUrl.isNullOrBlank()
-                                                withContext(Dispatchers.Main) {
-                                                    diagnosticOutput += "  Title: ${bookInfo.title}\n  Author: ${bookInfo.author}\n  Cover URL Found: $hasCover (${bookInfo.coverUrl ?: "none"})\n  Parsed Book ID: ${bookInfo.id}\n"
+                                                    diagnosticOutput += "  • Title: ${book.title}\n  • Author: ${book.author}\n  • Cover: ${book.coverUrl ?: "none"}\n"
+                                                    diagnosticOutput += "\n[STEP 3] Scraping Table of Contents (Chapter List)...\n"
                                                 }
 
-                                                // 3. scrapeChapterList
-                                                withContext(Dispatchers.Main) {
-                                                    diagnosticOutput += "\n[STEP 3] Scraping Chapter List (TOC)...\n"
-                                                }
                                                 val chapterUrls = scraper.scrapeChapterList(testWebView!!, url)
                                                 withContext(Dispatchers.Main) {
-                                                    diagnosticOutput += "  Total Chapter URLs: ${chapterUrls.size}\n"
+                                                    diagnosticOutput += "  • Total Chapters Found: ${chapterUrls.size}\n"
                                                     if (chapterUrls.isNotEmpty()) {
-                                                        diagnosticOutput += "  First up to 3 URLs:\n"
-                                                        chapterUrls.take(3).forEachIndexed { i, u ->
-                                                            diagnosticOutput += "    [${i + 1}] $u\n"
-                                                        }
-                                                        if (chapterUrls.size > 3) {
-                                                            diagnosticOutput += "  Last up to 3 URLs:\n"
-                                                            val lastThree = chapterUrls.takeLast(3)
-                                                            val startIdx = chapterUrls.size - lastThree.size + 1
-                                                            lastThree.forEachIndexed { i, u ->
-                                                                diagnosticOutput += "    [${startIdx + i}] $u\n"
-                                                            }
-                                                        }
+                                                        diagnosticOutput += "  • First 3 Chapters:\n"
+                                                        chapterUrls.take(3).forEachIndexed { i, u -> diagnosticOutput += "    [${i+1}] $u\n" }
                                                     }
                                                 }
 
-                                                // 4. scrapeChapterContent on first chapter
                                                 if (chapterUrls.isNotEmpty()) {
-                                                    val firstChapUrl = chapterUrls.first()
+                                                    val firstCh = chapterUrls.first()
                                                     withContext(Dispatchers.Main) {
-                                                        diagnosticOutput += "\n[STEP 4] Scraping First Chapter Content ($firstChapUrl)...\n"
+                                                        diagnosticOutput += "\n[STEP 4] Scraping Chapter Content ($firstCh)...\n"
                                                     }
-                                                    val rawContent = scraper.scrapeChapterContent(testWebView!!, firstChapUrl) { false }
-                                                    val chapTitle = rawContent.first
-                                                    val chapBody = rawContent.second
-                                                    val preview = chapBody.take(300)
+                                                    val content = scraper.scrapeChapterContent(testWebView!!, firstCh) { false }
                                                     withContext(Dispatchers.Main) {
-                                                        diagnosticOutput += "  Chapter Title: $chapTitle\n"
-                                                        diagnosticOutput += "  Body Length: ${chapBody.length} characters\n"
-                                                        diagnosticOutput += "  Body Preview (First 300 chars):\n----------------------------------------\n$preview\n----------------------------------------\n"
+                                                        diagnosticOutput += "  • Chapter Title: ${content.first}\n"
+                                                        diagnosticOutput += "  • Text Length: ${content.second.length} characters\n"
+                                                        diagnosticOutput += "  • Snippet Preview:\n------------------------------------\n${content.second.take(300)}\n------------------------------------\n"
                                                         diagnosticOutput += "\n=== DIAGNOSTIC FINISHED SUCCESSFULLY ==="
-                                                    }
-                                                } else {
-                                                    withContext(Dispatchers.Main) {
-                                                        diagnosticOutput += "\n[STEP 4] Skipped (No chapters returned from TOC)\n"
-                                                        diagnosticOutput += "\n=== DIAGNOSTIC FINISHED ==="
                                                     }
                                                 }
                                             }
                                         } catch (e: Exception) {
-                                            val exClass = e::class.qualifiedName ?: e::class.java.name
-                                            val exMsg = e.message ?: "No error message"
                                             withContext(Dispatchers.Main) {
-                                                diagnosticOutput += "\n[DIAGNOSTIC ERROR / EXCEPTION]\nClass: $exClass\nMessage: $exMsg\n"
-                                                e.cause?.let { cause ->
-                                                    diagnosticOutput += "Cause: ${cause::class.qualifiedName ?: cause::class.java.name}: ${cause.message}\n"
-                                                }
-                                                diagnosticOutput += "\n=== DIAGNOSTIC TERMINATED WITH ERROR ==="
+                                                diagnosticOutput += "\n[DIAGNOSTIC ERROR] ${e::class.simpleName}: ${e.message}\n"
                                             }
                                         } finally {
                                             withContext(Dispatchers.Main) {
@@ -348,291 +597,46 @@ fun PluginManagementScreen(
                                 enabled = !isRunningDiagnostic && diagnosticUrl.isNotBlank()
                             ) {
                                 if (isRunningDiagnostic) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimary
-                                    )
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("Testing...")
                                 } else {
                                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Test this site")
+                                    Text("Run Diagnostic")
                                 }
                             }
 
                             if (isRunningDiagnostic) {
-                                OutlinedButton(
-                                    onClick = {
-                                        diagnosticJob?.cancel()
-                                        isRunningDiagnostic = false
-                                        diagnosticOutput += "\n[CANCELLED BY USER]\n"
-                                    }
-                                ) {
-                                    Text("Cancel")
-                                }
+                                OutlinedButton(onClick = {
+                                    diagnosticJob?.cancel()
+                                    isRunningDiagnostic = false
+                                    diagnosticOutput += "\n[Cancelled by user]\n"
+                                }) { Text("Cancel") }
                             } else if (diagnosticOutput.isNotBlank()) {
-                                TextButton(
-                                    onClick = { diagnosticOutput = "" }
-                                ) {
-                                    Text("Clear Output")
-                                }
+                                TextButton(onClick = { diagnosticOutput = "" }) { Text("Clear Output") }
                             }
                         }
 
-                        if (diagnosticOutput.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                "Diagnostic Results (Selectable):",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 120.dp, max = 320.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-                                    .padding(12.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .verticalScroll(rememberScrollState())
-                                ) {
-                                    SelectionContainer {
-                                        Text(
-                                            text = diagnosticOutput,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 11.sp,
-                                            lineHeight = 16.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (errorMessage != null) {
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                errorMessage ?: "",
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { errorMessage = null }) {
-                                Icon(Icons.Default.Close, contentDescription = "Dismiss")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Built-in Sites Section
-            item {
-                Text(
-                    "Built-in Sites",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-            }
-
-            if (builtInPlugins.isEmpty()) {
-                item {
-                    Text(
-                        "No built-in plugins found.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
-            } else {
-                items(builtInPlugins, key = { it.id }) { plugin ->
-                    val isForked = !plugin.isBuiltIn
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Row(
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                                .padding(12.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                                SelectionContainer {
                                     Text(
-                                        plugin.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        maxLines = 1,
-                                        overflow = TextDefaults.OVERFLOW
-                                    )
-                                    if (isForked) {
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        SuggestionChip(
-                                            onClick = { },
-                                            label = { Text("Edited", fontSize = 10.sp) },
-                                            modifier = Modifier.height(20.dp)
-                                        )
-                                    }
-                                }
-                                Text(
-                                    "Base URL: ${plugin.baseUrl} | v${plugin.version} by ${plugin.author}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (plugin.description.isNotBlank()) {
-                                    Text(
-                                        plugin.description,
-                                        style = MaterialTheme.typography.bodySmall,
+                                        text = if (diagnosticOutput.isBlank()) "Enter a novel URL and tap 'Run Diagnostic'..." else diagnosticOutput,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        lineHeight = 16.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-
-                                Row(
-                                    modifier = Modifier.padding(top = 8.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    if (isForked) {
-                                        TextButton(
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    pluginManager.deletePlugin(plugin.id)
-                                                    Toast.makeText(context, "Restored original ${plugin.name}", Toast.LENGTH_SHORT).show()
-                                                }
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                        ) {
-                                            Icon(Icons.Default.Undo, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Restore original", fontSize = 12.sp)
-                                        }
-                                    } else {
-                                        TextButton(
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    pluginManager.forkBuiltIn(plugin.id)
-                                                        .onSuccess {
-                                                            Toast.makeText(context, "Created editable copy of ${plugin.name}", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                        .onFailure {
-                                                            errorMessage = "Fork failed: ${it.message}"
-                                                        }
-                                                }
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                        ) {
-                                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Edit a copy", fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Switch(
-                                checked = plugin.isEnabled,
-                                onCheckedChange = { enabled ->
-                                    coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // My Sites Section
-            item {
-                Text(
-                    "My Sites",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
-                )
-            }
-
-            if (myPlugins.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 16.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "No custom sites installed.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            } else {
-                items(myPlugins, key = { it.id }) { plugin ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    plugin.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextDefaults.OVERFLOW
-                                )
-                                Text(
-                                    "Base URL: ${plugin.baseUrl} | v${plugin.version} by ${plugin.author}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (plugin.description.isNotBlank()) {
-                                    Text(
-                                        plugin.description,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Switch(
-                                checked = plugin.isEnabled,
-                                onCheckedChange = { enabled ->
-                                    coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
-                                }
-                            )
-                            IconButton(
-                                onClick = { pluginToDelete = plugin },
-                                modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete plugin")
                             }
                         }
                     }
@@ -641,225 +645,302 @@ fun PluginManagementScreen(
         }
     }
 
-    if (showPasteDialog) {
+    // Modal: Template Picker Dialog
+    if (showTemplatePickerDialog) {
         AlertDialog(
-            onDismissRequest = { showPasteDialog = false },
-            title = { Text("Paste Plugin JSON") },
+            onDismissRequest = { showTemplatePickerDialog = false },
+            title = { Text("Create New Site Add-on", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Select a template to configure your add-on:", style = MaterialTheme.typography.bodySmall)
+
+                    ListItem(
+                        headlineContent = { Text("Standard Novel Site", fontWeight = FontWeight.Bold) },
+                        supportingContent = { Text("For single-page TOC sites with standard CSS selectors") },
+                        leadingContent = { Icon(Icons.Default.MenuBook, contentDescription = null) },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        trailingContent = {
+                            Button(onClick = {
+                                showTemplatePickerDialog = false
+                                studioConfigToEdit = pluginManager.createDefaultPlugin("standard")
+                                studioIsNew = true
+                                showStudioDialog = true
+                            }) { Text("Use") }
+                        }
+                    )
+
+                    ListItem(
+                        headlineContent = { Text("Paginated Table of Contents", fontWeight = FontWeight.Bold) },
+                        supportingContent = { Text("For novel sites with multi-page chapter lists (?page=1, 2, ...)") },
+                        leadingContent = { Icon(Icons.Default.FilterList, contentDescription = null) },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        trailingContent = {
+                            Button(onClick = {
+                                showTemplatePickerDialog = false
+                                studioConfigToEdit = pluginManager.createDefaultPlugin("paginated")
+                                studioIsNew = true
+                                showStudioDialog = true
+                            }) { Text("Use") }
+                        }
+                    )
+
+                    ListItem(
+                        headlineContent = { Text("Single-Page App / JS Heavy", fontWeight = FontWeight.Bold) },
+                        supportingContent = { Text("For client-rendered sites requiring content readiness probes") },
+                        leadingContent = { Icon(Icons.Default.Javascript, contentDescription = null) },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        trailingContent = {
+                            Button(onClick = {
+                                showTemplatePickerDialog = false
+                                studioConfigToEdit = pluginManager.createDefaultPlugin("spa")
+                                studioIsNew = true
+                                showStudioDialog = true
+                            }) { Text("Use") }
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        OutlinedButton(onClick = {
+                            showTemplatePickerDialog = false
+                            filePicker.launch(arrayOf("application/json", "text/plain"))
+                        }) {
+                            Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Import File")
+                        }
+                        OutlinedButton(onClick = {
+                            showTemplatePickerDialog = false
+                            pasteJsonText = ""
+                            showPasteJsonDialog = true
+                        }) {
+                            Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Paste JSON")
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showTemplatePickerDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Modal: Paste JSON Dialog
+    if (showPasteJsonDialog) {
+        AlertDialog(
+            onDismissRequest = { showPasteJsonDialog = false },
+            title = { Text("Paste Add-on JSON") },
             text = {
                 OutlinedTextField(
                     value = pasteJsonText,
                     onValueChange = { pasteJsonText = it },
-                    label = { Text("Plugin JSON") },
+                    label = { Text("JSON String") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(200.dp),
-                    maxLines = 10
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            val result = pluginManager.savePlugin(pasteJsonText)
-                            result.onSuccess {
-                                showPasteDialog = false
-                                pasteJsonText = ""
-                                Toast.makeText(context, "Plugin '${it.name}' installed", Toast.LENGTH_SHORT).show()
-                            }.onFailure {
-                                errorMessage = it.message
+                Button(onClick = {
+                    coroutineScope.launch {
+                        pluginManager.savePlugin(pasteJsonText)
+                            .onSuccess {
+                                showPasteJsonDialog = false
+                                Toast.makeText(context, "Installed '${it.name}' add-on", Toast.LENGTH_SHORT).show()
                             }
-                        }
+                            .onFailure { errorMessage = it.message }
                     }
-                ) {
-                    Text("Install")
-                }
+                }) { Text("Install") }
             },
             dismissButton = {
-                TextButton(onClick = { showPasteDialog = false }) {
-                    Text("Cancel")
+                TextButton(onClick = { showPasteJsonDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Modal: Plugin Studio Dialog (Interactive Form + JSON Editor + Live Tester)
+    if (showStudioDialog && studioConfigToEdit != null) {
+        PluginStudioDialog(
+            initialConfig = studioConfigToEdit!!,
+            isNewPlugin = studioIsNew,
+            pluginManager = pluginManager,
+            onDismiss = {
+                showStudioDialog = false
+                studioConfigToEdit = null
+            },
+            onSave = { updated ->
+                coroutineScope.launch {
+                    pluginManager.savePluginConfig(updated)
+                        .onSuccess {
+                            showStudioDialog = false
+                            studioConfigToEdit = null
+                            Toast.makeText(context, "Saved '${updated.name}' add-on!", Toast.LENGTH_SHORT).show()
+                        }
+                        .onFailure { errorMessage = "Save failed: ${it.message}" }
                 }
             }
         )
     }
 
+    // Modal: Live Web Inspector & Selector Lab
+    if (showInspectorDialog) {
+        WebInspectorDialog(
+            initialUrl = inspectorInitialUrl,
+            onDismiss = { showInspectorDialog = false },
+            onCreatePluginFromInspector = { prefilled ->
+                showInspectorDialog = false
+                studioConfigToEdit = prefilled
+                studioIsNew = true
+                showStudioDialog = true
+            }
+        )
+    }
+
+    // Modal: Confirm Delete Dialog
     if (pluginToDelete != null) {
         AlertDialog(
             onDismissRequest = { pluginToDelete = null },
-            title = { Text("Delete Plugin") },
-            text = { Text("Are you sure you want to delete '${pluginToDelete?.name}'?") },
+            title = { Text("Delete Add-on") },
+            text = { Text("Are you sure you want to delete '${pluginToDelete?.name}'? If this was a built-in add-on, its factory version will be restored.") },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         val target = pluginToDelete
                         if (target != null) {
                             coroutineScope.launch {
                                 pluginManager.deletePlugin(target.id)
                                 pluginToDelete = null
+                                Toast.makeText(context, "Deleted ${target.name}", Toast.LENGTH_SHORT).show()
                             }
                         }
-                    }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
             },
             dismissButton = {
-                TextButton(onClick = { pluginToDelete = null }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { pluginToDelete = null }) { Text("Cancel") }
             }
         )
     }
+}
 
-    // Inspect Page Debug Tool Dialog
-    if (showInspectDialog) {
-        AlertDialog(
-            onDismissRequest = { showInspectDialog = false },
-            title = { Text("Inspect WTR Lab / SPA Metadata") },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+@Composable
+private fun PluginCardItem(
+    plugin: PluginConfig,
+    isBuiltIn: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
+    onExport: () -> Unit,
+    onCopyJson: () -> Unit,
+    onTest: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Enter the WTR Lab book URL below to run the Next.js '__NEXT_DATA__' inspector tool.",
-                        style = MaterialTheme.typography.bodySmall
+                        plugin.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    OutlinedTextField(
-                        value = inspectUrl,
-                        onValueChange = { inspectUrl = it },
-                        label = { Text("URL to inspect") },
-                        modifier = Modifier.fillMaxWidth()
+                    Spacer(modifier = Modifier.width(6.dp))
+                    SuggestionChip(
+                        onClick = {},
+                        label = { Text("v${plugin.version}", fontSize = 10.sp) },
+                        modifier = Modifier.height(22.dp)
                     )
+                }
 
-                    if (isInspecting) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(150.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator()
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Loading page & extracting...", style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    } else if (inspectResultText.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Inspector Output:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(180.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-                                    .padding(8.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .verticalScroll(rememberScrollState())
-                                ) {
-                                    Text(
-                                        text = inspectResultText,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
+                Switch(checked = plugin.isEnabled, onCheckedChange = onToggle)
+            }
+
+            Text(
+                "Domain: ${plugin.baseUrl}" + if (plugin.extraHosts.isNotEmpty()) " (${plugin.extraHosts.joinToString()})" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium
+            )
+
+            if (plugin.description.isNotBlank()) {
+                Text(
+                    plugin.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Quick Actions Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onEdit, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Edit", fontSize = 12.sp)
                     }
 
-                    // Hidden WebView to perform the actual load and JavaScript execution
-                    Box(modifier = Modifier.size(1.dp)) {
-                        AndroidView(
-                            factory = { ctx ->
-                                WebView(ctx).apply {
-                                    WebViewFactory.applySafeDefaults(this)
-                                    webViewClient = object : WebViewFactory.SafeWebViewClient() {
-                                        override fun onPageFinished(view: WebView?, url: String?) {
-                                            super.onPageFinished(view, url)
-                                            val inspectScript = """
-                                                (() => {
-                                                  const el = document.getElementById('__NEXT_DATA__');
-                                                  if (!el) return JSON.stringify({ found: false, reason: 'no __NEXT_DATA__ script tag' });
-                                                  let data;
-                                                  try { data = JSON.parse(el.textContent); }
-                                                  catch (e) { return JSON.stringify({ found: false, reason: 'not valid JSON' }); }
+                    TextButton(onClick = onTest, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Test", fontSize = 12.sp)
+                    }
 
-                                                  const hits = [];
-                                                  const walk = (node, path, depth) => {
-                                                    if (depth > 8 || node === null || typeof node !== 'object') return;
-                                                    for (const k of Object.keys(node)) {
-                                                      const v = node[k];
-                                                      const p = path + '.' + k;
-                                                      if (/^(raw_id|rawId|serie_id|serieId|id|slug)$/.test(k) &&
-                                                          (typeof v === 'number' || typeof v === 'string')) {
-                                                        hits.push(p + ' = ' + v);
-                                                      }
-                                                      if (Array.isArray(v) && v.length && typeof v[0] === 'object' &&
-                                                          v[0] !== null && ('order' in v[0] || 'title' in v[0] || 'name' in v[0])) {
-                                                        hits.push(p + ' [] len=' + v.length + ' keys=' + Object.keys(v[0]).join(','));
-                                                      }
-                                                      walk(v, p, depth + 1);
-                                                    }
-                                                  };
-                                                  walk(data, '$', 0);
-                                                  return JSON.stringify({ found: true, path: location.pathname, hits: hits.slice(0, 60) });
-                                                })()
-                                            """.trimIndent()
+                    TextButton(onClick = onDuplicate, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Clone", fontSize = 12.sp)
+                    }
+                }
 
-                                            view?.evaluateJavascript(inspectScript) { evalResult ->
-                                                coroutineScope.launch {
-                                                    isInspecting = false
-                                                    inspectResultText = if (evalResult.isNullOrBlank() || evalResult == "null") {
-                                                        "Error: Returned empty or null output."
-                                                    } else {
-                                                        // Pretty format
-                                                        evalResult.replace("\\n", "\n")
-                                                            .replace("\\\"", "\"")
-                                                            .trim('\"')
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    webViewInstance = this
-                                }
-                            },
-                            update = { /* handled dynamically */ },
-                            onRelease = { view ->
-                                WebViewFactory.destroySafely(view)
-                            }
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    IconButton(onClick = onExport, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.FileDownload, contentDescription = "Export JSON", modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(onClick = onCopyJson, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Code, contentDescription = "Copy JSON", modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            if (isBuiltIn) Icons.Default.Undo else Icons.Default.Delete,
+                            contentDescription = if (isBuiltIn) "Restore" else "Delete",
+                            tint = if (isBuiltIn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        isInspecting = true
-                        inspectResultText = ""
-                        webViewInstance?.loadUrl(inspectUrl)
-                    },
-                    enabled = !isInspecting && inspectUrl.isNotBlank()
-                ) {
-                    Text("Inspect")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showInspectDialog = false
-                        isInspecting = false
-                        inspectResultText = ""
-                    }
-                ) {
-                    Text("Close")
-                }
             }
-        )
+        }
     }
 }

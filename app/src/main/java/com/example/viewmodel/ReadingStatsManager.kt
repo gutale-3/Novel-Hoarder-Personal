@@ -65,30 +65,27 @@ class ReadingStatsManager(
         }
 
         // Calculate Daily Streak
-        val distinctDates = sessions.map { it.date }.distinct().sortedDescending()
+        val dateSet = sessions.map { it.date }.toSet()
         var streak = 0
         val cal = Calendar.getInstance()
-
-        // Check if user read today or yesterday to maintain active streak
         val today = dateFormat.format(cal.time)
         cal.add(Calendar.DAY_OF_YEAR, -1)
         val yesterday = dateFormat.format(cal.time)
 
-        if (distinctDates.contains(today)) {
+        if (dateSet.contains(today)) {
             streak = 1
-            cal.time = Date()
-            cal.add(Calendar.DAY_OF_YEAR, -1)
-            while (distinctDates.contains(dateFormat.format(cal.time))) {
+            val checkCal = Calendar.getInstance()
+            checkCal.add(Calendar.DAY_OF_YEAR, -1)
+            while (dateSet.contains(dateFormat.format(checkCal.time))) {
                 streak++
-                cal.add(Calendar.DAY_OF_YEAR, -1)
+                checkCal.add(Calendar.DAY_OF_YEAR, -1)
             }
-        } else if (distinctDates.contains(yesterday)) {
-            streak = 0 // hasn't read today yet, but streak not broken from yesterday
-            cal.time = Date()
-            cal.add(Calendar.DAY_OF_YEAR, -1)
-            while (distinctDates.contains(dateFormat.format(cal.time))) {
+        } else if (dateSet.contains(yesterday)) {
+            val checkCal = Calendar.getInstance()
+            checkCal.add(Calendar.DAY_OF_YEAR, -1)
+            while (dateSet.contains(dateFormat.format(checkCal.time))) {
                 streak++
-                cal.add(Calendar.DAY_OF_YEAR, -1)
+                checkCal.add(Calendar.DAY_OF_YEAR, -1)
             }
         }
 
@@ -116,8 +113,25 @@ class ReadingStatsManager(
 
     fun recordReadingSession(bookId: String, chapterId: String, durationSeconds: Long, wordsRead: Int) {
         if (durationSeconds <= 0 && wordsRead <= 0) return
+        // Sanitize to prevent runaway values if app was left backgrounded/idle
+        val safeDuration = durationSeconds.coerceIn(1L, 3600L)
+        val safeWords = wordsRead.coerceIn(0, 50000)
         coroutineScope.launch(Dispatchers.IO) {
-            repository.recordReadingSession(bookId, chapterId, durationSeconds, wordsRead)
+            repository.recordReadingSession(bookId, chapterId, safeDuration, safeWords)
+        }
+    }
+
+    fun resetAllStats() {
+        coroutineScope.launch(Dispatchers.IO) {
+            repository.clearAllReadingSessions()
+            withContext(Dispatchers.Main) {
+                totalReadingSeconds = 0L
+                totalWordsRead = 0L
+                todayReadingSeconds = 0L
+                todayWordsRead = 0
+                currentStreakDays = 0
+                weeklyMinutes = emptyList()
+            }
         }
     }
 

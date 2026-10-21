@@ -299,6 +299,9 @@ interface BookDao {
     @Query("DELETE FROM reading_sessions WHERE bookId = :bookId")
     suspend fun deleteReadingSessionsForBook(bookId: String)
 
+    @Query("DELETE FROM reading_sessions")
+    suspend fun clearAllReadingSessions()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertReadingSessions(sessions: List<ReadingSessionEntity>)
 
@@ -395,6 +398,35 @@ interface BookDao {
 
     @Query("UPDATE chapters SET content = '' WHERE isRead = 1")
     suspend fun clearAllReadChaptersContent(): Int
+
+    // --- Chapter Revision History & Undo/Redo ---
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertChapterHistory(history: ChapterHistoryEntity)
+
+    @Query("SELECT * FROM chapter_history WHERE chapterId = :chapterId AND isRedo = 0 ORDER BY timestamp DESC")
+    suspend fun getUndoHistoriesForChapter(chapterId: String): List<ChapterHistoryEntity>
+
+    @Query("SELECT * FROM chapter_history WHERE chapterId = :chapterId AND isRedo = 1 ORDER BY timestamp DESC")
+    suspend fun getRedoHistoriesForChapter(chapterId: String): List<ChapterHistoryEntity>
+
+    @Query("SELECT * FROM chapter_history WHERE chapterId = :chapterId ORDER BY timestamp DESC")
+    suspend fun getAllHistoryForChapter(chapterId: String): List<ChapterHistoryEntity>
+
+    @Query("SELECT * FROM chapter_history WHERE bookId = :bookId ORDER BY timestamp DESC LIMIT 100")
+    suspend fun getAllHistoryForBook(bookId: String): List<ChapterHistoryEntity>
+
+    @Query("DELETE FROM chapter_history WHERE id = :id")
+    suspend fun deleteChapterHistory(id: String)
+
+    @Query("DELETE FROM chapter_history WHERE chapterId = :chapterId")
+    suspend fun clearHistoryForChapter(chapterId: String)
+
+    // --- Book-Specific Deleted Chapters (for instant restore/undo) ---
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId AND isDeleted = 1 ORDER BY chapterNumber ASC")
+    fun getDeletedChaptersForBookFlow(bookId: String): kotlinx.coroutines.flow.Flow<List<ChapterEntity>>
+
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId AND isDeleted = 1 ORDER BY chapterNumber ASC")
+    suspend fun getDeletedChaptersForBook(bookId: String): List<ChapterEntity>
 }
 
 data class BookStats(

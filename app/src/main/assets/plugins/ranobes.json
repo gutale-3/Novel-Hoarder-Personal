@@ -1,0 +1,24 @@
+{
+  "id": "ranobes",
+  "name": "Ranobes",
+  "version": "1.0.0",
+  "baseUrl": "ranobes.top",
+  "extraHosts": ["ranobes.net", "www.ranobes.top", "www.ranobes.net"],
+  "author": "Built-in",
+  "description": "Extensive library of Asian and English translated light novels and web novels.",
+
+  "titleSelector": "h1.title, h1",
+  "authorSelector": "span[itemprop='author'], span.author, .r-fullstory__body a[href*='/author/']",
+  "synopsisSelector": ".moreless__full, .r-fullstory__body .description, #fullstory",
+  "coverSelector": ".r-fullstory__poster img, .poster img, meta[property='og:image']",
+
+  "chapterListSelector": ".r-fullstory-chapters__list a, .chapters-scroll a, a[href*='/novels/']",
+  "chapterTitleSelector": "h1.title, .r-fullstory__header h1, h1",
+  "chapterBodySelector": "#arrticle, .text, .r-fullstory__body",
+  "chapterReadySelector": "#arrticle",
+
+  "junkSelectors": [".ad", ".ads", ".banner", ".social-shares", ".r-fullstory__nav"],
+  "tocPaginationMode": "none",
+  "requestDelayMs": 1500,
+  "isEnabled": true
+}
