@@ -41,9 +41,9 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun testAppNameIsNovelHoarder() {
+    fun testAppNameIsInkvault() {
         val appName = context.getString(R.string.app_name)
-        assertEquals("Novel Hoarder", appName)
+        assertEquals("Inkvault", appName)
     }
 
     @Test
