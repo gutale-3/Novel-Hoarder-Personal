@@ -84,6 +84,10 @@ fun LibraryBookItem(
     modifier: Modifier = Modifier
 ) {
     var expandedMenu by remember { mutableStateOf(false) }
+    var showQualityCheck by remember { mutableStateOf(false) }
+    if (showQualityCheck) {
+        com.example.ui.components.ChapterQualityDialog(book) { showQualityCheck = false }
+    }
 
     // Title formatted up to 15 words, displaying across up to two lines
     val displayTitle = remember(book.title) {
@@ -331,6 +335,14 @@ fun LibraryBookItem(
                                         leadingIcon = { Icon(Icons.Default.CloudDownload, contentDescription = null) }
                                     )
                                     AutoDownloadMenuItem(book)
+                                    DropdownMenuItem(
+                                        text = { Text("Check Chapter Quality") },
+                                        onClick = {
+                                            expandedMenu = false
+                                            showQualityCheck = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.FactCheck, contentDescription = null) }
+                                    )
                                     Divider()
                                 }
                                 DropdownMenuItem(

@@ -1043,6 +1043,16 @@ class ScrapingManager(
                 }
             }
 
+            // Flag chapters that downloaded as login/limit pages, duplicates or cut-off text.
+            if (sessionDownloadedCount > 0) {
+                val report = com.example.util.ChapterQualityChecker.check(repository.getChapters(currentBookState.id))
+                if (report.issues.isNotEmpty()) {
+                    addLog("Quality check: ${report.issues.size} suspicious chapter(s) " +
+                        report.issues.take(8).joinToString { "#${it.chapter.chapterNumber} (${it.problem.label})" } +
+                        ". Re-download them from the novel's menu → Check Chapter Quality.")
+                }
+            }
+
             // 3. Post-compile formats (EPUB/PDF) if required
             if (sessionDownloadedCount > 0 || chapterUrls.isNotEmpty()) {
                 val allLocalChapters = repository.getChapters(currentBookState.id)
