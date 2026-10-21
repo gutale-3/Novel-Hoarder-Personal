@@ -14,19 +14,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.util.CloudflareDetector
 import com.example.util.WebViewFactory
 import kotlinx.coroutines.delay
 
 /**
  * Full-screen page where the user passes a site's bot check or fixes a chapter that did not load.
+ * Must be placed at the top level of the window (MainActivity does this), not inside a list.
  * No instructions — just the page and a big Resume button at the bottom, clear of the gesture bar.
  * When a bot check that was showing disappears, it resumes by itself after a moment.
  *
  * Uses the scraper's User-Agent and cookie store, so the pass carries over to the next download.
  */
+/**
+ * A check requested from somewhere that cannot host a full-screen page itself (e.g. a banner
+ * inside the reader's list). MainActivity shows [current] over the whole app.
+ */
+object SecurityCheckRequests {
+    data class Request(val url: String, val userAgent: String, val onDone: () -> Unit)
+
+    var current by mutableStateOf<Request?>(null)
+}
+
 @Composable
 fun SecurityCheckDialog(
     url: String,
@@ -68,14 +77,11 @@ fun SecurityCheckDialog(
         }
     }
 
-    Dialog(
-        onDismissRequest = onCancel,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
-            dismissOnClickOutside = false
-        )
-    ) {
+    androidx.activity.compose.BackHandler(onBack = onCancel)
+
+    // Drawn in the activity window (MainActivity hosts it over everything), not a Dialog: the
+    // dialog window ran past the bottom of the screen and hid the Resume button.
+    run {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
                 AndroidView(

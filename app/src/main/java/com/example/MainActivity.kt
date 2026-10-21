@@ -162,15 +162,12 @@ class MainActivity : ComponentActivity() {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route ?: "home"
 
-                // A paused download needs the user: bring the solver window up wherever they are.
-                LaunchedEffect(viewModel.showCaptchaDialog) {
-                    if (viewModel.showCaptchaDialog && navController.currentDestination?.route != "scrape") {
-                        goToTab("scrape")
-                    }
-                }
+                // The security-check window and the browser are drawn over the whole app (below),
+                // so a paused download no longer needs to jump to the Scrape tab.
 
                 val isFullScreen = currentRoute.startsWith("reader") || currentRoute == "settings" || currentRoute == "plugins"
 
+                Box(Modifier.fillMaxSize()) {
                 Scaffold(
                     // Full-screen pages (reader, settings, sites) handle the system bars themselves;
                     // padding them here painted white bands above and below the reader.
@@ -427,6 +424,39 @@ class MainActivity : ComponentActivity() {
                                 .padding(bottom = 8.dp)
                         )
                     }
+                }
+
+                // Full-screen pages drawn over everything in the activity window (not Dialogs,
+                // whose windows were mis-sized and cut off the bottom of the page).
+                if (viewModel.showManualBrowser) {
+                    ManualBrowserScreen(viewModel)
+                }
+                if (viewModel.showCaptchaDialog) {
+                    com.example.ui.components.SecurityCheckDialog(
+                        url = viewModel.captchaUrl,
+                        userAgent = viewModel.scraping.captchaUserAgent.ifBlank { viewModel.defaultUserAgent },
+                        onDone = { viewModel.scraping.resumeAfterCaptcha() },
+                        onCancel = {
+                            viewModel.showCaptchaDialog = false
+                            viewModel.scraping.stopScraping()
+                        },
+                        doneLabel = "Resume",
+                        cancelLabel = "Stop"
+                    )
+                }
+                com.example.ui.components.SecurityCheckRequests.current?.let { req ->
+                    com.example.ui.components.SecurityCheckDialog(
+                        url = req.url,
+                        userAgent = req.userAgent,
+                        onDone = {
+                            com.example.ui.components.SecurityCheckRequests.current = null
+                            req.onDone()
+                        },
+                        onCancel = { com.example.ui.components.SecurityCheckRequests.current = null },
+                        doneLabel = "Done",
+                        cancelLabel = "Cancel"
+                    )
+                }
                 }
             }
         }

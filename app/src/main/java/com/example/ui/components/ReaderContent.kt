@@ -777,16 +777,17 @@ private fun SecurityCheckChapterBanner(chapter: ChapterEntity, viewModel: MainVi
     if (showCheck) {
         val pluginUa = (com.example.data.scraper.SourceManager.getSourceForUrl(chapter.url)
             as? com.example.data.plugin.PluginExecutionEngine)?.config?.customUserAgent.orEmpty()
-        SecurityCheckDialog(
-            url = chapter.url,
-            userAgent = pluginUa.ifBlank { viewModel.defaultUserAgent },
-            onDone = {
-                showCheck = false
-                com.example.data.scraper.DownloadQuota.get(context)
-                    .clearChallenge(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
-                redownload()
-            },
-            onCancel = { showCheck = false }
-        )
+        LaunchedEffect(Unit) {
+            showCheck = false
+            SecurityCheckRequests.current = SecurityCheckRequests.Request(
+                url = chapter.url,
+                userAgent = pluginUa.ifBlank { viewModel.defaultUserAgent },
+                onDone = {
+                    com.example.data.scraper.DownloadQuota.get(context)
+                        .clearChallenge(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
+                    redownload()
+                }
+            )
+        }
     }
 }
