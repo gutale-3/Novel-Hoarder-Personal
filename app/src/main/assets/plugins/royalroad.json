@@ -20,5 +20,6 @@
   "junkSelectors": [".portlet-body", ".author-note-portlet", ".author-note", ".ad", ".banner", ".sharedaddy"],
   "tocPaginationMode": "none",
   "requestDelayMs": 1500,
+  "testUrl": "https://www.royalroad.com/fiction/21220/mother-of-learning",
   "isEnabled": true
 }

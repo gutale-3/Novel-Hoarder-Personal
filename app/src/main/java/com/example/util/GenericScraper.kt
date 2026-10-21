@@ -48,11 +48,10 @@ object GenericScraper : NovelSource {
         var jsonResult: String? = null
         val startTime = System.currentTimeMillis()
 
+        val watch = CloudflareDetector.ChallengeWatch(sourceName)
         while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
+            watch.check(webView)
             val eval = evaluateJs(webView, PageExtractors.BOOK_INFO_JS)
-            if (eval != null && eval.contains("cloudflare") && eval.contains("challenge")) {
-                throw CloudflareException("Cloudflare protection detected. Please solve captcha in manual browser.")
-            }
             if (JsResultParser.isReady(eval)) {
                 jsonResult = eval
                 break
@@ -92,7 +91,9 @@ object GenericScraper : NovelSource {
         var jsonResult: String? = null
         val startTime = System.currentTimeMillis()
 
+        val watch = CloudflareDetector.ChallengeWatch(sourceName)
         while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 45000) {
+            watch.check(webView)
             val eval = evaluateJs(webView, PageExtractors.TOC_READY_JS)
             if (JsResultParser.isReady(eval)) {
                 jsonResult = evaluateJs(webView, PageExtractors.TOC_EXTRACT_JS)
@@ -129,8 +130,10 @@ object GenericScraper : NovelSource {
         val startTime = System.currentTimeMillis()
         var ready = false
 
+        val watch = CloudflareDetector.ChallengeWatch(sourceName)
         while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
             if (shouldSkip()) break
+            watch.check(webView)
             val eval = evaluateJs(webView, readyJs)
             if (JsResultParser.isReady(eval)) {
                 ready = true
@@ -145,6 +148,9 @@ object GenericScraper : NovelSource {
         val rawContent = jsonObj?.optString("content").orEmpty()
 
         if (!ready && rawContent.length < 200) {
+            if (CloudflareDetector.isChallenge(webView)) {
+                throw CloudflareException("$sourceName: Cloudflare/anti-bot check is blocking $chapterUrl")
+            }
             throw IOException("Page did not finish loading: $chapterUrl")
         }
 

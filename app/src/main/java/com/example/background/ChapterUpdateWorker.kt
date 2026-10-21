@@ -25,6 +25,21 @@ class ChapterUpdateWorker(
         const val WORK_NAME = "novel_chapter_update_worker"
         const val CHANNEL_ID = "chapter_updates_channel"
         const val NOTIFICATION_ID_BASE = 2000
+        const val CHECK_NOW_WORK_NAME = "novel_chapter_update_check_now"
+
+        /** Runs the update check once, right away, for the Updates tab's "Check now" button. */
+        fun checkNow(context: Context) {
+            val request = androidx.work.OneTimeWorkRequestBuilder<ChapterUpdateWorker>()
+                .setConstraints(
+                    androidx.work.Constraints.Builder()
+                        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
+            androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                CHECK_NOW_WORK_NAME, androidx.work.ExistingWorkPolicy.KEEP, request
+            )
+        }
 
         fun schedulePeriodicUpdates(context: Context) {
             try {
@@ -91,22 +106,34 @@ class ChapterUpdateWorker(
             notificationManager.createNotificationChannel(channel)
         }
 
+        val updatesStore = ChapterUpdatesStore.get(context)
         for ((index, book) in books.withIndex()) {
+            if (book.url.startsWith("local://")) continue
             try {
                 val scraper = SourceManager.getSourceForUrl(book.url)
                 val bookUrl = book.url
 
+                var checkError: String? = null
                 val chapterUrls = withContext(Dispatchers.Main) {
                     val webView = com.example.util.WebViewFactory.create(context, null)
                     var urls = emptyList<String>()
                     try {
                         urls = scraper.scrapeChapterList(webView, bookUrl)
+                    } catch (e: com.example.util.CloudflareException) {
+                        checkError = "Blocked by Cloudflare — open the book once to pass the check"
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        checkError = e.message ?: "Could not load the chapter list"
                     } finally {
                         try { webView.destroy() } catch (_: Exception) {}
                     }
                     urls
+                }
+                if (chapterUrls.isEmpty() && !book.url.startsWith("local://")) {
+                    updatesStore.record(
+                        ChapterUpdatesStore.Entry(book.id, 0, 0, System.currentTimeMillis(),
+                            checkError ?: "Chapter list came back empty")
+                    )
                 }
 
                 if (chapterUrls.isNotEmpty()) {
@@ -136,6 +163,10 @@ class ChapterUpdateWorker(
                         newCount = chapterUrls.size
                         nextChapterStart = 1
                     }
+
+                    updatesStore.record(
+                        ChapterUpdatesStore.Entry(book.id, newCount, nextChapterStart, System.currentTimeMillis())
+                    )
 
                     if (newCount > 0) {
                         val autoGrab = prefs.getBoolean("auto_grab_new_chapters", false)

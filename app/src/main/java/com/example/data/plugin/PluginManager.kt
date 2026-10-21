@@ -22,6 +22,13 @@ class PluginManager(private val context: Context) {
 
     private val pluginDir: File = File(context.filesDir, "plugins").apply { mkdirs() }
 
+    /** Newer copies of built-in plugins downloaded by [updateFromRemote]. */
+    private val remoteDir: File = File(context.filesDir, "plugins_remote").apply { mkdirs() }
+
+    /** Version of each built-in plugin as shipped or remotely updated, ignoring user edits. */
+    @Volatile
+    private var builtInVersions: Map<String, String> = emptyMap()
+
     private val _plugins = MutableStateFlow<List<PluginConfig>>(emptyList())
     val plugins: StateFlow<List<PluginConfig>> = _plugins.asStateFlow()
 
@@ -52,7 +59,7 @@ class PluginManager(private val context: Context) {
 
         // 1. bundled
         try {
-            val names = context.assets.list("plugins").orEmpty().filter { it.endsWith(".json") }
+            val names = context.assets.list("plugins").orEmpty().filter { it.endsWith(".json") && it != INDEX_FILE }
             for (name in names) {
                 try {
                     val json = context.assets.open("plugins/$name")
@@ -68,6 +75,28 @@ class PluginManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e("PluginManager", "Could not list bundled plugins", e)
         }
+
+        // 1b. remotely updated built-ins replace the shipped copy only when newer, so an app
+        // update that ships a fresher plugin is never shadowed by an older download.
+        try {
+            val files = remoteDir.listFiles { _, n -> n.endsWith(".json") } ?: emptyArray()
+            for (file in files) {
+                try {
+                    adapter.fromJson(file.readText())?.let { cfg ->
+                        val shipped = byId[cfg.id]
+                        if (shipped == null || compareVersions(cfg.version, shipped.version) > 0) {
+                            val enabled = prefs.getBoolean("plugin_enabled_${cfg.id}", true)
+                            byId[cfg.id] = cfg.copy(isBuiltIn = true, isEnabled = enabled)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("PluginManager", "Remote plugin ${file.name} is invalid", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("PluginManager", "Failed to list remote plugins", e)
+        }
+        builtInVersions = byId.mapValues { it.value.version }
 
         // 2. user plugins override bundled ones with the same id
         try {
@@ -164,8 +193,20 @@ class PluginManager(private val context: Context) {
      */
     suspend fun forkBuiltIn(pluginId: String): Result<PluginConfig> = withContext(Dispatchers.IO) {
         try {
-            val json = context.assets.open("plugins/$pluginId.json")
-                .bufferedReader().use { it.readText() }
+            val remote = File(remoteDir, "$pluginId.json")
+            val shipped = runCatching {
+                context.assets.open("plugins/$pluginId.json").bufferedReader().use { it.readText() }
+            }.getOrNull()
+            val remoteJson = remote.takeIf { it.exists() }?.readText()
+            val json = when {
+                remoteJson == null -> shipped ?: throw IllegalArgumentException("Unknown built-in plugin $pluginId")
+                shipped == null -> remoteJson
+                else -> {
+                    val r = adapter.fromJson(remoteJson)?.version.orEmpty()
+                    val b = adapter.fromJson(shipped)?.version.orEmpty()
+                    if (compareVersions(r, b) > 0) remoteJson else shipped
+                }
+            }
             val config = adapter.fromJson(json) ?: throw IllegalArgumentException("Invalid bundled plugin")
             val file = pluginFile(config.id)
             file.writeText(adapter.toJson(config.copy(isBuiltIn = false)))
@@ -187,16 +228,27 @@ class PluginManager(private val context: Context) {
             null
         } ?: return null
 
-        return _plugins.value.firstOrNull { plugin ->
-            if (!plugin.isEnabled) return@firstOrNull false
-            val candidates = (listOf(plugin.baseUrl) + plugin.extraHosts).mapNotNull { raw ->
-                val cleaned = raw.lowercase()
-                    .removePrefix("https://").removePrefix("http://")
-                    .removePrefix("www.").substringBefore('/').trim()
-                cleaned.ifBlank { null }
-            }
-            candidates.any { host == it || host.endsWith(".$it") }
+        return _plugins.value.firstOrNull { plugin -> plugin.isEnabled && hostMatches(plugin, host) }
+    }
+
+    /** True when [url] belongs to [plugin]'s site, whether or not the plugin is enabled. */
+    fun matches(plugin: PluginConfig, url: String): Boolean {
+        val host = try {
+            java.net.URI(url).host?.lowercase()?.removePrefix("www.")
+        } catch (e: Exception) {
+            null
+        } ?: return false
+        return hostMatches(plugin, host)
+    }
+
+    private fun hostMatches(plugin: PluginConfig, host: String): Boolean {
+        val candidates = (listOf(plugin.baseUrl) + plugin.extraHosts).mapNotNull { raw ->
+            val cleaned = raw.lowercase()
+                .removePrefix("https://").removePrefix("http://")
+                .removePrefix("www.").substringBefore('/').trim()
+            cleaned.ifBlank { null }
         }
+        return candidates.any { host == it || host.endsWith(".$it") }
     }
 
     fun exportPluginJson(config: PluginConfig): String {
@@ -225,10 +277,65 @@ class PluginManager(private val context: Context) {
         Result.success(copyConfig)
     }
 
+    data class RemoteUpdateSummary(val updated: List<String>, val failed: List<String>)
+
+    /**
+     * Downloads built-in plugins that are newer in the GitHub repo than on this device, so a site
+     * fix is a JSON edit pushed to the repo instead of a new app build. User-edited copies are
+     * left alone; they keep overriding the built-in version.
+     */
+    suspend fun updateFromRemote(baseUrl: String = DEFAULT_REMOTE_BASE): Result<RemoteUpdateSummary> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+                val entries = parseRemoteIndex(httpGet(base + INDEX_FILE))
+                val updated = mutableListOf<String>()
+                val failed = mutableListOf<String>()
+                for (entry in entries) {
+                    val known = builtInVersions[entry.id]
+                    if (known != null && compareVersions(entry.version, known) <= 0) continue
+                    try {
+                        val json = httpGet(base + entry.file)
+                        val cfg = validatePluginJson(json)
+                        require(cfg.id == entry.id) { "id mismatch: index says ${entry.id}, file says ${cfg.id}" }
+                        File(remoteDir, "${cfg.id}.json").writeText(json)
+                        updated += "${cfg.name} ${cfg.version}"
+                    } catch (e: Exception) {
+                        Log.w("PluginManager", "Remote plugin ${entry.id} failed", e)
+                        failed += "${entry.id}: ${e.message}"
+                    }
+                }
+                prefs.edit().putLong(KEY_LAST_REMOTE_CHECK, System.currentTimeMillis()).apply()
+                loadPlugins()
+                RemoteUpdateSummary(updated, failed)
+            }
+        }
+
+    /** Runs [updateFromRemote] at most once a day; failures are silent because it is a background nicety. */
+    suspend fun updateFromRemoteIfDue() {
+        val last = prefs.getLong(KEY_LAST_REMOTE_CHECK, 0L)
+        if (System.currentTimeMillis() - last < 24 * 60 * 60 * 1000L) return
+        updateFromRemote()
+    }
+
+    private fun httpGet(url: String): String {
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        try {
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 15_000
+            conn.setRequestProperty("Cache-Control", "no-cache")
+            val code = conn.responseCode
+            if (code !in 200..299) throw java.io.IOException("HTTP $code for $url")
+            return conn.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     fun getBuiltInCatalog(): List<PluginConfig> {
         val list = mutableListOf<PluginConfig>()
         try {
-            val names = context.assets.list("plugins").orEmpty().filter { it.endsWith(".json") }
+            val names = context.assets.list("plugins").orEmpty().filter { it.endsWith(".json") && it != INDEX_FILE }
             for (name in names) {
                 try {
                     val json = context.assets.open("plugins/$name").bufferedReader().use { it.readText() }
@@ -314,6 +421,36 @@ class PluginManager(private val context: Context) {
                 requestDelayMs = 1200,
                 isEnabled = true
             )
+        }
+    }
+
+    companion object {
+        const val INDEX_FILE = "index.json"
+        const val DEFAULT_REMOTE_BASE =
+            "https://raw.githubusercontent.com/gutale-3/Novel-Hoarder-Personal/main/app/src/main/assets/plugins/"
+        private const val KEY_LAST_REMOTE_CHECK = "plugin_remote_last_check"
+
+        data class RemoteEntry(val id: String, val version: String, val file: String)
+
+        /** Parses `{ "plugins": [ { "id", "version", "file" } ] }`. */
+        fun parseRemoteIndex(json: String): List<RemoteEntry> {
+            val arr = JSONObject(json).getJSONArray("plugins")
+            return (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                val id = o.getString("id")
+                RemoteEntry(id, o.getString("version"), o.optString("file", "$id.json"))
+            }
+        }
+
+        /** Numeric dotted-version comparison; missing or non-numeric parts count as 0. */
+        fun compareVersions(a: String, b: String): Int {
+            val pa = a.trim().removePrefix("v").split('.', '-').map { it.toIntOrNull() ?: 0 }
+            val pb = b.trim().removePrefix("v").split('.', '-').map { it.toIntOrNull() ?: 0 }
+            for (i in 0 until maxOf(pa.size, pb.size)) {
+                val c = (pa.getOrElse(i) { 0 }).compareTo(pb.getOrElse(i) { 0 })
+                if (c != 0) return c
+            }
+            return 0
         }
     }
 }

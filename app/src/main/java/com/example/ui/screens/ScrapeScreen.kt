@@ -759,7 +759,7 @@ fun ScrapeScreen(
                         AndroidView(
                             factory = { ctx ->
                                 WebView(ctx).apply {
-                                    WebViewFactory.applySafeDefaults(this, viewModel.defaultUserAgent)
+                                    WebViewFactory.applySafeDefaults(this, viewModel.scraping.captchaUserAgent.ifBlank { viewModel.defaultUserAgent })
                                     webViewClient = object : WebViewFactory.SafeWebViewClient(
                                         onPageFinishedCallback = { _, url ->
                                             if (url != null) {

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.plugin.PluginConfig
 import com.example.data.plugin.PluginManager
+import com.example.data.plugin.SourceHealthChecker
 import com.example.data.scraper.SourceManager
 import com.example.ui.components.PluginStudioDialog
 import com.example.ui.components.WebInspectorDialog
@@ -50,11 +51,18 @@ import kotlinx.coroutines.withTimeout
 @Composable
 fun PluginManagementScreen(
     pluginManager: PluginManager,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    libraryUrls: suspend () -> List<String> = { emptyList() }
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val plugins by pluginManager.plugins.collectAsState()
+
+    val healthChecker = remember { SourceHealthChecker(context.applicationContext, pluginManager) }
+    var healthResults by remember { mutableStateOf(healthChecker.lastResults()) }
+    var healthProgress by remember { mutableStateOf<String?>(null) }
+    var healthJob by remember { mutableStateOf<Job?>(null) }
+    var isUpdatingRemote by remember { mutableStateOf(false) }
 
     var activeTopTab by remember { mutableIntStateOf(0) } // 0 = Installed, 1 = Catalog & Presets, 2 = Diagnostic Lab
     var searchQuery by remember { mutableStateOf("") }
@@ -153,6 +161,32 @@ fun PluginManagementScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            if (isUpdatingRemote) return@IconButton
+                            isUpdatingRemote = true
+                            coroutineScope.launch {
+                                pluginManager.updateFromRemote()
+                                    .onSuccess { summary ->
+                                        val msg = when {
+                                            summary.updated.isNotEmpty() -> "Updated: ${summary.updated.joinToString()}"
+                                            summary.failed.isNotEmpty() -> "Some add-ons failed: ${summary.failed.joinToString()}"
+                                            else -> "All site add-ons are up to date"
+                                        }
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                    .onFailure { errorMessage = "Update check failed: ${it.message}" }
+                                isUpdatingRemote = false
+                            }
+                        },
+                        modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
+                    ) {
+                        if (isUpdatingRemote) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.CloudDownload, contentDescription = "Update site add-ons")
+                        }
+                    }
                     IconButton(
                         onClick = {
                             inspectorInitialUrl = ""
@@ -304,6 +338,7 @@ fun PluginManagementScreen(
                                     PluginCardItem(
                                         plugin = plugin,
                                         isBuiltIn = false,
+                                        health = healthResults[plugin.id],
                                         onToggle = { enabled ->
                                             coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
                                         },
@@ -354,6 +389,7 @@ fun PluginManagementScreen(
                                 PluginCardItem(
                                     plugin = plugin,
                                     isBuiltIn = true,
+                                    health = healthResults[plugin.id],
                                     onToggle = { enabled ->
                                         coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
                                     },
@@ -514,6 +550,28 @@ fun PluginManagementScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        SourceHealthCard(
+                            results = plugins.filter { it.isEnabled }.mapNotNull { p -> healthResults[p.id]?.let { p to it } },
+                            progress = healthProgress,
+                            onCheckAll = {
+                                healthJob?.cancel()
+                                healthJob = coroutineScope.launch {
+                                    val urls = libraryUrls()
+                                    val targets = plugins.filter { it.isEnabled }
+                                    targets.forEachIndexed { i, plugin ->
+                                        healthProgress = "Checking ${plugin.name} (${i + 1}/${targets.size})…"
+                                        val r = healthChecker.check(plugin, urls)
+                                        healthResults = healthResults + (plugin.id to r)
+                                    }
+                                    healthProgress = null
+                                }
+                            },
+                            onCancel = {
+                                healthJob?.cancel()
+                                healthProgress = null
+                            }
+                        )
+
                         Text("End-to-End Scraper Diagnostic Lab", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         Text(
                             "Validate any novel URL against all installed add-ons and scrapers. Tests metadata parsing, TOC link extraction, and first chapter scraping without saving to library.",
@@ -840,6 +898,7 @@ fun PluginManagementScreen(
 private fun PluginCardItem(
     plugin: PluginConfig,
     isBuiltIn: Boolean,
+    health: SourceHealthChecker.Result? = null,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDuplicate: () -> Unit,
@@ -885,6 +944,10 @@ private fun PluginCardItem(
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Medium
             )
+
+            if (health != null) {
+                HealthLine(health)
+            }
 
             if (plugin.description.isNotBlank()) {
                 Text(
@@ -939,6 +1002,73 @@ private fun PluginCardItem(
                             modifier = Modifier.size(16.dp)
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HealthLine(result: SourceHealthChecker.Result) {
+    val (label, color) = when (result.status) {
+        SourceHealthChecker.Status.OK -> "✅ Working" to MaterialTheme.colorScheme.primary
+        SourceHealthChecker.Status.BLOCKED -> "🛡️ Needs verification" to MaterialTheme.colorScheme.tertiary
+        SourceHealthChecker.Status.BROKEN -> "❌ Broken at ${result.stage}" to MaterialTheme.colorScheme.error
+        SourceHealthChecker.Status.NO_TEST_URL -> "➖ Not tested" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val ago = android.text.format.DateUtils.getRelativeTimeSpanString(result.checkedAt).toString()
+    Column {
+        Text("$label · $ago", style = MaterialTheme.typography.labelMedium, color = color, fontWeight = FontWeight.SemiBold)
+        if (result.status != SourceHealthChecker.Status.OK && result.message.isNotBlank()) {
+            Text(
+                result.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun SourceHealthCard(
+    results: List<Pair<PluginConfig, SourceHealthChecker.Result>>,
+    progress: String?,
+    onCheckAll: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Source Health", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Tests every enabled site against a known book (or one from your library).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (progress == null) {
+                    Button(onClick = onCheckAll) { Text("Check all") }
+                } else {
+                    OutlinedButton(onClick = onCancel) { Text("Stop") }
+                }
+            }
+            if (progress != null) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(progress, style = MaterialTheme.typography.bodySmall)
+            }
+            if (results.isNotEmpty()) {
+                val ok = results.count { it.second.status == SourceHealthChecker.Status.OK }
+                Text("$ok of ${results.size} checked sites working", style = MaterialTheme.typography.labelMedium)
+                results.filter { it.second.status != SourceHealthChecker.Status.OK }.forEach { (plugin, r) ->
+                    Text("• ${plugin.name}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    HealthLine(r)
                 }
             }
         }

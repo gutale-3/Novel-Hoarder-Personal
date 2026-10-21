@@ -131,6 +131,11 @@ class ScrapingManager(
     // CAPTCHA verification variables
     var showCaptchaDialog by mutableStateOf(false)
     var captchaUrl by mutableStateOf("")
+    /**
+     * The User-Agent the solver dialog must use. Cloudflare binds its clearance cookie to the UA
+     * that solved the challenge, so a plugin with a custom UA needs the dialog to match it.
+     */
+    var captchaUserAgent by mutableStateOf("")
     private var captchaContinuation: CancellableContinuation<Unit>? = null
 
     init {
@@ -466,7 +471,11 @@ class ScrapingManager(
         }
     }
 
-    fun checkForNewChapters(book: BookEntity) {
+    /**
+     * @param autoGrab start downloading the new chapters straight away instead of asking; the
+     * Updates tab passes true because the user already chose "Download".
+     */
+    fun checkForNewChapters(book: BookEntity, autoGrab: Boolean = settings.autoGrabNewChapters) {
         if (isCheckingNewChapters || isScraping) return
         isCheckingNewChapters = true
         checkingNewChaptersBookId = book.id
@@ -567,7 +576,18 @@ class ScrapingManager(
                     isCheckingNewChapters = false
                     checkingNewChaptersBookId = null
 
-                    if (missingList.isNotEmpty() && settings.autoGrabNewChapters) {
+                    val updates = com.example.background.ChapterUpdatesStore.get(application)
+                    if (missingList.isEmpty() || autoGrab) {
+                        updates.clear(book.id)
+                    } else {
+                        updates.record(
+                            com.example.background.ChapterUpdatesStore.Entry(
+                                book.id, missingList.size, missingList.first().chapterNumber, System.currentTimeMillis()
+                            )
+                        )
+                    }
+
+                    if (missingList.isNotEmpty() && autoGrab) {
                         addLog("Auto-Grab enabled: Found ${missingList.size} new chapters (starting from Ch. ${missingList.first().chapterNumber}). Automatically grabbing...")
                         startScrapingNewChapters()
                     } else {
@@ -1005,7 +1025,10 @@ class ScrapingManager(
     }
 
     private suspend fun handleCaptchaChallenge(url: String) {
+        val pluginUa = (SourceManager.getSourceForUrl(url, pluginManager) as? com.example.data.plugin.PluginExecutionEngine)
+            ?.config?.customUserAgent.orEmpty()
         withContext(Dispatchers.Main) {
+            captchaUserAgent = pluginUa.ifBlank { defaultUserAgent }
             captchaUrl = url
             showCaptchaDialog = true
             scrapingStatus = "● Captcha Verification Required"
@@ -1019,6 +1042,8 @@ class ScrapingManager(
     }
 
     fun resumeAfterCaptcha() {
+        // Persist the clearance cookie before the scraping WebView reloads the page.
+        CookieManager.getInstance().flush()
         showCaptchaDialog = false
         captchaContinuation?.resume(Unit) {
             // Cancellation cleanups

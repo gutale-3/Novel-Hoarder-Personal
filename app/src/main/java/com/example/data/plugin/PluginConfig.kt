@@ -102,6 +102,17 @@ data class PluginConfig(
      */
     @Json(name = "customUserAgent") val customUserAgent: String = "",
 
+    /**
+     * Where the chapter list lives when it is not on the book page itself. Placeholders:
+     * `{url}` the book URL without a trailing slash, `{origin}` scheme + host, `{slug}` the last
+     * path segment (minus `.html`), `{novelId}` the book page's `data-novel-id` attribute (falls
+     * back to the slug). Examples: `{url}/chapters`, `{origin}/ajax/chapter-archive?novelId={novelId}`.
+     */
+    @Json(name = "tocUrlTemplate") val tocUrlTemplate: String = "",
+
+    /** A known book on this site, used by the source health check. */
+    @Json(name = "testUrl") val testUrl: String = "",
+
     /** True for plugins shipped inside the app. Set by the loader, never read from JSON. */
     @Transient val isBuiltIn: Boolean = false
 )

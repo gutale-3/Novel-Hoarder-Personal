@@ -105,6 +105,9 @@ class MainActivity : ComponentActivity() {
             }
 
             NovelHoarderTheme(appTheme = viewModel.currentTheme) {
+                val updatesStore = remember { com.example.background.ChapterUpdatesStore.get(applicationContext) }
+                val updateEntries by updatesStore.entries.collectAsState()
+                val pendingUpdateBooks = updateEntries.values.count { it.newCount > 0 }
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route ?: "home"
 
@@ -222,6 +225,28 @@ class MainActivity : ComponentActivity() {
                                 )
 
                                 NavigationBarItem(
+                                    selected = currentRoute == "updates",
+                                    onClick = {
+                                        if (currentRoute != "updates") {
+                                            navController.navigate("updates") {
+                                                popUpTo("home") { saveState = true }
+                                                launchSingleTop = true
+                                                restoreState = true
+                                            }
+                                        }
+                                    },
+                                    icon = {
+                                        BadgedBox(badge = {
+                                            if (pendingUpdateBooks > 0) Badge { Text(pendingUpdateBooks.toString()) }
+                                        }) {
+                                            Icon(Icons.Default.NewReleases, contentDescription = "Updates")
+                                        }
+                                    },
+                                    label = { Text("Updates") },
+                                    modifier = Modifier.testTag("nav_updates_tab")
+                                )
+
+                                NavigationBarItem(
                                     selected = currentRoute == "library",
                                     onClick = {
                                         if (currentRoute != "library") {
@@ -285,6 +310,16 @@ class MainActivity : ComponentActivity() {
                                 ScrapeScreen(viewModel = viewModel)
                             }
 
+                            composable("updates") {
+                                UpdatesScreen(
+                                    viewModel = viewModel,
+                                    onOpenBook = { bookId ->
+                                        viewModel.progress.setActiveReaderSession(bookId)
+                                        navController.navigate("reader/$bookId")
+                                    }
+                                )
+                            }
+
                             composable("library") {
                                 LibraryScreen(
                                     viewModel = viewModel,
@@ -313,7 +348,8 @@ class MainActivity : ComponentActivity() {
                             composable("plugins") {
                                 PluginManagementScreen(
                                     pluginManager = viewModel.pluginManager,
-                                    onBack = { navController.popBackStack() }
+                                    onBack = { navController.popBackStack() },
+                                    libraryUrls = { viewModel.repository.getAllBooks().map { it.url } }
                                 )
                             }
 

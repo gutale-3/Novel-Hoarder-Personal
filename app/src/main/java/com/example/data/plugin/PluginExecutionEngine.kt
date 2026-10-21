@@ -3,7 +3,9 @@ package com.example.data.plugin
 import android.webkit.WebView
 import com.example.data.local.BookEntity
 import com.example.data.scraper.NovelSource
+import com.example.util.CloudflareDetector
 import com.example.util.CloudflareException
+import com.example.util.SelectorDiagnostics
 import com.example.util.GenericScraper
 import com.example.util.JsResultParser
 import com.example.util.PageExtractors
@@ -22,6 +24,46 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
     companion object {
         @Volatile
         var progressListener: ((Int) -> Unit)? = null
+
+        private const val NOVEL_ID_JS =
+            "(() => { const el = document.querySelector('[data-novel-id]'); " +
+            "return el ? el.getAttribute('data-novel-id') : null; })()"
+
+        /** Expands a [PluginConfig.tocUrlTemplate]. Pure so it can be unit tested. */
+        fun resolveTocUrl(template: String, bookUrl: String, novelId: String?): String {
+            val clean = bookUrl.substringBefore("#").substringBefore("?").trimEnd('/')
+            val uri = java.net.URI(clean)
+            val origin = "${uri.scheme}://${uri.host}" + if (uri.port != -1) ":${uri.port}" else ""
+            val slug = clean.substringAfterLast('/').removeSuffix(".html")
+            return template
+                .replace("{url}", clean)
+                .replace("{origin}", origin)
+                .replace("{slug}", slug)
+                .replace("{novelId}", novelId?.takeIf { it.isNotBlank() } ?: slug)
+        }
+    }
+
+    /** Loads the page the chapter list should be read from: the book page, or [PluginConfig.tocUrlTemplate]. */
+    private suspend fun loadTocPage(webView: WebView, bookUrl: String) {
+        val template = config.tocUrlTemplate
+        if (template.isBlank()) {
+            loadUrlAndWait(webView, bookUrl)
+            return
+        }
+        var novelId: String? = null
+        if (template.contains("{novelId}")) {
+            loadUrlAndWait(webView, bookUrl)
+            val watch = CloudflareDetector.ChallengeWatch(config.name)
+            val start = System.currentTimeMillis()
+            while (coroutineContext.isActive && System.currentTimeMillis() - start < 15_000) {
+                watch.check(webView)
+                novelId = evaluateJs(webView, NOVEL_ID_JS)
+                    ?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                if (novelId != null) break
+                delay(500)
+            }
+        }
+        loadUrlAndWait(webView, resolveTocUrl(template, bookUrl, novelId))
     }
 
     override val sourceName: String = config.name
@@ -43,11 +85,10 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         var jsonResult: String? = null
         val startTime = System.currentTimeMillis()
 
+        val watch = CloudflareDetector.ChallengeWatch(config.name)
         while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
+            watch.check(webView)
             val eval = evaluateJs(webView, script)
-            if (eval != null && eval.contains("cloudflare") && eval.contains("challenge")) {
-                throw CloudflareException("Cloudflare protection detected.")
-            }
             if (JsResultParser.isReady(eval)) {
                 jsonResult = eval
                 break
@@ -78,7 +119,7 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
 
     override suspend fun scrapeChapterList(webView: WebView, bookUrl: String): List<String> =
         withContext(Dispatchers.Main) {
-            loadUrlAndWait(webView, bookUrl)
+            loadTocPage(webView, bookUrl)
 
             val script = config.customTocJs?.takeIf { it.isNotBlank() }
                 ?: buildPaginatedTocScript()
@@ -88,7 +129,9 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
             var jsonResult: String? = null
             val startTime = System.currentTimeMillis()
 
+            val watch = CloudflareDetector.ChallengeWatch(config.name)
             while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < timeoutMs) {
+                watch.check(webView)
                 val eval = evaluateJs(webView, script)
                 if (JsResultParser.isReady(eval)) { jsonResult = eval; break }
 
@@ -142,8 +185,10 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         var jsonResult: String? = null
         val startTime = System.currentTimeMillis()
 
+        val watch = CloudflareDetector.ChallengeWatch(config.name)
         while (coroutineContext.isActive && (System.currentTimeMillis() - startTime) < 20000) {
             if (shouldSkip()) break
+            watch.check(webView)
             val eval = evaluateJs(webView, script)
             if (JsResultParser.isReady(eval)) {
                 jsonResult = eval
@@ -161,9 +206,25 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
         // Fail loudly rather than saving a blank chapter: the caller retries on an exception
         // but treats a successful empty return as a finished download.
         if (cleanBody.length < 200) {
+            // A last look before failing: the challenge may have appeared after the grace window
+            // started, and a selector that matches nothing deserves a clearer message than "short".
+            if (CloudflareDetector.isChallenge(webView)) {
+                throw CloudflareException("${config.name}: Cloudflare/anti-bot check is blocking $chapterUrl")
+            }
+            val diagnosis = if (config.customChapterJs.isNullOrBlank()) {
+                SelectorDiagnostics.describeMisses(
+                    evaluateJs(webView, SelectorDiagnostics.countScript(
+                        mapOf(
+                            "chapterBodySelector" to config.chapterBodySelector,
+                            "chapterReadySelector" to config.chapterReadySelector
+                        )
+                    ))
+                )
+            } else null
             throw java.io.IOException(
                 "${config.name}: chapter body was empty or too short (" +
-                "${cleanBody.length} chars) at $chapterUrl"
+                "${cleanBody.length} chars) at $chapterUrl" +
+                (diagnosis?.let { " — $it" } ?: "")
             )
         }
 

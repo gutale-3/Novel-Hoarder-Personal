@@ -20,6 +20,7 @@ import com.example.data.scraper.SourceManager
 import com.example.ui.CrashActivity
 import com.example.viewmodel.*
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import java.io.File
@@ -98,6 +99,11 @@ class NovelHoarderApp : Application() {
         instance = this
         setupCrashHandler()
         container = AppContainer(this)
+        container.appScope.launch {
+            // Picks up site fixes pushed to the GitHub repo without needing a new app build.
+            runCatching { container.pluginManager.updateFromRemoteIfDue() }
+                .onFailure { Log.w("NovelHoarderApp", "Remote plugin update failed", it) }
+        }
         try {
             com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(this)
         } catch (t: Throwable) {

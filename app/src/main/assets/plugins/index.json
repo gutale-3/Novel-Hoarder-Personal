@@ -1,0 +1,54 @@
+{
+  "plugins": [
+    {
+      "id": "freewebnovel",
+      "version": "1.0.0",
+      "file": "freewebnovel.json"
+    },
+    {
+      "id": "novelbin",
+      "version": "1.0.0",
+      "file": "novelbin.json"
+    },
+    {
+      "id": "novelfire",
+      "version": "1.0.0",
+      "file": "novelfire.json"
+    },
+    {
+      "id": "novelfull",
+      "version": "1.1.0",
+      "file": "novelfull.json"
+    },
+    {
+      "id": "ranobes",
+      "version": "1.0.0",
+      "file": "ranobes.json"
+    },
+    {
+      "id": "readnovelfull",
+      "version": "1.0.0",
+      "file": "readnovelfull.json"
+    },
+    {
+      "id": "royalroad",
+      "version": "1.1.0",
+      "file": "royalroad.json"
+    },
+    {
+      "id": "scribblehub",
+      "version": "1.0.0",
+      "file": "scribblehub.json"
+    },
+    {
+      "id": "wtrlab",
+      "version": "1.0.0",
+      "file": "wtrlab.json"
+    },
+    {
+      "id": "wuxiabox",
+      "version": "1.0.0",
+      "file": "wuxiabox.json"
+    }
+  ]
+}
