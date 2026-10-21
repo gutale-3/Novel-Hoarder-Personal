@@ -259,14 +259,15 @@ class ChapterUpdateWorker(
 
         var downloaded = 0
         var failuresInARow = 0
-        for (chapter in repository.getPendingChapters(book.id, budget)) {
-            if (scraping.downloadSingleChapter(chapter).isSuccess) {
+        for ((i, chapter) in repository.getPendingChapters(book.id, budget).withIndex()) {
+            val result = scraping.downloadSingleChapter(chapter)
+            if (result.isSuccess) {
                 downloaded++
                 failuresInARow = 0
-            } else if (++failuresInARow >= 3) {
-                break // the site is refusing; try again next run
+            } else if (result.exceptionOrNull() is com.example.util.CloudflareException || ++failuresInARow >= 3) {
+                break // a bot check or repeated refusals: leave the site alone until next run
             }
-            delay(delayMs)
+            delay(com.example.data.scraper.HumanPacing.nextDelayMs(context, sourceKey, delayMs, i + 1))
         }
         return downloaded
     }

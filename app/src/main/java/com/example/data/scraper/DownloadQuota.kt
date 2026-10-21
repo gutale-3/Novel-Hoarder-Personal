@@ -64,6 +64,26 @@ class DownloadQuota private constructor(context: Context) {
     fun isAutoDownloadEnabled(bookId: String, bookUrl: String): Boolean =
         bookOverride(bookId) ?: limitsFor(SourceKeys.keyFor(bookUrl)).autoDownload
 
+    // ---------- bot-check pause ----------
+
+    /**
+     * After a site shows a bot check while nobody is there to solve it (background download,
+     * reading-ahead), it is left alone for a while rather than hammered with more requests.
+     */
+    fun markChallenged(sourceKey: String, now: Long = System.currentTimeMillis()) {
+        prefs.edit().putLong("blocked_$sourceKey", now + CHALLENGE_PAUSE_MS).apply()
+        _version.value++
+    }
+
+    /** Called once the user has passed the check in the solver dialog. */
+    fun clearChallenge(sourceKey: String) {
+        prefs.edit().remove("blocked_$sourceKey").apply()
+        _version.value++
+    }
+
+    fun challengePausedUntil(sourceKey: String, now: Long = System.currentTimeMillis()): Long =
+        prefs.getLong("blocked_$sourceKey", 0L).takeIf { it > now } ?: 0L
+
     // ---------- usage accounting ----------
 
     @Synchronized
@@ -92,22 +112,29 @@ class DownloadQuota private constructor(context: Context) {
 
     /** Chapters that may still be downloaded right now; [Int.MAX_VALUE] when unlimited. */
     fun remaining(sourceKey: String, now: Long = System.currentTimeMillis()): Int =
-        remainingFor(limitsFor(sourceKey), stamps(sourceKey, now), now)
+        if (challengePausedUntil(sourceKey, now) > 0) 0
+        else remainingFor(limitsFor(sourceKey), stamps(sourceKey, now), now)
 
     /** Milliseconds until at least one more chapter is allowed (0 if allowed now). */
     fun waitMs(sourceKey: String, now: Long = System.currentTimeMillis()): Long =
-        waitFor(limitsFor(sourceKey), stamps(sourceKey, now), now)
+        maxOf(
+            waitFor(limitsFor(sourceKey), stamps(sourceKey, now), now),
+            (challengePausedUntil(sourceKey, now) - now).coerceAtLeast(0L)
+        )
 
     companion object {
         const val HOUR_MS = 60 * 60 * 1000L
         const val DAY_MS = 24 * HOUR_MS
+        const val CHALLENGE_PAUSE_MS = 2 * HOUR_MS
 
         /**
          * Built-in defaults. Tomato is metered per account, so it stays manual unless the user
          * opts a novel in, and both windows are enforced. Everything else defaults to unlimited.
          */
         val DEFAULTS: Map<String, Limits> = mapOf(
-            SourceKeys.TOMATO to Limits(autoDownload = false, perHour = 100, perDay = 600)
+            SourceKeys.TOMATO to Limits(autoDownload = false, perHour = 100, perDay = 600),
+            // WTR Lab flags "unusual reading activity" when chapters come too fast.
+            "wtrlab" to Limits(autoDownload = true, perHour = 120, perDay = 0)
         )
 
         fun remainingFor(limits: Limits, stamps: List<Long>, now: Long): Int {

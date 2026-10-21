@@ -31,8 +31,27 @@ object CloudflareDetector {
         "enable javascript and cookies to continue",
         "ddos protection by cloudflare",
         "performance & security by cloudflare",
-        "complete the security check to access"
+        "complete the security check to access",
+        // Sites' own bot checks (WTR Lab: "Security Check Required ... unusual reading activity")
+        "security check required",
+        "complete the security check",
+        "unusual reading activity",
+        "unusual activity from your ip",
+        "unusual traffic",
+        "complete the challenge below",
+        "open challenge in new page",
+        "are you a robot"
     )
+
+    /**
+     * True when extracted chapter text is really an anti-bot notice. Such notices are a few
+     * sentences, so long text is never flagged even if a character says "are you a robot".
+     */
+    fun isChallengeText(text: String): Boolean {
+        if (text.length > 3000) return false
+        val lower = text.lowercase()
+        return BODY_MARKERS.any { lower.contains(it) }
+    }
 
     /**
      * Returns `{title, body, el}` describing the page. Only the first few KB of body text are

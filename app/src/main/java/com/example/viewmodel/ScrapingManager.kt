@@ -41,14 +41,24 @@ data class MissingChapter(
  * TomatoScraper's cleaner truncates on TomatoMTL-specific page furniture, so it must
  * never run on text scraped from another site.
  */
+/**
+ * Every downloaded chapter passes through here before it is saved, so this is where an anti-bot
+ * page is refused: throwing [com.example.util.CloudflareException] makes the download loop open
+ * the solve-it dialog instead of storing the notice as chapter text.
+ */
 internal fun cleanScrapedBody(
     scraper: com.example.data.scraper.NovelSource,
     raw: String,
     aggressive: Boolean
-): String = if (scraper === com.example.util.TomatoScraper) {
-    com.example.util.TomatoScraper.sanitizeText(raw, aggressive)
-} else {
-    com.example.util.GenericScraper.sanitizeText(raw, aggressive)
+): String {
+    if (com.example.util.CloudflareDetector.isChallengeText(raw)) {
+        throw com.example.util.CloudflareException("${scraper.sourceName} showed a security check instead of the chapter")
+    }
+    return if (scraper === com.example.util.TomatoScraper) {
+        com.example.util.TomatoScraper.sanitizeText(raw, aggressive)
+    } else {
+        com.example.util.GenericScraper.sanitizeText(raw, aggressive)
+    }
 }
 
 class ScrapingManager(
@@ -136,6 +146,7 @@ class ScrapingManager(
      * that solved the challenge, so a plugin with a custom UA needs the dialog to match it.
      */
     var captchaUserAgent by mutableStateOf("")
+    private var captchaSourceKey: String? = null
     private var captchaContinuation: CancellableContinuation<Unit>? = null
 
     private val sessionPrefs = application.getSharedPreferences("novel_hoarder_prefs", android.content.Context.MODE_PRIVATE)
@@ -1008,8 +1019,12 @@ class ScrapingManager(
                             repository.updateBook(currentBookState)
                         }
                     } catch (e: CloudflareException) {
-                        addLog("Cloudflare CAPTCHA blocked download on chapter $currentChapterNum. Pausing loop...")
+                        com.example.data.scraper.HumanPacing.onChallenge(application, sourceKey)
+                        addLog("Security check on chapter $currentChapterNum (${e.message}). Nothing was saved. " +
+                            "Solve it in the window that opens; downloads from this site will then go slower.")
                         handleCaptchaChallenge(chapterUrl)
+                        // Give the site a calm moment after the check before asking again.
+                        delay(4_000L + kotlin.random.Random.nextLong(4_000L))
                         // refresh cookies
                         cookies = withContext(Dispatchers.Main) {
                             CookieManager.getInstance().getCookie(bookUrl) ?: ""
@@ -1069,12 +1084,23 @@ class ScrapingManager(
                     continue
                 }
 
-                // Simple delay to respect scraping etiquette and rate limits based on user settings
+                // Uneven, human-like gaps; slower for a site that has recently shown a bot check.
                 if (isScraping && index < chaptersToProcess.size - 1) {
                     val source = SourceManager.getSourceForUrl(chapterUrl, pluginManager)
                     val siteDelay = (source as? com.example.data.plugin.PluginExecutionEngine)?.config?.requestDelayMs ?: 0
-                    val delayTime = (if (siteDelay > 0) siteDelay.toLong() else settings.requestDelayMs.toLong()).coerceAtLeast(300L)
-                    delay(delayTime)
+                    val base = (if (siteDelay > 0) siteDelay.toLong() else settings.requestDelayMs.toLong()).coerceAtLeast(300L)
+                    val wait = com.example.data.scraper.HumanPacing.nextDelayMs(application, sourceKey, base, index + 1)
+                    if (wait > 15_000L) {
+                        addLog("Pausing ${wait / 1000}s between chapters to keep the pace human…")
+                        scrapingStatus = "● Short pause (${wait / 1000}s)"
+                    }
+                    var left = wait
+                    while (left > 0 && isScraping) {
+                        notifyProgressMade()
+                        val step = minOf(left, 5_000L)
+                        delay(step)
+                        left -= step
+                    }
                 }
             }
 
@@ -1145,6 +1171,7 @@ class ScrapingManager(
     private suspend fun handleCaptchaChallenge(url: String) {
         val pluginUa = (SourceManager.getSourceForUrl(url, pluginManager) as? com.example.data.plugin.PluginExecutionEngine)
             ?.config?.customUserAgent.orEmpty()
+        captchaSourceKey = com.example.data.scraper.SourceKeys.keyFor(url)
         withContext(Dispatchers.Main) {
             captchaUserAgent = pluginUa.ifBlank { defaultUserAgent }
             captchaUrl = url
@@ -1162,6 +1189,7 @@ class ScrapingManager(
     fun resumeAfterCaptcha() {
         // Persist the clearance cookie before the scraping WebView reloads the page.
         CookieManager.getInstance().flush()
+        captchaSourceKey?.let { quota.clearChallenge(it) }
         showCaptchaDialog = false
         captchaContinuation?.resume(Unit) {
             // Cancellation cleanups
@@ -1170,6 +1198,18 @@ class ScrapingManager(
     }
 
     suspend fun downloadSingleChapter(chapter: ChapterEntity): Result<Unit> = withContext(Dispatchers.IO) {
+        downloadSingleChapterInner(chapter).onFailure { e ->
+            // Nobody is watching a background/read-ahead download, so leave the site alone for a
+            // while instead of sending more requests into a bot check.
+            if (e is CloudflareException) {
+                val key = com.example.data.scraper.SourceKeys.keyFor(chapter.url)
+                quota.markChallenged(key)
+                com.example.data.scraper.HumanPacing.onChallenge(application, key)
+            }
+        }
+    }
+
+    private suspend fun downloadSingleChapterInner(chapter: ChapterEntity): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             if (chapter.url.startsWith("local://")) {
                 return@runCatching
@@ -1229,11 +1269,12 @@ class ScrapingManager(
             for ((idx, ch) in pending.withIndex()) {
                 val res = downloadSingleChapter(ch)
                 if (res.isSuccess) success++ else fail++
+                if (res.exceptionOrNull() is CloudflareException) break // site wants a check; stop here
                 if (idx < pending.size - 1) {
                     val source = SourceManager.getSourceForUrl(ch.url, pluginManager)
                     val siteDelay = (source as? com.example.data.plugin.PluginExecutionEngine)?.config?.requestDelayMs ?: 0
-                    val delayTime = (if (siteDelay > 0) siteDelay.toLong() else settings.requestDelayMs.toLong()).coerceAtLeast(300L)
-                    delay(delayTime)
+                    val base = (if (siteDelay > 0) siteDelay.toLong() else settings.requestDelayMs.toLong()).coerceAtLeast(300L)
+                    delay(com.example.data.scraper.HumanPacing.nextDelayMs(application, com.example.data.scraper.SourceKeys.keyFor(ch.url), base, idx + 1))
                 }
             }
             withContext(Dispatchers.Main) {

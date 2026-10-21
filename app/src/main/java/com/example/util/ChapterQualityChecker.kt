@@ -35,6 +35,7 @@ object ChapterQualityChecker {
     )
 
     fun looksLikeErrorPage(text: String): Boolean {
+        if (CloudflareDetector.isChallengeText(text)) return true
         if (text.length >= 2500) return false
         val lower = text.lowercase()
         return ERROR_MARKERS.any { lower.contains(it) }

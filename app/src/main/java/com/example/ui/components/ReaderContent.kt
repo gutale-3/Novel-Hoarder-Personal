@@ -483,8 +483,10 @@ fun ReaderContent(
                         }
                     }
 
-                    // Find & Replace bar
+                    // Find & Replace bar (and, for a chapter that saved a bot-check page, a fix-it banner;
+                    // kept inside this item so READER_HEADER_ITEMS stays correct)
                     item {
+                        SecurityCheckChapterBanner(activeChapter, viewModel)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -728,5 +730,63 @@ fun ReaderContent(
                 }
             }
         }
+    }
+}
+
+/**
+ * Shown on a chapter whose saved text is a site's bot check (saved before such pages were
+ * refused). Lets the user pass the check and re-download the real chapter in place.
+ */
+@Composable
+private fun SecurityCheckChapterBanner(chapter: ChapterEntity, viewModel: MainViewModel) {
+    val isCheckPage = remember(chapter.content) { com.example.util.CloudflareDetector.isChallengeText(chapter.content) }
+    if (!isCheckPage || chapter.url.startsWith("local://")) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var showCheck by remember { mutableStateOf(false) }
+    var working by remember { mutableStateOf(false) }
+
+    fun redownload() {
+        working = true
+        viewModel.scraping.rescrapeSingleChapter(chapter) { ok, msg ->
+            working = false
+            android.widget.Toast.makeText(
+                context,
+                if (ok) "Chapter re-downloaded" else "$msg — try passing the check again",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                "This chapter saved the site's security check instead of the story.",
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(enabled = !working, onClick = { showCheck = true }) { Text("Pass check & re-download") }
+                OutlinedButton(enabled = !working, onClick = { redownload() }) { Text(if (working) "Downloading…" else "Retry") }
+            }
+        }
+    }
+
+    if (showCheck) {
+        val pluginUa = (com.example.data.scraper.SourceManager.getSourceForUrl(chapter.url)
+            as? com.example.data.plugin.PluginExecutionEngine)?.config?.customUserAgent.orEmpty()
+        SecurityCheckDialog(
+            url = chapter.url,
+            userAgent = pluginUa.ifBlank { viewModel.defaultUserAgent },
+            onDone = {
+                showCheck = false
+                com.example.data.scraper.DownloadQuota.get(context)
+                    .clearChallenge(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
+                redownload()
+            },
+            onCancel = { showCheck = false }
+        )
     }
 }
