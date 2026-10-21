@@ -33,6 +33,26 @@ import com.example.viewmodel.MainViewModel
 class MainActivity : ComponentActivity() {
     private val pendingRoute = mutableStateOf<String?>(null)
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val code = event.keyCode
+        if (code == android.view.KeyEvent.KEYCODE_VOLUME_DOWN || code == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
+            val container = com.example.NovelHoarderApp.getContainer(application)
+            // While TTS is speaking the volume keys must still change the volume.
+            val ttsSpeaking = container.tts.ttsIsPlaying
+            if (com.example.ui.components.ReaderPaging.readerVisible &&
+                container.settings.enableVolumeKeysNavigation && !ttsSpeaking
+            ) {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                    com.example.ui.components.ReaderPaging.requestTurn(
+                        if (code == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) 1 else -1
+                    )
+                }
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

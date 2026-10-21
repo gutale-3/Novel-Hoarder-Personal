@@ -78,6 +78,14 @@ fun ReaderContent(
 
     val isContinuous = viewModel.settings.readerPagingMode == "continuous"
 
+    DisposableEffect(Unit) {
+        ReaderPaging.readerVisible = true
+        onDispose { ReaderPaging.readerVisible = false }
+    }
+    LaunchedEffect(lazyListState) {
+        ReaderPaging.turns.collect { direction -> lazyListState.turnPage(direction) }
+    }
+
     val chapterParagraphs = remember(
         activeChapter?.content,
         viewModel.settings.watermarkRemovalEnabled,
@@ -128,18 +136,8 @@ fun ReaderContent(
                             }
 
                             when (action) {
-                                "PREV_PAGE" -> {
-                                    scope.launch {
-                                        val target = (lazyListState.firstVisibleItemIndex - 4).coerceAtLeast(0)
-                                        lazyListState.animateScrollToItem(target)
-                                    }
-                                }
-                                "NEXT_PAGE" -> {
-                                    scope.launch {
-                                        val target = lazyListState.firstVisibleItemIndex + 4
-                                        lazyListState.animateScrollToItem(target)
-                                    }
-                                }
+                                "PREV_PAGE" -> scope.launch { lazyListState.turnPage(-1) }
+                                "NEXT_PAGE" -> scope.launch { lazyListState.turnPage(1) }
                                 "TOGGLE_CONTROLS" -> onToggleControls()
                                 "QUICK_BOOKMARK" -> {
                                     if (currentParagraphIndex >= 0 && activeChapter != null && bookState != null) {
