@@ -63,6 +63,7 @@ fun PluginManagementScreen(
     var healthProgress by remember { mutableStateOf<String?>(null) }
     var healthJob by remember { mutableStateOf<Job?>(null) }
     var isUpdatingRemote by remember { mutableStateOf(false) }
+    var showLimitsDialog by remember { mutableStateOf(false) }
 
     var activeTopTab by remember { mutableIntStateOf(0) } // 0 = Installed, 1 = Catalog & Presets, 2 = Diagnostic Lab
     var searchQuery by remember { mutableStateOf("") }
@@ -161,6 +162,12 @@ fun PluginManagementScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showLimitsDialog = true },
+                        modifier = Modifier.defaultMinSize(minHeight = MinTouchTarget)
+                    ) {
+                        Icon(Icons.Default.Speed, contentDescription = "Download limits")
+                    }
                     IconButton(
                         onClick = {
                             if (isUpdatingRemote) return@IconButton
@@ -701,6 +708,10 @@ fun PluginManagementScreen(
                 }
             }
         }
+    }
+
+    if (showLimitsDialog) {
+        com.example.ui.components.DownloadLimitsDialog(pluginManager) { showLimitsDialog = false }
     }
 
     // Modal: Template Picker Dialog

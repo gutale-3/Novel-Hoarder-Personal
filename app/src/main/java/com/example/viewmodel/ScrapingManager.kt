@@ -224,6 +224,34 @@ class ScrapingManager(
         lastProgressTimestamp = System.currentTimeMillis()
     }
 
+    private val quota by lazy { com.example.data.scraper.DownloadQuota.get(application) }
+
+    /**
+     * Holds the session while [sourceKey]'s hourly/daily limit is used up, rather than fetching
+     * pages the site will answer with a login/limit notice. Returns false if stopped meanwhile.
+     */
+    private suspend fun awaitQuota(sourceKey: String): Boolean {
+        var announced = false
+        while (isScraping) {
+            val wait = quota.waitMs(sourceKey)
+            if (wait == 0L) {
+                if (announced) addLog("Download limit window reopened for $sourceKey. Continuing.")
+                return true
+            }
+            val resumeAt = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
+                .format(java.util.Date(System.currentTimeMillis() + wait))
+            if (!announced) {
+                val l = quota.limitsFor(sourceKey)
+                addLog("Site limit reached for $sourceKey (${l.perHour}/hour, ${l.perDay}/day). Waiting until $resumeAt…")
+                announced = true
+            }
+            scrapingStatus = "● Waiting for site limit (resumes $resumeAt)"
+            notifyProgressMade() // a deliberate wait is not a stall
+            delay(minOf(wait, 15_000L))
+        }
+        return false
+    }
+
     private fun startWatchdog() {
         watchdogJob?.cancel()
         lastProgressTimestamp = System.currentTimeMillis()
@@ -888,6 +916,7 @@ class ScrapingManager(
 
             var sessionDownloadedCount = 0
             val glossaries = repository.getGlossary(currentBookState.id)
+            val sourceKey = com.example.data.scraper.SourceKeys.keyFor(bookUrl)
 
             for ((index, item) in chaptersToProcess.withIndex()) {
                 if (!isScraping) break
@@ -929,6 +958,8 @@ class ScrapingManager(
                     continue
                 }
 
+                if (!awaitQuota(sourceKey)) break
+
                 var downloadSuccess = false
                 var tries = 0
 
@@ -965,6 +996,7 @@ class ScrapingManager(
                         )
 
                         repository.insertChapter(chapterEntity)
+                        quota.record(sourceKey)
                         addLog("Saved Chapter: $title (${cleanedBody.length} chars)")
                         downloadSuccess = true
                         sessionDownloadedCount++
@@ -1098,6 +1130,10 @@ class ScrapingManager(
                 return@runCatching
             }
             val scraper = SourceManager.getSourceForUrl(chapter.url, pluginManager)
+            val sourceKey = com.example.data.scraper.SourceKeys.keyFor(chapter.url)
+            if (quota.remaining(sourceKey) <= 0) {
+                throw IOException("Download limit for $sourceKey reached; try again later")
+            }
             val webView = createFreshWebView()
             try {
                 val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
@@ -1122,6 +1158,7 @@ class ScrapingManager(
                 repository.deletePolishedChapter(chapter.id)
                 repository.deleteChapterRecap(chapter.id)
                 repository.insertChapter(updatedChapter)
+                quota.record(sourceKey)
             } finally {
                 withContext(Dispatchers.Main) {
                     try { webView.destroy() } catch (_: Exception) {}
@@ -1266,6 +1303,7 @@ class ScrapingManager(
                     
                     // Insert the fresh chapter content
                     repository.insertChapter(updatedChapter)
+                    quota.record(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
                     
                     withContext(Dispatchers.Main) {
                         rescrapingChapterId = null
@@ -1326,6 +1364,7 @@ class ScrapingManager(
                         repository.deletePolishedChapter(chapter.id)
                         repository.deleteChapterRecap(chapter.id)
                         repository.insertChapter(updatedChapter)
+                        quota.record(com.example.data.scraper.SourceKeys.keyFor(chapter.url))
                         successCount++
                     } finally {
                         withContext(Dispatchers.Main) {

@@ -26,6 +26,8 @@ class ChapterUpdateWorker(
         const val CHANNEL_ID = "chapter_updates_channel"
         const val NOTIFICATION_ID_BASE = 2000
         const val CHECK_NOW_WORK_NAME = "novel_chapter_update_check_now"
+        /** Upper bound per book per background run, so one novel cannot hog the run. */
+        const val MAX_AUTO_PER_RUN = 150
 
         /** Runs the update check once, right away, for the Updates tab's "Check now" button. */
         fun checkNow(context: Context) {
@@ -107,6 +109,7 @@ class ChapterUpdateWorker(
         }
 
         val updatesStore = ChapterUpdatesStore.get(context)
+        val quota = com.example.data.scraper.DownloadQuota.get(context)
         for ((index, book) in books.withIndex()) {
             if (book.url.startsWith("local://")) continue
             try {
@@ -164,12 +167,23 @@ class ChapterUpdateWorker(
                         nextChapterStart = 1
                     }
 
-                    updatesStore.record(
-                        ChapterUpdatesStore.Entry(book.id, newCount, nextChapterStart, System.currentTimeMillis())
-                    )
+                    var downloaded = 0
+                    if (newCount > 0 && quota.isAutoDownloadEnabled(book.id, book.url)) {
+                        downloaded = autoDownload(book, scraper, chapterUrls.takeLast(newCount), nextChapterStart)
+                    }
+                    val stillNew = (newCount - downloaded).coerceAtLeast(0)
+                    if (stillNew > 0) {
+                        updatesStore.record(
+                            ChapterUpdatesStore.Entry(
+                                book.id, stillNew, nextChapterStart + downloaded, System.currentTimeMillis()
+                            )
+                        )
+                    } else {
+                        updatesStore.clear(book.id)
+                    }
 
                     if (newCount > 0) {
-                        val autoGrab = prefs.getBoolean("auto_grab_new_chapters", false)
+                        val autoGrab = downloaded > 0
                         val openAppIntent = Intent(context, com.example.MainActivity::class.java)
                         val openAppPendingIntent = PendingIntent.getActivity(
                             context, index, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -179,8 +193,11 @@ class ChapterUpdateWorker(
                             .setSmallIcon(android.R.drawable.ic_popup_sync)
                             .setContentTitle("New Chapters for ${book.title}")
                             .setContentText(
-                                if (autoGrab) "Auto-grabbing $newCount new chapters from Ch. $nextChapterStart!"
-                                else "Found $newCount new chapters (from Ch. $nextChapterStart) available to download!"
+                                when {
+                                    autoGrab && stillNew == 0 -> "Downloaded $downloaded new chapters (from Ch. $nextChapterStart) — ready offline"
+                                    autoGrab -> "Downloaded $downloaded of $newCount new chapters; the rest wait for the site's limit"
+                                    else -> "Found $newCount new chapters (from Ch. $nextChapterStart) available to download!"
+                                }
                             )
                             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                             .setContentIntent(openAppPendingIntent)
@@ -197,5 +214,60 @@ class ChapterUpdateWorker(
         }
 
         return Result.success()
+    }
+
+    /**
+     * Adds the new chapters to the book and downloads as many as the site's limit allows right
+     * now. Whatever is left stays listed in the Updates tab and is picked up on the next run.
+     * @return number of chapters downloaded.
+     */
+    private suspend fun autoDownload(
+        book: com.example.data.local.BookEntity,
+        scraper: com.example.data.scraper.NovelSource,
+        newUrls: List<String>,
+        firstNumber: Int
+    ): Int {
+        val container = com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application)
+        val repository = container.repository
+        val scraping = container.scraping
+        val quota = com.example.data.scraper.DownloadQuota.get(context)
+        val sourceKey = com.example.data.scraper.SourceKeys.keyFor(book.url)
+
+        val placeholders = newUrls.mapIndexed { i, url ->
+            val number = firstNumber + i
+            val chapId = scraper.parseChapterId(url) ?: "ch_$number"
+            com.example.data.local.ChapterEntity(
+                id = "${book.id}_$chapId",
+                bookId = book.id,
+                chapterId = chapId,
+                chapterNumber = number,
+                title = "Chapter $number",
+                url = url,
+                content = "",
+                hash = ""
+            )
+        }.filter { repository.getChapter(it.id) == null }
+        if (placeholders.isNotEmpty()) {
+            repository.insertChapters(placeholders)
+            repository.updateBook(book.copy(totalChapters = repository.getChapters(book.id).size, updatedAt = System.currentTimeMillis()))
+        }
+
+        val budget = minOf(newUrls.size, quota.remaining(sourceKey), MAX_AUTO_PER_RUN)
+        if (budget <= 0) return 0
+        val delayMs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+            .getInt("request_delay_ms", 3000).toLong().coerceAtLeast(1000L)
+
+        var downloaded = 0
+        var failuresInARow = 0
+        for (chapter in repository.getPendingChapters(book.id, budget)) {
+            if (scraping.downloadSingleChapter(chapter).isSuccess) {
+                downloaded++
+                failuresInARow = 0
+            } else if (++failuresInARow >= 3) {
+                break // the site is refusing; try again next run
+            }
+            delay(delayMs)
+        }
+        return downloaded
     }
 }

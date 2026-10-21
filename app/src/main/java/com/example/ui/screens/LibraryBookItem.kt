@@ -330,6 +330,7 @@ fun LibraryBookItem(
                                         },
                                         leadingIcon = { Icon(Icons.Default.CloudDownload, contentDescription = null) }
                                     )
+                                    AutoDownloadMenuItem(book)
                                     Divider()
                                 }
                                 DropdownMenuItem(
@@ -562,4 +563,39 @@ fun LibraryBookItem(
             }
         }
     }
+}
+
+/**
+ * Per-novel switch for background auto-download. Tapping flips the effective value; choosing the
+ * same value as the site default clears the override, so a later change to the site default
+ * applies again.
+ */
+@Composable
+private fun AutoDownloadMenuItem(book: BookEntity) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val quota = remember { com.example.data.scraper.DownloadQuota.get(context) }
+    val version by quota.version.collectAsState()
+    val sourceKey = remember(book.url) { com.example.data.scraper.SourceKeys.keyFor(book.url) }
+    val siteDefault = remember(version, sourceKey) { quota.limitsFor(sourceKey).autoDownload }
+    val override = remember(version, book.id) { quota.bookOverride(book.id) }
+    val effective = override ?: siteDefault
+
+    DropdownMenuItem(
+        text = {
+            Column {
+                Text("Auto-download new chapters")
+                Text(
+                    if (override == null) "Site default (${if (siteDefault) "on" else "off"})" else "Set for this novel",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        onClick = {
+            val newValue = !effective
+            quota.setBookOverride(book.id, if (newValue == siteDefault) null else newValue)
+        },
+        leadingIcon = { Icon(Icons.Default.Autorenew, contentDescription = null) },
+        trailingIcon = { Checkbox(checked = effective, onCheckedChange = null) }
+    )
 }

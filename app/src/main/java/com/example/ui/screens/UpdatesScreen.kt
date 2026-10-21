@@ -53,6 +53,10 @@ fun UpdatesScreen(
         .sortedByDescending { it.second.checkedAt }
     val withErrors = books.mapNotNull { b -> entries[b.id]?.takeIf { it.error != null }?.let { b to it } }
     val lastChecked = entries.values.maxOfOrNull { it.checkedAt }
+    var showLimits by remember { mutableStateOf(false) }
+    if (showLimits) {
+        com.example.ui.components.DownloadLimitsDialog(viewModel.pluginManager) { showLimits = false }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -70,6 +74,7 @@ fun UpdatesScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            TextButton(onClick = { showLimits = true }) { Text("Limits") }
             FilledTonalButton(
                 onClick = { ChapterUpdateWorker.checkNow(context) },
                 enabled = !isChecking
