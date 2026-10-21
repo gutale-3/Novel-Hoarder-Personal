@@ -70,6 +70,12 @@ android {
         applicationIdSuffix = ".test"
         manifestPlaceholders["appLabel"] = "Novel Hoarder Test"
       }
+      // Opt-in (-Pshrink): R8 removes unused library code (the APK's dex shrinks several-fold).
+      if (project.hasProperty("shrink")) {
+        isMinifyEnabled = true
+        isShrinkResources = true
+        proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      }
     }
   }
   compileOptions {
@@ -83,7 +89,9 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
   packaging {
     jniLibs {
-      useLegacyPackaging = false
+      // The small build (-Pshrink) stores native libraries compressed: a much smaller download,
+      // unpacked once at install time.
+      useLegacyPackaging = project.hasProperty("shrink")
       pickFirsts.add("**/libonnxruntime.so")
     }
   }

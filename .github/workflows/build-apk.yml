@@ -49,6 +49,7 @@ jobs:
           echo "$SIGNING_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/signing.keystore"
           echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/signing.keystore" >> "$GITHUB_ENV"
 
+      # Add -Pshrink here (about 27 MB instead of 76 MB) once a shrunk build is confirmed working on a phone.
       - name: Build APK
         run: gradle :app:assembleDebug -PsideBySide -PabiSplit -PversionCode=$BUILD_NO --no-configuration-cache
 
