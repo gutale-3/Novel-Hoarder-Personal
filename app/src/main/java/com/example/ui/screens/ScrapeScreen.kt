@@ -701,89 +701,20 @@ fun ScrapeScreen(
         }
     }
 
-    // --- Dynamic CAPTCHA Solver Webview Dialog ---
+    // --- Security check / stuck chapter solver ---
     if (viewModel.showCaptchaDialog) {
-        Dialog(
-            onDismissRequest = { /* Prevent dismiss during captcha verify */ },
-            properties = DialogProperties(
-                dismissOnBackPress = false,
-                dismissOnClickOutside = false,
-                usePlatformDefaultWidth = false
-            )
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // Header Bar
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "Bypass Verification",
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            )
-                            Text(
-                                text = viewModel.scraping.captchaReason.ifBlank { "Solve CAPTCHA / Cloudflare check below." },
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
-
-                        Button(
-                            onClick = { viewModel.scraping.resumeAfterCaptcha() },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Text("Resume Scrape", fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    // WebView Embed
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    ) {
-                        AndroidView(
-                            factory = { ctx ->
-                                WebView(ctx).apply {
-                                    WebViewFactory.applySafeDefaults(this, viewModel.scraping.captchaUserAgent.ifBlank { viewModel.defaultUserAgent })
-                                    webViewClient = object : WebViewFactory.SafeWebViewClient(
-                                        onPageFinishedCallback = { _, url ->
-                                            if (url != null) {
-                                                CookieManager.getInstance().flush()
-                                            }
-                                        }
-                                    ) {}
-                                    webChromeClient = WebViewFactory.SafeWebChromeClient()
-                                    loadUrl(viewModel.captchaUrl)
-                                }
-                            },
-                            onRelease = { view ->
-                                WebViewFactory.destroySafely(view)
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                }
-            }
-        }
+        com.example.ui.components.SecurityCheckDialog(
+            url = viewModel.captchaUrl,
+            userAgent = viewModel.scraping.captchaUserAgent.ifBlank { viewModel.defaultUserAgent },
+            reason = viewModel.scraping.captchaReason.ifBlank { "Solve the check below, then tap Resume." },
+            onDone = { viewModel.scraping.resumeAfterCaptcha() },
+            onCancel = {
+                viewModel.showCaptchaDialog = false
+                viewModel.scraping.stopScraping()
+            },
+            doneLabel = "Resume download",
+            cancelLabel = "Stop"
+        )
     }
 
     // --- Dynamic Manual Browser Overlay ---
