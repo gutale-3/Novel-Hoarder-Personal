@@ -72,6 +72,17 @@ class ManualCaptureManager(
         clearSession()
     }
 
+    /** Saves chapters into a novel already in the library, without grabbing book info first. */
+    fun selectExistingBook(book: BookEntity) {
+        captureBookId = book.id
+        captureBookTitle = book.title
+        prefs.edit().putString("capture_book_id", book.id).apply()
+        coroutineScope.launch(Dispatchers.IO) {
+            val count = repository.getChapterCount(book.id)
+            withContext(Dispatchers.Main) { captureChapterCount = count }
+        }
+    }
+
     fun grabInfoFromCurrentPage(webView: WebView, onResult: (String) -> Unit) {
         if (isCapturing) {
             onResult("Capture in progress...")
@@ -144,7 +155,7 @@ class ManualCaptureManager(
 
         val targetBookId = captureBookId
         if (targetBookId == null) {
-            onResult("No active capture session. Use 'Grab Novel Info' first.")
+            onResult("Choose which novel this chapter belongs to first.")
             return
         }
 
@@ -162,6 +173,11 @@ class ManualCaptureManager(
                 val rawTitle = jsonObj?.optString("title") ?: "Chapter"
                 val rawContent = jsonObj?.optString("content") ?: ""
 
+                if (com.example.util.CloudflareDetector.isChallengeText(rawContent)) {
+                    onResult("This page is a security check, not the chapter. Pass it, then press Save again.")
+                    isCapturing = false
+                    return@launch
+                }
                 val cleanBody = GenericScraper.sanitizeText(rawContent, aggressive = false)
                 if (cleanBody.isBlank()) {
                     onResult("No chapter content found on page.")
@@ -182,27 +198,47 @@ class ManualCaptureManager(
                         return@withContext
                     }
 
-                    val nextIndex = (existingChapters.maxOfOrNull { it.chapterNumber } ?: 0) + 1
-                    val chapterId = "${targetBookId}_ch_$nextIndex"
-                    val resolvedUrl = pageUrl.ifBlank { "manual://$targetBookId/ch/$nextIndex" }
+                    val bookTitle = repository.getBook(targetBookId)?.title.orEmpty()
+                    val byUrl = existingChapters.firstOrNull { pageUrl.isNotBlank() && it.url == pageUrl }
+                    val parsedNumber = GenericScraper.parseChapterNumber(rawTitle, pageUrl)
+                    val byNumber = parsedNumber?.let { n -> existingChapters.firstOrNull { it.chapterNumber == n } }
 
-                    val chapter = ChapterEntity(
-                        id = chapterId,
+                    // Where this chapter goes: the same URL already in the list (e.g. a chapter
+                    // listed but never downloaded), else its own number if that slot is free or
+                    // empty, else the end of the novel.
+                    val target = byUrl ?: byNumber?.takeIf { it.content.isBlank() }
+                    val number = target?.chapterNumber
+                        ?: parsedNumber?.takeIf { byNumber == null }
+                        ?: ((existingChapters.maxOfOrNull { it.chapterNumber } ?: 0) + 1)
+                    val title = com.example.util.ChapterTitleCleaner.clean(
+                        rawTitle.takeIf { it.isNotBlank() && it != "Chapter" } ?: "Chapter $number",
+                        bookTitle, chapterNumber = number
+                    )
+
+                    val chapter = target?.copy(
+                        title = title, content = cleanBody, hash = contentHash,
+                        downloadedAt = System.currentTimeMillis()
+                    ) ?: ChapterEntity(
+                        id = "${targetBookId}_ch_$number",
                         bookId = targetBookId,
-                        chapterId = "ch_$nextIndex",
-                        chapterNumber = nextIndex,
-                        title = if (rawTitle.isBlank() || rawTitle == "Chapter") "Chapter $nextIndex" else rawTitle,
-                        url = resolvedUrl,
+                        chapterId = "ch_$number",
+                        chapterNumber = number,
+                        title = title,
+                        url = pageUrl.ifBlank { "manual://$targetBookId/ch/$number" },
                         content = cleanBody,
                         hash = contentHash
                     )
 
                     repository.insertChapter(chapter)
                     val newCount = repository.getChapterCount(targetBookId)
+                    repository.getBook(targetBookId)?.let { repository.updateBook(it.copy(totalChapters = newCount)) }
 
                     withContext(Dispatchers.Main) {
                         captureChapterCount = newCount
-                        onResult("Saved Chapter $nextIndex: ${chapter.title}")
+                        onResult(
+                            (if (target != null) "Filled in Chapter $number: " else "Saved Chapter $number: ") +
+                                "${chapter.title} → $bookTitle"
+                        )
                     }
                 }
             } catch (e: Exception) {

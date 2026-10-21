@@ -252,26 +252,55 @@ class ScrapingManager(
      * Holds the session while [sourceKey]'s hourly/daily limit is used up, rather than fetching
      * pages the site will answer with a login/limit notice. Returns false if stopped meanwhile.
      */
-    private suspend fun awaitQuota(sourceKey: String): Boolean {
-        var announced = false
-        while (isScraping) {
-            val wait = quota.waitMs(sourceKey)
-            if (wait == 0L) {
-                if (announced) addLog("Download limit window reopened for $sourceKey. Continuing.")
-                return true
-            }
-            val resumeAt = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
-                .format(java.util.Date(System.currentTimeMillis() + wait))
-            if (!announced) {
-                val l = quota.limitsFor(sourceKey)
-                addLog("Site limit reached for $sourceKey (${l.perHour}/hour, ${l.perDay}/day). Waiting until $resumeAt…")
-                announced = true
-            }
-            scrapingStatus = "● Waiting for site limit (resumes $resumeAt)"
-            notifyProgressMade() // a deliberate wait is not a stall
-            delay(minOf(wait, 15_000L))
+    /** Set by "Continue now" on the Scrape screen: skip the current limit wait once. */
+    @Volatile var skipQuotaWaitRequested = false
+    var isWaitingForQuota by mutableStateOf(false)
+        private set
+
+    private suspend fun awaitQuota(sourceKey: String, chapterUrl: String): Boolean {
+        // A site paused after a background bot check: the user is here now, so hand them the
+        // check instead of sitting out the pause.
+        if (quota.challengePausedUntil(sourceKey) > 0) {
+            addLog("$sourceKey showed a security check earlier. Opening it so you can pass it…")
+            handleCaptchaChallenge(chapterUrl, "This site asked for a security check earlier. Pass it, then tap Resume.")
+            quota.clearChallenge(sourceKey)
         }
-        return false
+        var announced = false
+        skipQuotaWaitRequested = false
+        try {
+            while (isScraping) {
+                val wait = quota.waitMs(sourceKey)
+                if (wait == 0L) {
+                    if (announced) addLog("Download limit window reopened for $sourceKey. Continuing.")
+                    return true
+                }
+                if (skipQuotaWaitRequested) {
+                    skipQuotaWaitRequested = false
+                    addLog("Continuing now as requested (limit for $sourceKey ignored this once).")
+                    return true
+                }
+                isWaitingForQuota = true
+                val resumeAt = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
+                    .format(java.util.Date(System.currentTimeMillis() + wait))
+                if (!announced) {
+                    val l = quota.limitsFor(sourceKey)
+                    val used = quota.usage(sourceKey)
+                    addLog("Site limit reached for $sourceKey: ${used.lastHour}/${l.perHour} this hour, " +
+                        "${used.lastDay}/${if (l.perDay == 0) "∞" else l.perDay} today. Waiting until $resumeAt " +
+                        "(tap “Continue now” to skip).")
+                    announced = true
+                }
+                scrapingStatus = "● Waiting for site limit (resumes $resumeAt)"
+                notifyProgressMade() // a deliberate wait is not a stall
+                var slept = 0L
+                while (slept < minOf(wait, 15_000L) && !skipQuotaWaitRequested && isScraping) {
+                    delay(500); slept += 500
+                }
+            }
+            return false
+        } finally {
+            isWaitingForQuota = false
+        }
     }
 
     private fun startWatchdog() {
@@ -980,7 +1009,7 @@ class ScrapingManager(
                     continue
                 }
 
-                if (!awaitQuota(sourceKey)) break
+                if (!awaitQuota(sourceKey, chapterUrl)) break
 
                 var downloadSuccess = false
                 var tries = 0

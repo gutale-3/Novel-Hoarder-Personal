@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -105,6 +106,19 @@ class MainActivity : ComponentActivity() {
             val viewModel: MainViewModel = viewModel()
             val navController = rememberNavController()
 
+            /**
+             * Switch bottom tab. Always clears back to Home first (so a tab never reopens on top of
+             * a stale Settings/Reader page) and never stacks a second copy of the tab — the two
+             * ways tabs used to get "stuck" until Back was pressed.
+             */
+            fun goToTab(route: String) {
+                if (route != "updates") viewModel.progress.setLastActiveTab(route)
+                navController.navigate(route) {
+                    popUpTo(navController.graph.findStartDestination().id)
+                    launchSingleTop = true
+                }
+            }
+
             // Handle incoming intents (e.g. from TTS media notifications)
             val currentPendingRoute by pendingRoute
             LaunchedEffect(currentPendingRoute) {
@@ -133,7 +147,7 @@ class MainActivity : ComponentActivity() {
                         } else {
                             val lastTab = viewModel.progress.getLastActiveTab()
                             if (lastTab != "home" && (lastTab == "library" || lastTab == "scrape")) {
-                                navController.navigate(lastTab)
+                                goToTab(lastTab)
                             }
                         }
                     }
@@ -150,7 +164,7 @@ class MainActivity : ComponentActivity() {
                 // A paused download needs the user: bring the solver window up wherever they are.
                 LaunchedEffect(viewModel.showCaptchaDialog) {
                     if (viewModel.showCaptchaDialog && navController.currentDestination?.route != "scrape") {
-                        navController.navigate("scrape") { launchSingleTop = true }
+                        goToTab("scrape")
                     }
                 }
 
@@ -242,16 +256,7 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 NavigationBarItem(
                                     selected = currentRoute == "home",
-                                    onClick = {
-                                        if (currentRoute != "home") {
-                                            viewModel.progress.setLastActiveTab("home")
-                                            navController.navigate("home") {
-                                                popUpTo("home") { saveState = true }
-                                                launchSingleTop = true
-                                                restoreState = true
-                                            }
-                                        }
-                                    },
+                                    onClick = { goToTab("home") },
                                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                                     label = { Text("Home") },
                                     modifier = Modifier.testTag("nav_home_tab")
@@ -259,16 +264,7 @@ class MainActivity : ComponentActivity() {
 
                                 NavigationBarItem(
                                     selected = currentRoute == "scrape",
-                                    onClick = {
-                                        if (currentRoute != "scrape") {
-                                            viewModel.progress.setLastActiveTab("scrape")
-                                            navController.navigate("scrape") {
-                                                popUpTo("home") { saveState = true }
-                                                launchSingleTop = true
-                                                restoreState = true
-                                            }
-                                        }
-                                    },
+                                    onClick = { goToTab("scrape") },
                                     icon = { Icon(Icons.Default.CloudDownload, contentDescription = "Scrape") },
                                     label = { Text("Scrape") },
                                     modifier = Modifier.testTag("nav_scrape_tab")
@@ -276,15 +272,7 @@ class MainActivity : ComponentActivity() {
 
                                 NavigationBarItem(
                                     selected = currentRoute == "updates",
-                                    onClick = {
-                                        if (currentRoute != "updates") {
-                                            navController.navigate("updates") {
-                                                popUpTo("home") { saveState = true }
-                                                launchSingleTop = true
-                                                restoreState = true
-                                            }
-                                        }
-                                    },
+                                    onClick = { goToTab("updates") },
                                     icon = {
                                         BadgedBox(badge = {
                                             if (pendingUpdateBooks > 0) Badge { Text(pendingUpdateBooks.toString()) }
@@ -298,16 +286,7 @@ class MainActivity : ComponentActivity() {
 
                                 NavigationBarItem(
                                     selected = currentRoute == "library",
-                                    onClick = {
-                                        if (currentRoute != "library") {
-                                            viewModel.progress.setLastActiveTab("library")
-                                            navController.navigate("library") {
-                                                popUpTo("home") { saveState = true }
-                                                launchSingleTop = true
-                                                restoreState = true
-                                            }
-                                        }
-                                    },
+                                    onClick = { goToTab("library") },
                                     icon = { Icon(Icons.Default.LibraryBooks, contentDescription = "Library") },
                                     label = { Text("Library") },
                                     modifier = Modifier.testTag("nav_library_tab")
@@ -341,14 +320,8 @@ class MainActivity : ComponentActivity() {
                             composable("home") {
                                 HomeScreen(
                                     viewModel = viewModel,
-                                    onNavigateToScrape = {
-                                        viewModel.progress.setLastActiveTab("scrape")
-                                        navController.navigate("scrape")
-                                    },
-                                    onNavigateToLibrary = {
-                                        viewModel.progress.setLastActiveTab("library")
-                                        navController.navigate("library")
-                                    },
+                                    onNavigateToScrape = { goToTab("scrape") },
+                                    onNavigateToLibrary = { goToTab("library") },
                                     onOpenBook = { bookId ->
                                         viewModel.progress.setActiveReaderSession(bookId)
                                         navController.navigate("reader/$bookId")
@@ -364,13 +337,7 @@ class MainActivity : ComponentActivity() {
                                 SearchScreen(
                                     viewModel = viewModel,
                                     onBack = { navController.popBackStack() },
-                                    onPickResult = {
-                                        viewModel.progress.setLastActiveTab("scrape")
-                                        navController.navigate("scrape") {
-                                            popUpTo("home") { saveState = true }
-                                            launchSingleTop = true
-                                        }
-                                    }
+                                    onPickResult = { goToTab("scrape") }
                                 )
                             }
 
@@ -391,10 +358,7 @@ class MainActivity : ComponentActivity() {
                                         viewModel.progress.setActiveReaderSession(bookId)
                                         navController.navigate("reader/$bookId")
                                     },
-                                    onNavigateToScrape = {
-                                        viewModel.progress.setLastActiveTab("scrape")
-                                        navController.navigate("scrape")
-                                    },
+                                    onNavigateToScrape = { goToTab("scrape") },
                                     onNavigateToSettings = {
                                         navController.navigate("settings")
                                     }

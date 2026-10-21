@@ -490,7 +490,7 @@ fun ScrapeScreen(
                         ) {
                             Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Stop", fontWeight = FontWeight.Bold)
+                            Text("Stop", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                         }
 
                         if (viewModel.isScrapePaused) {
@@ -507,7 +507,7 @@ fun ScrapeScreen(
                             ) {
                                 Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Resume")
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Resume", fontWeight = FontWeight.Bold)
+                                Text("Resume", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                             }
                         } else {
                             Button(
@@ -523,7 +523,7 @@ fun ScrapeScreen(
                             ) {
                                 Icon(imageVector = Icons.Default.Pause, contentDescription = "Pause")
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Pause", fontWeight = FontWeight.Bold)
+                                Text("Pause", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                             }
                         }
 
@@ -541,7 +541,7 @@ fun ScrapeScreen(
                         ) {
                             Icon(imageVector = Icons.Default.SkipNext, contentDescription = "Skip")
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Skip", fontWeight = FontWeight.Bold)
+                            Text("Skip", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                         }
                     } else {
                         Button(
@@ -557,7 +557,7 @@ fun ScrapeScreen(
                         ) {
                             Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Start Scraping", fontWeight = FontWeight.Bold)
+                            Text("Start Scraping", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                         }
 
                         Button(
@@ -574,7 +574,7 @@ fun ScrapeScreen(
                         ) {
                             Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Clear logs")
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Clear", fontWeight = FontWeight.Bold)
+                            Text("Clear", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -594,7 +594,7 @@ fun ScrapeScreen(
                     ) {
                         Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Clear logs")
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Clear Logs", fontWeight = FontWeight.Bold)
+                        Text("Clear Logs", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -635,6 +635,14 @@ fun ScrapeScreen(
                                 )
                             )
                         }
+                    }
+
+                    if (viewModel.scraping.isWaitingForQuota) {
+                        Button(
+                            onClick = { viewModel.scraping.skipQuotaWaitRequested = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Continue now", fontWeight = FontWeight.Bold) }
                     }
 
                     LinearProgressIndicator(
@@ -720,6 +728,31 @@ fun ScrapeScreen(
     // --- Dynamic Manual Browser Overlay ---
     if (viewModel.showManualBrowser) {
         var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+        var showNovelPicker by remember { mutableStateOf(false) }
+        if (showNovelPicker) {
+            val libraryBooks by viewModel.repository.allBooks.collectAsState(initial = emptyList())
+            com.example.ui.components.NovelPickerDialog(
+                books = libraryBooks,
+                onPick = { book ->
+                    showNovelPicker = false
+                    viewModel.manualCapture.selectExistingBook(book)
+                    webViewInstance?.let { webView ->
+                        viewModel.scraping.grabChapterFromWebView(webView) { msg ->
+                            coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                        }
+                    }
+                },
+                onNewNovel = {
+                    showNovelPicker = false
+                    webViewInstance?.let { webView ->
+                        viewModel.scraping.grabInfoFromWebView(webView) { msg ->
+                            coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                        }
+                    }
+                },
+                onDismiss = { showNovelPicker = false }
+            )
+        }
         var currentWebUrl by remember { mutableStateOf(viewModel.manualBrowserUrl) }
         var isWebLoading by remember { mutableStateOf(false) }
         var canGoBack by remember { mutableStateOf(false) }
@@ -882,10 +915,14 @@ fun ScrapeScreen(
                                 // Interactive Save Chapter Button (In Between)
                                 Button(
                                     onClick = {
-                                        webViewInstance?.let { webView ->
-                                            viewModel.scraping.grabChapterFromWebView(webView) { msg ->
-                                                coroutineScope.launch {
-                                                    snackbarHostState.showSnackbar(msg)
+                                        if (manualCapture.captureBookId == null) {
+                                            showNovelPicker = true // ask which novel instead of failing
+                                        } else {
+                                            webViewInstance?.let { webView ->
+                                                viewModel.scraping.grabChapterFromWebView(webView) { msg ->
+                                                    coroutineScope.launch {
+                                                        snackbarHostState.showSnackbar(msg)
+                                                    }
                                                 }
                                             }
                                         }
@@ -959,6 +996,13 @@ fun ScrapeScreen(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f)
                                     )
+                                    TextButton(
+                                        onClick = { showNovelPicker = true },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Text("Change", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                                    }
                                     TextButton(
                                         onClick = { manualCapture.startNewBrowserSession() },
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
