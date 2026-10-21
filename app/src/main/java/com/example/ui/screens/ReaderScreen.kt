@@ -289,9 +289,7 @@ fun ReaderScreen(
         else kotlin.math.ceil(remainingWords.toDouble() / userWpm.toDouble()).toInt().coerceAtLeast(1)
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
+    val readerDrawer: @Composable () -> Unit = {
             ReaderDrawerContent(
                 bookId = bookId,
                 currentChapterId = currentChapterId,
@@ -316,7 +314,7 @@ fun ReaderScreen(
                 onOpenRevisionHistory = { showRevisionHistoryDialog = true }
             )
         }
-    ) {
+    val readerBody: @Composable () -> Unit = {
         Scaffold(
             containerColor = readerBgColor,
             topBar = {
@@ -429,6 +427,16 @@ fun ReaderScreen(
                 }
             }
         }
+    }
+
+    // Tablets / unfolded foldables: keep the chapter list open beside the text.
+    if (com.example.ui.theme.rememberScreenSize() == com.example.ui.theme.ScreenSize.Expanded) {
+        PermanentNavigationDrawer(drawerContent = readerDrawer) { readerBody() }
+    } else {
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = readerDrawer
+        ) { readerBody() }
     }
 
     // --- Dialogs ---
