@@ -55,6 +55,10 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
     ) {
+        item {
+            com.example.ui.components.InterruptedDownloadCard(viewModel.scraping, onResumed = onNavigateToScrape)
+        }
+
         // 1. Offline Mode Indicator
         item {
             Row(

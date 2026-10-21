@@ -354,23 +354,22 @@ fun ReaderSettingsDialog(
                         text = "Font Style",
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf(
-                            Pair("Serif", "serif"),
-                            Pair("Sans", "sans"),
-                            Pair("Mono", "mono")
-                        ).forEach { (name, fontKey) ->
-                            val selected = viewModel.readerFontFamily == fontKey
-                            FilterChip(
-                                selected = selected,
-                                onClick = { viewModel.settings.updateFontFamily(fontKey) },
-                                label = { Text(name) },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(8.dp)
-                            )
+                    com.example.ui.theme.ReaderFonts.choices.chunked(3).forEach { row ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            row.forEach { (fontKey, name, family) ->
+                                val selected = viewModel.readerFontFamily == fontKey
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { viewModel.settings.updateFontFamily(fontKey) },
+                                    // Each chip previews its own typeface.
+                                    label = { Text(name, fontFamily = family) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
                         }
                     }
                     

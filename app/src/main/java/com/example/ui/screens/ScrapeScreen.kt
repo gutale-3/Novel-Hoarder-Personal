@@ -73,6 +73,10 @@ fun ScrapeScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
         ) {
+        item {
+            com.example.ui.components.InterruptedDownloadCard(viewModel.scraping)
+        }
+
         // Interactive Browser Launcher Card
         item {
             Card(

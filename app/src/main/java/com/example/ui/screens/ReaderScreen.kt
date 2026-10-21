@@ -92,23 +92,7 @@ fun ReaderScreen(
     val barBgColor = readerBgColor
     val barContentColor = readerTextColor
 
-    val selectedFontFamily = when (viewModel.readerFontFamily) {
-        "sans" -> FontFamily.SansSerif
-        "mono" -> FontFamily.Monospace
-        "custom" -> {
-            val file = File(viewModel.readerCustomFontPath)
-            if (file.exists()) {
-                try {
-                    FontFamily(Font(file))
-                } catch (e: Exception) {
-                    FontFamily.Serif
-                }
-            } else {
-                FontFamily.Serif
-            }
-        }
-        else -> FontFamily.Serif
-    }
+    val selectedFontFamily = com.example.ui.theme.ReaderFonts.resolve(viewModel.readerFontFamily, viewModel.readerCustomFontPath)
 
     // Automatic Ambient Syncing via Light Sensor
     DisposableEffect(viewModel.readerAmbientSyncEnabled) {

@@ -138,6 +138,41 @@ class ScrapingManager(
     var captchaUserAgent by mutableStateOf("")
     private var captchaContinuation: CancellableContinuation<Unit>? = null
 
+    private val sessionPrefs = application.getSharedPreferences("novel_hoarder_prefs", android.content.Context.MODE_PRIVATE)
+
+    /**
+     * A download that was still running when the app process died (swiped away, killed by the
+     * OS, phone restarted). The marker is written when a session starts and cleared in the
+     * session's `finally`, which never runs if the process dies — so a leftover marker means
+     * the download was interrupted and can be resumed.
+     */
+    var interruptedSessionUrl by mutableStateOf(sessionPrefs.getString(KEY_ACTIVE_URL, null))
+        private set
+    var interruptedSessionName by mutableStateOf(sessionPrefs.getString(KEY_ACTIVE_NAME, null).orEmpty())
+        private set
+
+    private fun markSessionActive(url: String, name: String) {
+        sessionPrefs.edit().putString(KEY_ACTIVE_URL, url).putString(KEY_ACTIVE_NAME, name).apply()
+    }
+
+    private fun markSessionEnded() {
+        sessionPrefs.edit().remove(KEY_ACTIVE_URL).remove(KEY_ACTIVE_NAME).apply()
+    }
+
+    fun resumeInterruptedSession() {
+        val url = interruptedSessionUrl ?: return
+        scrapeUrl = url
+        scrapeBookName = interruptedSessionName
+        dismissInterruptedSession()
+        continueScraping()
+    }
+
+    fun dismissInterruptedSession() {
+        interruptedSessionUrl = null
+        interruptedSessionName = ""
+        if (!isScraping) markSessionEnded()
+    }
+
     init {
         com.example.data.plugin.PluginExecutionEngine.progressListener = { count ->
             scrapingStatus = "● Fetching TOC (Found $count chapters...)"
@@ -298,6 +333,7 @@ class ScrapingManager(
             0
         )
 
+        markSessionActive(url, bookName)
         scrapeJob = coroutineScope.launch(Dispatchers.IO) {
             try {
                 runScraperLoop(url, bookName)
@@ -309,6 +345,7 @@ class ScrapingManager(
                 addLog("CRITICAL ERROR: ${e.message}")
                 e.printStackTrace()
             } finally {
+                markSessionEnded()
                 withContext(Dispatchers.Main) {
                     isScraping = false
                     isScrapePaused = false
@@ -643,6 +680,7 @@ class ScrapingManager(
             missingChaptersToScrape.size
         )
 
+        markSessionActive(url, bookName)
         scrapeJob = coroutineScope.launch(Dispatchers.IO) {
             try {
                 runScraperLoop(url, bookName, missingChaptersToScrape)
@@ -654,6 +692,7 @@ class ScrapingManager(
                 addLog("CRITICAL ERROR: ${e.message}")
                 e.printStackTrace()
             } finally {
+                markSessionEnded()
                 withContext(Dispatchers.Main) {
                     isScraping = false
                     isScrapePaused = false
@@ -693,6 +732,7 @@ class ScrapingManager(
             0
         )
 
+        markSessionActive(url, scrapeBookName.trim())
         scrapeJob = coroutineScope.launch(Dispatchers.IO) {
             try {
                 val existingChapters = repository.getChapters(bookId)
@@ -714,6 +754,7 @@ class ScrapingManager(
                 addLog("CRITICAL ERROR: ${e.message}")
                 e.printStackTrace()
             } finally {
+                markSessionEnded()
                 withContext(Dispatchers.Main) {
                     isScraping = false
                     isScrapePaused = false
@@ -1473,5 +1514,10 @@ class ScrapingManager(
         }
 
         return updatedBook
+    }
+
+    private companion object {
+        const val KEY_ACTIVE_URL = "scrape_active_session_url"
+        const val KEY_ACTIVE_NAME = "scrape_active_session_name"
     }
 }
