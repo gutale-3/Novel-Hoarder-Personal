@@ -910,7 +910,20 @@ class ScrapingManager(
             } else {
                 bookEntity
             }
-            var currentBookState = downloadCoverAndSaveMetadata(finalBook, cookies)
+            val localizedBook = if (com.example.data.scraper.RawTranslation.isRawSource(bookUrl) &&
+                com.example.data.scraper.RawTranslation.looksUntranslated(finalBook.title + finalBook.synopsis)
+            ) {
+                runCatching {
+                    val t = com.example.util.TranslatorEngine.translateText(
+                        application, finalBook.title, allowMobileData = !settings.translationRequireWifi
+                    )
+                    val s = com.example.util.TranslatorEngine.translateText(
+                        application, finalBook.synopsis, allowMobileData = !settings.translationRequireWifi
+                    )
+                    finalBook.copy(title = t.trim(), synopsis = s)
+                }.getOrDefault(finalBook)
+            } else finalBook
+            var currentBookState = downloadCoverAndSaveMetadata(localizedBook, cookies)
             repository.insertBook(currentBookState)
             addLog("Successfully saved book info: ${currentBookState.title} by ${currentBookState.author}")
 
@@ -1024,8 +1037,14 @@ class ScrapingManager(
                             scraper.scrapeChapterContent(webView, chapterUrl) { shouldSkipCurrentChapter }
                         } ?: throw IOException("Chapter download timed out (Limbo detected)")
 
-                        val title = rawContent.first
+                        var title = rawContent.first
                         var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
+
+                        // Raw (Chinese) sources: translate before the glossary/hash steps.
+                        com.example.data.scraper.RawTranslation.localize(
+                            application, currentBookState.id, chapterUrl, title, cleanedBody, glossaries,
+                            allowMobileData = !settings.translationRequireWifi
+                        ).let { (t, b) -> title = t; cleanedBody = b }
 
                         // Apply customized glossaries if any exist
                         if (glossaries.isNotEmpty()) {
@@ -1292,10 +1311,14 @@ class ScrapingManager(
                     usedBackup = true
                     alt.first to alt.second
                 }
-                val title = rawContent.first
+                var title = rawContent.first
                 var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
 
                 val glossaries = repository.getGlossary(chapter.bookId)
+                com.example.data.scraper.RawTranslation.localize(
+                    application, chapter.bookId, chapter.url, title, cleanedBody, glossaries,
+                    allowMobileData = !settings.translationRequireWifi
+                ).let { (t, b) -> title = t; cleanedBody = b }
                 if (glossaries.isNotEmpty()) {
                     cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
                 }
@@ -1416,6 +1439,43 @@ class ScrapingManager(
                 withContext(Dispatchers.Main) {
                     onComplete?.invoke(false, "Failed to refresh table of contents: ${e.message}")
                 }
+            }
+        }
+    }
+
+    /** Translates every stored chapter of [bookId] that is still raw Chinese (e.g. saved offline). */
+    fun translateRawChapters(bookId: String, onComplete: (String) -> Unit) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val glossaries = repository.getGlossary(bookId)
+            val raw = repository.getChapters(bookId).filter {
+                it.content.isNotBlank() && com.example.data.scraper.RawTranslation.looksUntranslated(it.content)
+            }
+            var done = 0
+            var failed = 0
+            for (ch in raw) {
+                try {
+                    val body = com.example.util.TranslatorEngine.translateText(
+                        application, ch.content, glossary = glossaries, allowMobileData = !settings.translationRequireWifi
+                    )
+                    val title = if (com.example.data.scraper.RawTranslation.looksUntranslated(ch.title))
+                        com.example.util.TranslatorEngine.translateText(application, ch.title, allowMobileData = !settings.translationRequireWifi).trim()
+                    else ch.title
+                    repository.updateChapterContent(ch.id, body)
+                    repository.updateChapterTitle(ch.id, title)
+                    done++
+                } catch (e: Exception) {
+                    failed++
+                    if (failed >= 3 && done == 0) break // model unavailable; no point continuing
+                }
+            }
+            withContext(Dispatchers.Main) {
+                onComplete(
+                    when {
+                        raw.isEmpty() -> "No untranslated chapters."
+                        done == 0 -> "Couldn't translate (the translation model downloads on Wi-Fi first)."
+                        else -> "Translated $done of ${raw.size} chapters."
+                    }
+                )
             }
         }
     }

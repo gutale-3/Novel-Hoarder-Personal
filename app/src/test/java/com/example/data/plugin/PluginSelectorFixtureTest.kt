@@ -84,4 +84,20 @@ class PluginSelectorFixtureTest {
             .associate { it.id to it.version }
         assertEquals(shipped, listed)
     }
+
+    @Test
+    fun ixdzsRawChinese() {
+        val cfg = plugin("ixdzs")
+        assertEquals("zh", cfg.language)
+        val book = fixture("ix_book", "https://ixdzs.tw/")
+        assertEquals("武道大帝", book.select(cfg.titleSelector).first()?.text())
+        val links = book.select(cfg.chapterListSelector)
+        // Oldest first, and the "latest chapters" box at the top is not included.
+        assertTrue(links.first()!!.attr("href").endsWith("/p1.html"))
+        val chapter = fixture("ix_ch", "https://ixdzs.tw/")
+        val body = chapter.select(cfg.chapterBodySelector).first()!!.text()
+        assertTrue(body.startsWith("天武國"))
+        val search = fixture("ix_search", "https://ixdzs.tw/")
+        assertTrue(search.select(cfg.searchResultSelector).size >= 5)
+    }
 }

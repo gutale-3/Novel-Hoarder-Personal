@@ -121,6 +121,12 @@ data class PluginConfig(
     /** Replaces the generated results script. Must return `[{ title, url, cover }]` or `{ ready:false }`. */
     @Json(name = "customSearchJs") val customSearchJs: String? = null,
 
+    /** Language of the site's text: "en", or "zh" for raw Chinese sites (translated on download). */
+    @Json(name = "language") val language: String = "en",
+
+    /** A page listing popular novels, shown under Discover. Uses [searchResultSelector]. */
+    @Json(name = "browseUrl") val browseUrl: String = "",
+
     /** A known book on this site, used by the source health check. */
     @Json(name = "testUrl") val testUrl: String = "",
 

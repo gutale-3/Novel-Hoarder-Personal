@@ -6,6 +6,11 @@
       "file": "freewebnovel.json"
     },
     {
+      "id": "ixdzs",
+      "version": "1.0.0",
+      "file": "ixdzs.json"
+    },
+    {
       "id": "novelbin",
       "version": "1.0.1",
       "file": "novelbin.json"

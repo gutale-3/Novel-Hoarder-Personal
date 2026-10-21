@@ -336,6 +336,7 @@ fun LibraryBookItem(
                                     )
                                     AutoDownloadMenuItem(book)
                                     QueueMenuItem(book) { expandedMenu = false }
+                                    RawTranslationMenuItems(book) { expandedMenu = false }
                                     DropdownMenuItem(
                                         text = { Text("Check Chapter Quality") },
                                         onClick = {
@@ -638,6 +639,37 @@ private fun QueueMenuItem(book: BookEntity, onDone: () -> Unit) {
                     android.widget.Toast.makeText(context, "Queued ${book.title}. $msg", android.widget.Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    )
+}
+
+/** For novels from raw Chinese sites: translate stored raw chapters, or keep the original text. */
+@Composable
+private fun RawTranslationMenuItems(book: BookEntity, onDone: () -> Unit) {
+    if (!com.example.data.scraper.RawTranslation.isRawSource(book.url)) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var translateOn by remember(book.id) {
+        mutableStateOf(com.example.data.scraper.RawTranslation.isEnabled(context, book.id))
+    }
+    DropdownMenuItem(
+        text = { Text("Translate raw chapters") },
+        leadingIcon = { Icon(Icons.Default.Translate, contentDescription = null) },
+        onClick = {
+            onDone()
+            val scraping = com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application).scraping
+            android.widget.Toast.makeText(context, "Translating…", android.widget.Toast.LENGTH_SHORT).show()
+            scraping.translateRawChapters(book.id) { msg ->
+                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    )
+    DropdownMenuItem(
+        text = { Text("Translate new chapters") },
+        leadingIcon = { Icon(Icons.Default.GTranslate, contentDescription = null) },
+        trailingIcon = { Checkbox(checked = translateOn, onCheckedChange = null) },
+        onClick = {
+            translateOn = !translateOn
+            com.example.data.scraper.RawTranslation.setEnabled(context, book.id, translateOn)
         }
     )
 }

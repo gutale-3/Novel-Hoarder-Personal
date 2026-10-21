@@ -1,0 +1,33 @@
+{
+  "id": "ixdzs",
+  "name": "IXDZS (Raw Chinese)",
+  "version": "1.0.0",
+  "baseUrl": "ixdzs.tw",
+  "extraHosts": [
+    "www.ixdzs.tw",
+    "ixdzs8.com",
+    "www.ixdzs8.com"
+  ],
+  "author": "Built-in",
+  "description": "Raw Chinese web novels, often days or weeks ahead of English sites. Chapters are translated to English on download (on-device).",
+  "language": "zh",
+  "titleSelector": ".n-text h1, h1",
+  "authorSelector": ".n-text a[href*='author']",
+  "synopsisSelector": "#intro",
+  "coverSelector": ".n-img img, meta[property='og:image']",
+  "chapterListSelector": "ul.u-chapter:not(.cfirst) a[href*='/p']",
+  "chapterTitleSelector": ".page-d-name, h1",
+  "chapterBodySelector": "article section",
+  "chapterReadySelector": "article section",
+  "junkSelectors": [
+    ".ad",
+    ".abox"
+  ],
+  "searchUrlTemplate": "https://ixdzs.tw/bsearch?q={query}",
+  "searchResultSelector": ".u-list li h3 a",
+  "browseUrl": "https://ixdzs.tw/hot/",
+  "tocPaginationMode": "none",
+  "requestDelayMs": 2500,
+  "testUrl": "https://ixdzs.tw/read/141850/",
+  "isEnabled": true
+}
