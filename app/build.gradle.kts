@@ -14,8 +14,9 @@ android {
     applicationId = "com.aistudio.novelhoarder.tmtlrd"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // CI passes -PversionCode=<run number> so each build is newer than the last (in-app updater).
+    versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+    versionName = "1.0." + ((project.findProperty("versionCode") as String?) ?: "0")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     manifestPlaceholders["appLabel"] = "@string/app_name"
@@ -34,10 +35,22 @@ android {
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
+      // CI restores the persistent key from a secret into SIGNING_KEYSTORE_PATH; one key across
+      // builds is what lets a new APK install over the old one as an update.
+      storeFile = file(System.getenv("SIGNING_KEYSTORE_PATH") ?: "${rootDir}/debug.keystore")
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
+    }
+  }
+
+  // Opt-in (-PabiSplit): an arm64-only APK, a third the size of the universal one.
+  splits {
+    abi {
+      isEnable = project.hasProperty("abiSplit")
+      reset()
+      include("arm64-v8a")
+      isUniversalApk = false
     }
   }
 

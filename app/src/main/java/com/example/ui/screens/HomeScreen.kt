@@ -59,6 +59,10 @@ fun HomeScreen(
             com.example.ui.components.InterruptedDownloadCard(viewModel.scraping, onResumed = onNavigateToScrape)
         }
 
+        item {
+            com.example.ui.components.AppUpdateCard(alwaysShow = false)
+        }
+
         // 1. Offline Mode Indicator
         item {
             Row(

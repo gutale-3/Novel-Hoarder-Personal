@@ -187,6 +187,11 @@ fun SettingsScreen(
                 .padding(padding),
             contentPadding = screenContentPadding()
         ) {
+            item {
+                SectionHeader("App Updates")
+                com.example.ui.components.AppUpdateCard(alwaysShow = true)
+            }
+
             // --- 1. Reading ---
             item {
                 SectionHeader("Reading")

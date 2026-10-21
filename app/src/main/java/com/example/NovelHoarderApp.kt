@@ -103,6 +103,7 @@ class NovelHoarderApp : Application() {
             // Picks up site fixes pushed to the GitHub repo without needing a new app build.
             runCatching { container.pluginManager.updateFromRemoteIfDue() }
                 .onFailure { Log.w("NovelHoarderApp", "Remote plugin update failed", it) }
+            com.example.util.AppUpdater.checkIfDue(this@NovelHoarderApp)
         }
         try {
             com.example.background.ChapterUpdateWorker.schedulePeriodicUpdates(this)

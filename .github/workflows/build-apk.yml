@@ -1,0 +1,71 @@
+# Builds the side-by-side ("Novel Hoarder Test") APK and publishes it as a GitHub release.
+# The app's "Check for update" reads these releases and installs the newest one.
+#
+# One-time setup: add the repository secret SIGNING_KEYSTORE_B64 (base64 of the signing
+# keystore). Every build must use the same key or Android refuses to install it as an update.
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds start at 101 so even the first one is newer than hand-made builds (versionCode 1).
+      - name: Version
+        run: echo "BUILD_NO=$((100 + ${{ github.run_number }}))" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36.1" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+
+      - name: Restore signing key
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$SIGNING_KEYSTORE_B64" ]; then
+            echo "::error::Secret SIGNING_KEYSTORE_B64 is not set; see the comment at the top of this file."
+            exit 1
+          fi
+          echo "$SIGNING_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/signing.keystore"
+          echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/signing.keystore" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        run: gradle :app:assembleDebug -PsideBySide -PabiSplit -PversionCode=$BUILD_NO --no-configuration-cache
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/*arm64-v8a*.apk "out/NovelHoarder-test-arm64-build$BUILD_NO.apk"
+          ls -la out
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ env.BUILD_NO }}
+          name: Build ${{ env.BUILD_NO }}
+          target_commitish: ${{ github.sha }}
+          body: |
+            Built from ${{ github.ref_name }} @ ${{ github.sha }}
+
+            ${{ github.event.head_commit.message }}
+          files: out/*.apk
