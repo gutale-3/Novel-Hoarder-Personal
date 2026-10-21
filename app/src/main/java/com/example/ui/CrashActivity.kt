@@ -53,7 +53,7 @@ class CrashActivity : ComponentActivity() {
                     stackTrace = stackTrace,
                     onCopyDetails = {
                         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Novel Hoarder Crash Diagnostics", diagnosticInfo)
+                        val clip = ClipData.newPlainText("Inkvault Crash Diagnostics", diagnosticInfo)
                         clipboard.setPrimaryClip(clip)
                         Toast.makeText(this, "Diagnostic details copied to clipboard!", Toast.LENGTH_LONG).show()
                     },

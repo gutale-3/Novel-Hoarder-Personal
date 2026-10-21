@@ -179,9 +179,9 @@ class MainActivity : ComponentActivity() {
                                 title = {
                                     Text(
                                         text = when (currentRoute) {
-                                            "home" -> "Novel Hoarder"
+                                            "home" -> "Inkvault"
                                             "scrape" -> "Scraper Terminal"
-                                            else -> "Novel Hoarder"
+                                            else -> "Inkvault"
                                         },
                                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                                     )

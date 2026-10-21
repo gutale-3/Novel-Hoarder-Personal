@@ -50,7 +50,7 @@ fun AppUpdateCard(alwaysShow: Boolean) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Installed: build $current (${AppUpdater.edition(context)} edition)",
+                        "Installed: build $current",
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -84,7 +84,7 @@ fun AppUpdateCard(alwaysShow: Boolean) {
                         enabled = progress == null,
                         onClick = {
                             if (!AppUpdater.canInstall(context)) {
-                                status = "Allow \"Install unknown apps\" for Novel Hoarder, then tap Update again."
+                                status = "Allow \"Install unknown apps\" for Inkvault, then tap Update again."
                                 AppUpdater.openInstallPermissionSettings(context)
                                 return@Button
                             }

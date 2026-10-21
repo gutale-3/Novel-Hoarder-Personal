@@ -68,7 +68,9 @@ android {
       //   gradle assembleDebug -PsideBySide
       if (project.hasProperty("sideBySide")) {
         applicationIdSuffix = ".test"
-        manifestPlaceholders["appLabel"] = "Novel Hoarder Test"
+        // Same name as the normal build: this is the main app now, it just keeps its own ID so it
+        // updates in place without losing the library.
+        manifestPlaceholders["appLabel"] = "@string/app_name"
       }
       // Opt-in (-Pshrink): R8 removes unused library code (the APK's dex shrinks several-fold).
       if (project.hasProperty("shrink")) {

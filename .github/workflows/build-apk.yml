@@ -1,4 +1,4 @@
-# Builds the side-by-side ("Novel Hoarder Test") APK and publishes it as a GitHub release.
+# Builds the Inkvault APK (side-by-side app ID, ".test") and publishes it as a GitHub release.
 # The app's "Check for update" reads these releases and installs the newest one.
 #
 # One-time setup: add the repository secret SIGNING_KEYSTORE_B64 (base64 of the signing
@@ -56,7 +56,7 @@ jobs:
       - name: Collect APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/*arm64-v8a*.apk "out/NovelHoarder-test-arm64-build$BUILD_NO.apk"
+          cp app/build/outputs/apk/debug/*arm64-v8a*.apk "out/Inkvault-test-arm64-build$BUILD_NO.apk"
           ls -la out
 
       - name: Publish release

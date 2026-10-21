@@ -1056,7 +1056,7 @@ fun SettingsScreen(
             item {
                 SectionHeader("About")
 
-                Text("Novel Hoarder v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.titleMedium)
+                Text("Inkvault v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.titleMedium)
                 Text("Offline-first Web Novel Reader & Library", style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(

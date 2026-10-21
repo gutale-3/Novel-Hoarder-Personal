@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
@@ -148,10 +149,9 @@ fun HomeScreen(
                                 modifier = Modifier.padding(top = 2.dp)
                             )
                         }
-                        Icon(
-                            painter = painterResource(id = com.example.R.drawable.ic_launcher_foreground),
-                            contentDescription = "App logo",
-                            tint = Color.Unspecified,
+                        Image(
+                            painter = painterResource(id = com.example.R.drawable.inkvault_logo),
+                            contentDescription = "Inkvault logo",
                             modifier = Modifier.size(56.dp)
                         )
                     }
