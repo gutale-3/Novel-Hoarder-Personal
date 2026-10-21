@@ -395,9 +395,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _chapterRecapLoading.update { it + (chapter.id to true) }
         try {
-            val provider = aiRegistry.localProvider
+            val provider = aiRegistry.best()
             if (!provider.isAvailable()) {
-                return "No on-device model installed. Import one in Settings → On-device AI."
+                return "No AI set up yet. Add a free Gemini key or import an on-device model in Settings → AI."
             }
 
             val basePrompt = settings.recapPrompt.ifBlank {
@@ -437,9 +437,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // --- Ask About Selection ---
     suspend fun askAboutSelection(selection: String, question: String): String {
         try {
-            val provider = aiRegistry.localProvider
+            val provider = aiRegistry.best()
             if (!provider.isAvailable()) {
-                return "No on-device model installed. Import one in Settings → On-device AI."
+                return "No AI set up yet. Add a free Gemini key or import an on-device model in Settings → AI."
             }
 
             val prompt = """

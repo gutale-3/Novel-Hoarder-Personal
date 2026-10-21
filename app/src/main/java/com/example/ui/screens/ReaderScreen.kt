@@ -8,7 +8,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -380,6 +384,14 @@ fun ReaderScreen(
                     onOpenTags = { showTagDialogForChapter = activeChapter }
                 )
 
+                PreviouslyOnCard(
+                    bookId = bookId,
+                    activeChapter = activeChapter,
+                    chapters = chapters,
+                    viewModel = viewModel,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+
                 // Extra-Dim Sub-Zero Night Scrim
                 if (viewModel.settings.readerExtraDimEnabled && viewModel.settings.readerExtraDimPercent > 0) {
                     val dimAlpha = (viewModel.settings.readerExtraDimPercent / 100f).coerceIn(0.05f, 0.85f)
@@ -582,5 +594,56 @@ fun ReaderScreen(
             context = context,
             onDismiss = { showRevisionHistoryDialog = false }
         )
+    }
+}
+
+/**
+ * "Previously on…": opening a novel after two days or more away shows a short AI recap of the
+ * chapter before the one being resumed. Needs an AI (Gemini key or on-device model); silent
+ * otherwise. Recaps are cached, so this costs one request per chapter at most.
+ */
+@Composable
+private fun PreviouslyOnCard(
+    bookId: String,
+    activeChapter: com.example.data.local.ChapterEntity?,
+    chapters: List<com.example.data.local.ChapterEntity>,
+    viewModel: com.example.viewmodel.MainViewModel,
+    modifier: Modifier = Modifier
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // When this novel was last read, captured before this visit updates it.
+    val lastReadAt = remember(bookId) {
+        context.getSharedPreferences("novel_hoarder_prefs", android.content.Context.MODE_PRIVATE)
+            .getLong("progress_at_$bookId", 0L)
+    }
+    val away = lastReadAt > 0 && System.currentTimeMillis() - lastReadAt > 2 * 24 * 60 * 60 * 1000L
+    var dismissed by remember(bookId) { mutableStateOf(false) }
+    var recap by remember(bookId) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(bookId, activeChapter?.id, away) {
+        if (!away || recap != null || activeChapter == null) return@LaunchedEffect
+        if (!viewModel.aiRegistry.best().isAvailable()) return@LaunchedEffect
+        val idx = chapters.indexOfFirst { it.id == activeChapter.id }
+        val previous = chapters.take(maxOf(idx, 0)).lastOrNull { it.content.isNotBlank() } ?: return@LaunchedEffect
+        val text = viewModel.getChapterRecap(previous)
+        if (!text.isNullOrBlank() && !text.startsWith("Error") && !text.startsWith("No AI")) recap = text
+    }
+
+    val shown = recap
+    if (!away || dismissed || shown == null) return
+    Card(
+        modifier = modifier.fillMaxWidth().padding(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Previously on…", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                IconButton(onClick = { dismissed = true }) {
+                    Icon(Icons.Default.Close, contentDescription = "Close recap")
+                }
+            }
+            Text(shown, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }

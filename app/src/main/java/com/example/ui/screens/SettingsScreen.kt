@@ -321,7 +321,7 @@ fun SettingsScreen(
 
             // --- 3. On-device AI ---
             item {
-                SectionHeader("On-Device AI")
+                SectionHeader("AI")
                 
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -331,9 +331,22 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            "AI features run entirely on your device. Nothing you read is ever sent anywhere.",
+                            "Recaps, glossary and discovery need an AI. Either import an on-device model " +
+                                "(private, large download) or add a free Google Gemini key from aistudio.google.com " +
+                                "(sends the chapter being summarised to Google).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        val gemini = remember { viewModel.aiRegistry.geminiProvider }
+                        var keyText by remember { mutableStateOf(gemini.apiKey) }
+                        OutlinedTextField(
+                            value = keyText,
+                            onValueChange = { keyText = it; gemini.apiKey = it },
+                            label = { Text("Gemini API key (optional)") },
+                            singleLine = true,
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }

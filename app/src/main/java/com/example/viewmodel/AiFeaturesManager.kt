@@ -81,9 +81,9 @@ class AiFeaturesManager(
             isGeneratingGlossary = true
             glossaryStatusMessage = "Analyzing book content..."
             try {
-                val provider = aiRegistry.localProvider
+                val provider = aiRegistry.best()
                 if (!provider.isAvailable()) {
-                    glossaryStatusMessage = "No on-device model installed. Import one in Settings → On-device AI."
+                    glossaryStatusMessage = "No AI set up yet. Add a free Gemini key or import an on-device model in Settings → AI."
                     isGeneratingGlossary = false
                     return@launch
                 }
@@ -189,7 +189,7 @@ class AiFeaturesManager(
                 }
 
                 // Fallback attempt: On-device MediaPipe / Gemma LLM
-                val provider = aiRegistry.localProvider
+                val provider = aiRegistry.best()
                 if (provider.isAvailable()) {
                     val paragraphs = chapter.content.split("\n\n").filter { it.isNotBlank() }
                     val chunks = mutableListOf<String>()
@@ -274,7 +274,7 @@ class AiFeaturesManager(
             discoveryItems = emptyList()
             try {
                 val catalog = LocalNovelCatalog.all()
-                val provider = aiRegistry.localProvider
+                val provider = aiRegistry.best()
 
                 // Offline fallback when no model is installed
                 if (!provider.isAvailable()) {

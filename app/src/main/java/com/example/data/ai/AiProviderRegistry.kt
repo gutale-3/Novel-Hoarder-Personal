@@ -9,8 +9,15 @@ import android.content.Context
 class AiProviderRegistry(context: Context) {
 
     val localProvider = MediaPipeLocalProvider(context)
+    val geminiProvider = GeminiProvider(context)
 
-    val providers: List<AiProvider> = listOf(localProvider)
+    val providers: List<AiProvider> = listOf(geminiProvider, localProvider)
+
+    /**
+     * The provider to use: Gemini when the user has added a key (better and needs no model
+     * download), otherwise the on-device model.
+     */
+    suspend fun best(): AiProvider = if (geminiProvider.isAvailable()) geminiProvider else localProvider
 
     fun getProvider(id: String): AiProvider = localProvider
 
