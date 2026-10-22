@@ -21,49 +21,152 @@ import java.util.zip.ZipOutputStream
  */
 object BackupRestoreManager {
 
+    private const val CHAPTER_ENTRY_PREFIX = "chapters/"
+
+    private fun chapterToJson(ch: ChapterEntity) = JSONObject().apply {
+        put("id", ch.id)
+        put("bookId", ch.bookId)
+        put("chapterId", ch.chapterId)
+        put("chapterNumber", ch.chapterNumber)
+        put("title", ch.title)
+        put("url", ch.url)
+        put("content", ch.content)
+        put("hash", ch.hash)
+        put("isRead", ch.isRead)
+        put("readAt", ch.readAt ?: 0L)
+        put("isArchived", ch.isArchived)
+        put("isDeleted", ch.isDeleted)
+        put("downloadedAt", ch.downloadedAt)
+    }
+
+    private fun chapterFromJson(c: JSONObject, index: Int) = ChapterEntity(
+        id = c.getString("id"),
+        bookId = c.getString("bookId"),
+        chapterId = c.optString("chapterId", "ch_$index"),
+        chapterNumber = c.optInt("chapterNumber", index + 1),
+        title = c.optString("title", "Chapter ${index + 1}"),
+        url = c.optString("url", ""),
+        content = c.optString("content", ""),
+        hash = c.optString("hash", ""),
+        isRead = c.optBoolean("isRead", false),
+        readAt = c.optLong("readAt", 0L).takeIf { it > 0 },
+        isArchived = c.optBoolean("isArchived", false),
+        isDeleted = c.optBoolean("isDeleted", false),
+        downloadedAt = c.optLong("downloadedAt", System.currentTimeMillis())
+    )
+
+    /**
+     * Writes a backup ZIP: library metadata, then one "chapters/<n>.jsonl" entry per novel (one
+     * chapter per line, one novel in memory at a time), then covers.
+     */
+    private suspend fun writeArchive(context: Context, repository: NovelRepository, out: java.io.OutputStream) {
+        val meta = generateBackupMetadataJson(repository, includeChapters = false)
+        ZipOutputStream(BufferedOutputStream(out)).use { zipOut ->
+            zipOut.putNextEntry(ZipEntry("backup_metadata.json"))
+            zipOut.write(meta.toByteArray(Charsets.UTF_8))
+            zipOut.closeEntry()
+
+            repository.getAllBooks().forEachIndexed { i, book ->
+                zipOut.putNextEntry(ZipEntry("$CHAPTER_ENTRY_PREFIX$i.jsonl"))
+                for (ch in repository.getChapters(book.id)) {
+                    zipOut.write((chapterToJson(ch).toString() + "\n").toByteArray(Charsets.UTF_8))
+                }
+                zipOut.closeEntry()
+            }
+
+            val coversDir = File(context.filesDir, "covers")
+            if (coversDir.exists() && coversDir.isDirectory) {
+                coversDir.listFiles()?.forEach { coverFile ->
+                    if (coverFile.isFile) {
+                        zipOut.putNextEntry(ZipEntry("covers/${coverFile.name}"))
+                        coverFile.inputStream().use { it.copyTo(zipOut) }
+                        zipOut.closeEntry()
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Reads a backup ZIP: metadata (old backups also carry chapters inside it), covers, and
+     * per-novel chapter entries, which are staged to temporary files and inserted in batches
+     * after the novels exist (chapters reference their novel).
+     */
+    private suspend fun readArchive(
+        context: Context,
+        repository: NovelRepository,
+        open: () -> java.io.InputStream?
+    ): Int? {
+        var jsonString: String? = null
+        val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
+        val staging = File(context.cacheDir, "restore_chapters").apply { deleteRecursively(); mkdirs() }
+        try {
+            open()?.use { inputStream ->
+                ZipInputStream(BufferedInputStream(inputStream)).use { zipIn ->
+                    var entry: ZipEntry? = zipIn.nextEntry
+                    var staged = 0
+                    while (entry != null) {
+                        when {
+                            entry.name.startsWith(CHAPTER_ENTRY_PREFIX) && entry.name.endsWith(".jsonl") ->
+                                File(staging, "${staged++}.jsonl").outputStream().use { zipIn.copyTo(it) }
+                            entry.name == "backup_metadata.json" || entry.name.endsWith(".json") -> {
+                                val baos = ByteArrayOutputStream()
+                                zipIn.copyTo(baos)
+                                jsonString = baos.toString("UTF-8")
+                            }
+                            entry.name.startsWith("covers/") && !entry.isDirectory ->
+                                File(coversDir, File(entry.name).name).outputStream().use { zipIn.copyTo(it) }
+                        }
+                        zipIn.closeEntry()
+                        entry = zipIn.nextEntry
+                    }
+                }
+            }
+            val json = jsonString ?: return null
+            val books = importJsonString(repository, json)
+            staging.listFiles()?.sortedBy { it.nameWithoutExtension.toIntOrNull() ?: 0 }?.forEach { file ->
+                val batch = ArrayList<ChapterEntity>(300)
+                file.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                    lines.filter { it.isNotBlank() }.forEachIndexed { i, line ->
+                        batch += chapterFromJson(JSONObject(line), i)
+                        if (batch.size >= 300) { repository.insertChapters(batch.toList()); batch.clear() }
+                    }
+                }
+                if (batch.isNotEmpty()) repository.insertChapters(batch)
+            }
+            return books
+        } finally {
+            staging.deleteRecursively()
+        }
+    }
+
     suspend fun createFullBackupZip(
         context: Context,
         repository: NovelRepository,
         outputUri: Uri
     ): Result<Int> = withContext(Dispatchers.IO) {
         try {
-            val jsonString = generateBackupMetadataJson(repository)
-
-            context.contentResolver.openOutputStream(outputUri)?.use { outputStream ->
-                ZipOutputStream(BufferedOutputStream(outputStream)).use { zipOut ->
-                    // 1. Write metadata.json entry
-                    val metaEntry = ZipEntry("backup_metadata.json")
-                    zipOut.putNextEntry(metaEntry)
-                    zipOut.write(jsonString.toByteArray(Charsets.UTF_8))
-                    zipOut.closeEntry()
-
-                    // 2. Include any cached cover images from filesDir
-                    val coversDir = File(context.filesDir, "covers")
-                    if (coversDir.exists() && coversDir.isDirectory) {
-                        coversDir.listFiles()?.forEach { coverFile ->
-                            if (coverFile.isFile) {
-                                val coverEntry = ZipEntry("covers/${coverFile.name}")
-                                zipOut.putNextEntry(coverEntry)
-                                coverFile.inputStream().use { it.copyTo(zipOut) }
-                                zipOut.closeEntry()
-                            }
-                        }
-                    }
-                }
-            }
-            val root = JSONObject(jsonString)
-            val count = root.optJSONArray("books")?.length() ?: 0
-            Result.success(count)
+            val out = context.contentResolver.openOutputStream(outputUri)
+                ?: throw java.io.IOException("Could not open the backup file for writing")
+            writeArchive(context, repository, out)
+            Result.success(repository.getAllBooks().size)
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
         }
     }
 
-    suspend fun generateBackupMetadataJson(repository: NovelRepository): String = withContext(Dispatchers.IO) {
+    /**
+     * @param includeChapters false for ZIP backups, which stream chapters into per-novel entries
+     * instead (a whole library as one string runs out of memory on large libraries).
+     */
+    suspend fun generateBackupMetadataJson(
+        repository: NovelRepository,
+        includeChapters: Boolean = true
+    ): String = withContext(Dispatchers.IO) {
         val books = repository.getAllBooks()
         val allChapters = mutableListOf<ChapterEntity>()
-        for (book in books) {
+        if (includeChapters) for (book in books) {
             allChapters.addAll(repository.getChapters(book.id))
         }
         val bookmarks = repository.getAllBookmarks()
@@ -73,7 +176,8 @@ object BackupRestoreManager {
 
         val root = JSONObject().apply {
             put("format", "novel_hoarder_archive")
-            put("version", 2)
+            put("version", if (includeChapters) 2 else 3)
+            put("chaptersInEntries", !includeChapters)
             put("exportedAt", System.currentTimeMillis())
 
             // Books
@@ -185,48 +289,20 @@ object BackupRestoreManager {
         inputUri: Uri
     ): Result<Int> = withContext(Dispatchers.IO) {
         try {
-            var jsonString: String? = null
-            val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
+            // 1. A ZIP backup (new streamed format or the older single-file one)
+            val fromZip = runCatching {
+                readArchive(context, repository) { context.contentResolver.openInputStream(inputUri) }
+            }.getOrNull()
+            if (fromZip != null) return@withContext Result.success(fromZip)
 
-            // 1. Try reading as a ZIP archive
-            try {
-                context.contentResolver.openInputStream(inputUri)?.use { inputStream ->
-                    ZipInputStream(BufferedInputStream(inputStream)).use { zipIn ->
-                        var entry: ZipEntry? = zipIn.nextEntry
-                        while (entry != null) {
-                            if (entry.name == "backup_metadata.json" || entry.name.endsWith(".json")) {
-                                val baos = ByteArrayOutputStream()
-                                zipIn.copyTo(baos)
-                                jsonString = baos.toString("UTF-8")
-                            } else if (entry.name.startsWith("covers/") && !entry.isDirectory) {
-                                val fileName = File(entry.name).name
-                                val destFile = File(coversDir, fileName)
-                                destFile.outputStream().use { out ->
-                                    zipIn.copyTo(out)
-                                }
-                            }
-                            zipIn.closeEntry()
-                            entry = zipIn.nextEntry
-                        }
-                    }
-                }
-            } catch (ignored: Exception) {
-                // Not a valid ZIP file; fall through to raw JSON reading
+            // 2. Otherwise a raw JSON export
+            val jsonString = context.contentResolver.openInputStream(inputUri)?.use { inputStream ->
+                inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
             }
-
-            // 2. If not ZIP or no JSON entry found, read directly as raw JSON
-            if (jsonString == null) {
-                context.contentResolver.openInputStream(inputUri)?.use { inputStream ->
-                    jsonString = inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                }
-            }
-
             if (jsonString.isNullOrBlank()) {
                 return@withContext Result.failure(IllegalArgumentException("Invalid or empty backup file"))
             }
-
-            val importedCount = importJsonString(repository, jsonString!!)
-            Result.success(importedCount)
+            Result.success(importJsonString(repository, jsonString))
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -421,33 +497,8 @@ object BackupRestoreManager {
         try {
             val backupsDir = File(context.filesDir, "backups").apply { if (!exists()) mkdirs() }
             val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
-            val fileName = "backup_${sdf.format(java.util.Date())}.zip"
-            val backupFile = File(backupsDir, fileName)
-
-            val jsonString = generateBackupMetadataJson(repository)
-
-            backupFile.outputStream().use { outputStream ->
-                ZipOutputStream(BufferedOutputStream(outputStream)).use { zipOut ->
-                    // 1. Write metadata.json entry
-                    val metaEntry = ZipEntry("backup_metadata.json")
-                    zipOut.putNextEntry(metaEntry)
-                    zipOut.write(jsonString.toByteArray(Charsets.UTF_8))
-                    zipOut.closeEntry()
-
-                    // 2. Include any cached cover images
-                    val coversDir = File(context.filesDir, "covers")
-                    if (coversDir.exists() && coversDir.isDirectory) {
-                        coversDir.listFiles()?.forEach { coverFile ->
-                            if (coverFile.isFile) {
-                                val coverEntry = ZipEntry("covers/${coverFile.name}")
-                                zipOut.putNextEntry(coverEntry)
-                                coverFile.inputStream().use { it.copyTo(zipOut) }
-                                zipOut.closeEntry()
-                            }
-                        }
-                    }
-                }
-            }
+            val backupFile = File(backupsDir, "backup_${sdf.format(java.util.Date())}.zip")
+            backupFile.outputStream().use { writeArchive(context, repository, it) }
             Result.success(backupFile)
         } catch (e: Exception) {
             e.printStackTrace()
@@ -480,36 +531,9 @@ object BackupRestoreManager {
             if (!backupFile.exists()) {
                 return@withContext Result.failure(IllegalArgumentException("Backup file not found"))
             }
-            var jsonString: String? = null
-            val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
-
-            backupFile.inputStream().use { inputStream ->
-                ZipInputStream(BufferedInputStream(inputStream)).use { zipIn ->
-                    var entry: ZipEntry? = zipIn.nextEntry
-                    while (entry != null) {
-                        if (entry.name == "backup_metadata.json" || entry.name.endsWith(".json")) {
-                            val baos = ByteArrayOutputStream()
-                            zipIn.copyTo(baos)
-                            jsonString = baos.toString("UTF-8")
-                        } else if (entry.name.startsWith("covers/") && !entry.isDirectory) {
-                            val fileName = File(entry.name).name
-                            val destFile = File(coversDir, fileName)
-                            destFile.outputStream().use { out ->
-                                zipIn.copyTo(out)
-                            }
-                        }
-                        zipIn.closeEntry()
-                        entry = zipIn.nextEntry
-                    }
-                }
-            }
-
-            if (jsonString.isNullOrBlank()) {
-                return@withContext Result.failure(IllegalArgumentException("No readable data in backup file"))
-            }
-
-            val importedCount = importJsonString(repository, jsonString!!)
-            Result.success(importedCount)
+            val books = readArchive(context, repository) { backupFile.inputStream() }
+                ?: return@withContext Result.failure(IllegalArgumentException("No readable data in backup file"))
+            Result.success(books)
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
