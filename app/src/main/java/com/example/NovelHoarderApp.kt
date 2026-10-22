@@ -124,10 +124,12 @@ class NovelHoarderApp : Application() {
             try {
                 Log.e("NovelHoarderCrash", "Uncaught exception on thread: ${thread.name}", throwable)
                 val stackTrace = throwable.stackTraceToString()
-                try {
-                    val crashFile = File(filesDir, "last_crash.txt")
-                    crashFile.writeText(stackTrace)
-                } catch (_: Throwable) {}
+                com.example.util.CrashReports.save(
+                    this,
+                    com.example.util.CrashReports.build(
+                        thread.name, throwable.message ?: throwable.javaClass.simpleName, stackTrace
+                    )
+                )
 
                 val intent = Intent(applicationContext, CrashActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

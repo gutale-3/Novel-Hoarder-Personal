@@ -43,7 +43,8 @@ class CrashActivity : ComponentActivity() {
         val errorMessage = intent.getStringExtra("crash_error_message") ?: "Unknown error"
         val threadName = intent.getStringExtra("crash_thread") ?: "main"
 
-        val diagnosticInfo = buildDiagnosticReport(errorMessage, threadName, stackTrace)
+        val diagnosticInfo = com.example.util.CrashReports.latest(this)
+            ?: com.example.util.CrashReports.build(threadName, errorMessage, stackTrace)
 
         setContent {
             NovelHoarderTheme {
@@ -51,6 +52,7 @@ class CrashActivity : ComponentActivity() {
                     diagnosticInfo = diagnosticInfo,
                     errorMessage = errorMessage,
                     stackTrace = stackTrace,
+                    onSend = { com.example.util.CrashReports.send(this, diagnosticInfo) },
                     onCopyDetails = {
                         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val clip = ClipData.newPlainText("Inkvault Crash Diagnostics", diagnosticInfo)
@@ -73,7 +75,6 @@ class CrashActivity : ComponentActivity() {
                                 .remove("reading_book_id")
                                 .remove("reading_chapter_id")
                                 .apply()
-                            deleteDatabase("novel_hoarder_db")
                         } catch (_: Exception) {}
                         val restartIntent = Intent(this, MainActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -86,21 +87,6 @@ class CrashActivity : ComponentActivity() {
             }
         }
     }
-
-    private fun buildDiagnosticReport(error: String, thread: String, trace: String): String {
-        return buildString {
-            appendLine("=== NOVEL HOARDER CRASH REPORT ===")
-            appendLine("App Version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-            appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (${Build.PRODUCT})")
-            appendLine("Android OS: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
-            appendLine("Supported ABIs: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
-            appendLine("Thread: $thread")
-            appendLine("Error: $error")
-            appendLine()
-            appendLine("=== STACK TRACE ===")
-            appendLine(trace)
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -109,6 +95,7 @@ private fun CrashScreen(
     diagnosticInfo: String,
     errorMessage: String,
     stackTrace: String,
+    onSend: () -> Unit,
     onCopyDetails: () -> Unit,
     onRestart: () -> Unit,
     onClearCacheAndRestart: () -> Unit
@@ -211,9 +198,17 @@ private fun CrashScreen(
             }
 
             Button(
+                onClick = onSend,
+                modifier = Modifier.fillMaxWidth().height(52.dp)
+            ) {
+                Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Send Crash Report", fontWeight = FontWeight.Bold)
+            }
+
+            OutlinedButton(
                 onClick = onCopyDetails,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
@@ -236,7 +231,7 @@ private fun CrashScreen(
             ) {
                 Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Clear Corrupted State & Restart")
+                Text("Clear Cache & Restart")
             }
         }
     }

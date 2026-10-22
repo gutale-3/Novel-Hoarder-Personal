@@ -1109,15 +1109,18 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
-                                    onClick = { showCrashLogDialog = true },
+                                    onClick = { crashLogContent?.let { com.example.util.CrashReports.send(context, it) } },
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                                 ) {
-                                    Text("View Crash Log")
+                                    Text("Send")
+                                }
+                                OutlinedButton(onClick = { showCrashLogDialog = true }) {
+                                    Text("View")
                                 }
                                 OutlinedButton(
                                     onClick = {
                                         try {
-                                            File(context.filesDir, "last_crash.txt").delete()
+                                            com.example.util.CrashReports.clear(context)
                                             crashLogContent = null
                                             Toast.makeText(context, "Crash log cleared", Toast.LENGTH_SHORT).show()
                                         } catch (_: Exception) {}

@@ -61,6 +61,10 @@ fun HomeScreen(
         }
 
         item {
+            com.example.ui.components.CrashReportCard()
+        }
+
+        item {
             com.example.ui.components.AppUpdateCard(alwaysShow = false)
         }
 
