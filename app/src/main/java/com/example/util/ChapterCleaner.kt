@@ -26,7 +26,7 @@ object ChapterCleaner {
         Regex("(?i)^chapter list$"),
         Regex("(?i)^table of contents$"),
         Regex("(?i)^ch\\.?\\s*\\d+\\s*/\\s*\\d+"),
-        Regex("(?i)^\\d+(\\.\\d+)?\\s*%"),
+        Regex("(?i)^\\d+(\\.\\d+)?\\s*%$"), // a bare progress figure, not "90% of his energy…"
         Regex("(?i)^web(\\s*\\+\\s*ai)?$"),
         Regex("(?i)^ai$"),
         Regex("(?i)^raw$"),
@@ -107,14 +107,20 @@ object ChapterCleaner {
         return false
     }
 
+    private const val QUOTES = "\"'“”‘’「」『』«»()[]*-—– "
+
+    /**
+     * A sentence of story text: ends like a sentence and starts with a capital or a number, once
+     * quote marks are set aside. Dialogue ("…," she said.) and lines like "90% of…" count.
+     */
     fun looksLikeProse(line: String): Boolean {
         val trimmed = line.trim()
         if (trimmed.length < 15) return false
-        val hasSentenceEnd = trimmed.endsWith(".") || trimmed.endsWith("!") ||
-                trimmed.endsWith("?") || trimmed.endsWith(".\"") ||
-                trimmed.endsWith("!\"") || trimmed.endsWith("?\"") ||
-                trimmed.endsWith("。") || trimmed.endsWith("！") || trimmed.endsWith("？」")
-        return hasSentenceEnd && trimmed.firstOrNull()?.isUpperCase() == true
+        val core = trimmed.trimEnd { it in QUOTES }
+        val hasSentenceEnd = core.endsWith(".") || core.endsWith("!") || core.endsWith("?") ||
+                core.endsWith("…") || core.endsWith("。") || core.endsWith("！") || core.endsWith("？")
+        val first = trimmed.trimStart { it in QUOTES }.firstOrNull() ?: return false
+        return hasSentenceEnd && (first.isUpperCase() || first.isDigit())
     }
 
     fun isChapterHeading(line: String): Boolean {

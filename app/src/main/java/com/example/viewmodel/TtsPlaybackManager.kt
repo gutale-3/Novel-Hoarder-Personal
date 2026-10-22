@@ -938,6 +938,8 @@ class TtsPlaybackManager(
     }
 
     fun playVoicePreview(voiceOption: VoiceOption) {
+        // Previewing uses the same engine; pause narration properly instead of silently killing it.
+        if (ttsIsPlaying && !ttsIsPaused) pauseTts()
         val cleanName = voiceOption.name
             .replace(" (Natural)", "").replace("Piper - ", "")
             .replace("Kokoro - ", "").replace("System: ", "")
@@ -1208,11 +1210,7 @@ class TtsPlaybackManager(
 
         // Save chapter progress & mark chapter as read
         coroutineScope.launch(Dispatchers.IO) {
-            val updatedBook = book.copy(
-                lastReadChapterId = chapter.id,
-                lastReadChapterNumber = maxOf(book.lastReadChapterNumber, chapter.chapterNumber)
-            )
-            repository.updateBook(updatedBook)
+            saveBookPosition(book.id, chapter)
             repository.updateChapterReadStatus(chapter.id, true)
         }
 
@@ -1253,7 +1251,9 @@ class TtsPlaybackManager(
                 val textToSpeak = if (startFromParagraphIndex >= 0) {
                     rawParagraphs.drop(startFromParagraphIndex).joinToString("\n")
                 } else {
-                    chapter.title + "\n" + cleanText
+                    // The cleaned paragraphs, as the reader shows them, so highlighting and the
+                    // saved position line up (index 0 is the title).
+                    chapter.title.ifBlank { "Chapter ${chapter.chapterNumber}" } + "\n" + rawParagraphs.joinToString("\n")
                 }
 
                 sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
@@ -1482,6 +1482,22 @@ class TtsPlaybackManager(
         }
     }
 
+    private var lastSavedPositionChapterId: String? = null
+
+    /**
+     * Updates only the reading position, on a fresh copy of the book: the book captured when
+     * playback started is stale, and writing it back would undo downloads and edits made since.
+     */
+    private suspend fun saveBookPosition(bookId: String, chapter: ChapterEntity) {
+        val fresh = repository.getBook(bookId) ?: return
+        repository.updateBook(
+            fresh.copy(
+                lastReadChapterId = chapter.id,
+                lastReadChapterNumber = maxOf(fresh.lastReadChapterNumber, chapter.chapterNumber)
+            )
+        )
+    }
+
     fun playNextChapterTts() {
         if (!ttsIsPlaying) return
         val book = ttsPlayingBook ?: return
@@ -1491,7 +1507,18 @@ class TtsPlaybackManager(
             val chapters = repository.getChapters(book.id)
             val currentIdx = chapters.indexOfFirst { it.id == currentChapter.id }
             if (currentIdx != -1 && currentIdx < chapters.size - 1) {
-                val nextChapter = chapters[currentIdx + 1]
+                var nextChapter = chapters[currentIdx + 1]
+                // Not downloaded yet: fetch it first. Speaking an empty chapter stalled playback
+                // (nothing to advance from) or marked it read without reading it.
+                if (nextChapter.content.isBlank()) {
+                    scraping.downloadSingleChapter(nextChapter)
+                    nextChapter = repository.getChapter(nextChapter.id) ?: nextChapter
+                }
+                if (nextChapter.content.isBlank()) {
+                    addLog("Next chapter couldn't be downloaded; stopping read-aloud.")
+                    withContext(Dispatchers.Main) { stopTts() }
+                    return@launch
+                }
                 withContext(Dispatchers.Main) {
                     speak(nextChapter.content, book, nextChapter)
                 }
@@ -1632,14 +1659,10 @@ class TtsPlaybackManager(
             .putString("progress_chapter_${book.id}", chapter.id)
             .apply()
 
-        if (book.lastReadChapterId != chapter.id) {
+        if (lastSavedPositionChapterId != chapter.id) {
+            lastSavedPositionChapterId = chapter.id
             coroutineScope.launch(Dispatchers.IO) {
-                repository.updateBook(
-                    book.copy(
-                        lastReadChapterId = chapter.id,
-                        lastReadChapterNumber = maxOf(book.lastReadChapterNumber, chapter.chapterNumber)
-                    )
-                )
+                saveBookPosition(book.id, chapter)
             }
         }
 

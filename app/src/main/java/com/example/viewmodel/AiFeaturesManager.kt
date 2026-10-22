@@ -55,10 +55,8 @@ class AiFeaturesManager(
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
 
-        var cleaned = trimmed
-        if (cleaned.startsWith("```")) {
-            cleaned = cleaned.substringAfter("```json").substringAfter("```").substringBeforeLast("```").trim()
-        }
+        // Markdown fences (```json … ```) need no stripping: the bracket search skips them.
+        val cleaned = trimmed
 
         val firstBracket = cleaned.indexOf('[')
         val lastBracket = cleaned.lastIndexOf(']')

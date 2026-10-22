@@ -78,10 +78,6 @@ fun ReaderContent(
 
     val isContinuous = viewModel.settings.readerPagingMode == "continuous"
 
-    DisposableEffect(Unit) {
-        ReaderPaging.readerVisible = true
-        onDispose { ReaderPaging.readerVisible = false }
-    }
     LaunchedEffect(lazyListState) {
         ReaderPaging.turns.collect { direction ->
             // In page-turn mode the PagedReader handles the keys instead.
@@ -224,9 +220,12 @@ fun ReaderContent(
                 }
             }
 
-            // Expose total paragraphs to viewmodel for TTS player bar seek slider
-            LaunchedEffect(chapterParagraphs.size) {
-                viewModel.ttsTotalParagraphs = chapterParagraphs.size
+            // Expose total paragraphs for the TTS seek slider, but only for the chapter being read
+            // aloud (browsing another chapter must not change it).
+            LaunchedEffect(chapterParagraphs.size, viewModel.ttsPlayingChapter?.id) {
+                if (viewModel.ttsPlayingChapter?.id == activeChapter.id) {
+                    viewModel.ttsTotalParagraphs = chapterParagraphs.size
+                }
             }
 
             // Background prefetching of next chapter when auto-fetch is enabled

@@ -262,7 +262,8 @@ class SherpaOnnxTtsEngine(private val context: Context) {
             val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
             val engine = initEngine(voice) ?: return@launch
             val sid = if (voice.isKokoro) voice.kokoroSpeakerId else selectedSpeakerId
-            val lengthScale = if (speed > 0) 1.0f / speed else 1.0f
+            // sherpa-onnx's speed already means "larger = faster" (it inverts it internally).
+            val lengthScale = speed.coerceAtLeast(0.1f)
             val generated = try {
                 synchronized(engineLock) {
                     engine.generate(text = first.text, sid = sid, speed = lengthScale)
@@ -355,7 +356,8 @@ class SherpaOnnxTtsEngine(private val context: Context) {
                         samples = primed.samples
                         sampleRate = primed.sampleRate
                     } else {
-                        val lengthScale = if (speed > 0) 1.0f / speed else 1.0f
+                        // sherpa-onnx's speed already means "larger = faster" (it inverts it internally).
+            val lengthScale = speed.coerceAtLeast(0.1f)
                         val audio = synchronized(engineLock) {
                             tts.generate(
                                 text = chunk.text,

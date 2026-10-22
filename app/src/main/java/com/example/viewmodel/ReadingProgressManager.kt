@@ -183,10 +183,9 @@ class ReadingProgressManager(
             .putInt("progress_para_${bookId}_${chapterId}", paragraphIndex)
             .putString("progress_chapter_${bookId}", chapterId)
             .putLong("progress_at_${bookId}", System.currentTimeMillis()) // newest position wins in sync
-            .putString("active_reading_book_id", bookId)
-            .putString("active_reading_chapter_id", chapterId)
-            .putInt("active_reading_para_index", paragraphIndex)
             .apply()
+        // The "reopen the reader on launch" session is set by setActiveReaderSession only, so a
+        // save while leaving the reader doesn't undo clearActiveReaderSession.
     }
 
     fun getActiveReaderBookId(): String? {

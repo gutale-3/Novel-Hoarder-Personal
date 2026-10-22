@@ -28,7 +28,8 @@ class ContinueReadingWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val pending = goAsync()
         scope.launch {
-            try { render(context, manager, ids) } finally { pending.finish() }
+            // A failure here would otherwise crash the whole app from the home screen.
+            try { runCatching { render(context, manager, ids) } } finally { pending.finish() }
         }
     }
 

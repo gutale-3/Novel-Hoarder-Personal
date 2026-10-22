@@ -43,7 +43,7 @@ data class ChapterGroup(
 object ChapterSubdivisionHelper {
 
     private val VOLUME_KEYWORD_REGEX = Regex(
-        "(?i)(?:^|[\\[(]|\\b)(?:volume|vol\\.?|book|arc)\\s*(\\d+|[ivxlcdm]+)(?:[:\\s\\-\\].)]*|$)"
+        "(?i)(?:^|[\\[(]|\\b)(?:volume|vol\\.?|book|arc)\\s*(\\d+|[ivxlcdm]+)\\b(?:[:\\s\\-\\].)]*|$)"
     )
 
     private val CHAPTER_NUM_REGEX = Regex(

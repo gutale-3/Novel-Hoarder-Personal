@@ -29,6 +29,7 @@ class AutoBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val tree = prefs.getString(KEY_TREE, null)?.let(Uri::parse) ?: return Result.success()
         if (!prefs.getBoolean(KEY_ENABLED, false) && tags.none { it == TAG_NOW }) return Result.success()
 
+        var created: Uri? = null
         return try {
             val resolver = applicationContext.contentResolver
             val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
@@ -36,6 +37,7 @@ class AutoBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
             val name = "$PREFIX$stamp.zip"
             val target = DocumentsContract.createDocument(resolver, parent, "application/zip", name)
                 ?: throw java.io.IOException("Could not create a file in the backup folder")
+            created = target
 
             val repository = NovelHoarderApp.getContainer(applicationContext as Application).repository
             val books = BackupRestoreManager.createFullBackupZip(applicationContext, repository, target).getOrThrow()
@@ -47,6 +49,8 @@ class AutoBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 .apply()
             Result.success()
         } catch (e: Exception) {
+            // A half-written zip would count as one of the 7 kept backups and push out good ones.
+            created?.let { runCatching { DocumentsContract.deleteDocument(applicationContext.contentResolver, it) } }
             prefs.edit().putString(KEY_LAST_ERROR, e.message ?: e::class.simpleName).apply()
             // The folder may have been removed or access revoked; retrying won't help that, but a
             // transient Drive/provider error might clear up.

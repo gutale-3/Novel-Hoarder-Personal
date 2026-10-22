@@ -54,11 +54,11 @@ class MediaPipeLocalProvider(private val context: Context) : AiProvider {
             val inference = try {
                 getOrInitLlmInference(modelFile.absolutePath)
             } catch (t: Throwable) {
-                return@withContext "That model file could not be loaded. It may be the wrong format — MediaPipe needs a .task file built for LLM Inference. (${t.message})"
+                return@withContext "Error: That model file could not be loaded. It may be the wrong format — MediaPipe needs a .task file built for LLM Inference. (${t.message})"
             }
 
             val finalPrompt = if (jsonMode) {
-                "$prompt\nIMPORTANT: Return ONLY a valid JSON array containing objects with 'original' and 'replacement' properties. Do not include markdown code blocks, backticks, or other conversation filler."
+                "$prompt\nIMPORTANT: Return ONLY valid JSON in exactly the shape asked for above. No markdown code blocks, backticks, or other conversation filler."
             } else {
                 prompt
             }
@@ -66,7 +66,7 @@ class MediaPipeLocalProvider(private val context: Context) : AiProvider {
             val response = inference.generateResponse(finalPrompt)
             response ?: "Error: Empty response from on-device model"
         } catch (t: Throwable) {
-            "That model file could not be loaded. It may be the wrong format — MediaPipe needs a .task file built for LLM Inference. (${t.message})"
+            "Error: That model file could not be loaded. It may be the wrong format — MediaPipe needs a .task file built for LLM Inference. (${t.message})"
         }
     }
 

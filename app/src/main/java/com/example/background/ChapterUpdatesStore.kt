@@ -54,6 +54,7 @@ class ChapterUpdatesStore private constructor(context: Context) {
     fun clear(bookId: String) {
         prefs.edit().remove(bookId).apply()
         _entries.value = _entries.value - bookId
+        ContinueReadingWidget.refresh(appContext)
     }
 
     companion object {

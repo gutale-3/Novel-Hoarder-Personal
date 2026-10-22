@@ -12,8 +12,11 @@ import kotlinx.coroutines.flow.SharedFlow
  * normally everywhere else.
  */
 object ReaderPaging {
-    @Volatile
-    var readerVisible: Boolean = false
+    /** How many readers are on screen (a counter: one reader can open while another closes). */
+    private val visibleCount = java.util.concurrent.atomic.AtomicInteger(0)
+    val readerVisible: Boolean get() = visibleCount.get() > 0
+    fun readerShown() { visibleCount.incrementAndGet() }
+    fun readerHidden() { visibleCount.updateAndGet { maxOf(0, it - 1) } }
 
     private val _turns = MutableSharedFlow<Int>(extraBufferCapacity = 4, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val turns: SharedFlow<Int> = _turns

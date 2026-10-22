@@ -119,6 +119,9 @@ fun PagedReader(
     val margin = s.readerMargin.dp
     val chapterIndex = chapters.indexOfFirst { it.id == activeChapter.id }
 
+    // Keyed by chapter: otherwise the pager keeps the old chapter's page number, lands on the
+    // "next chapter" page of a shorter chapter and skips ahead chapter after chapter.
+    key(activeChapter.id) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val widthPx = with(density) { (maxWidth - margin * 2).roundToPx() }
         // Room for the chapter title line and the page number.
@@ -133,8 +136,8 @@ fun PagedReader(
         val pagerState = rememberPagerState(initialPage = startPage) { pages.size + 1 } // +1: "next chapter" page
 
         // Save position as the page changes; the extra last page opens the next chapter.
-        LaunchedEffect(pagerState.currentPage, pages) {
-            val p = pagerState.currentPage
+        LaunchedEffect(pagerState.settledPage, pages) {
+            val p = pagerState.settledPage
             if (p < pages.size) {
                 viewModel.progress.saveReadingProgress(bookId, activeChapter.id, pages[p].firstParagraph)
             } else {
@@ -142,7 +145,7 @@ fun PagedReader(
                     ?: pagerState.animateScrollToPage(pages.size - 1)
             }
         }
-        LaunchedEffect(pagerState) {
+        LaunchedEffect(pagerState, pages, chapterIndex) {
             ReaderPaging.turns.collect { dir ->
                 val target = (pagerState.currentPage + dir).coerceIn(0, pages.size)
                 if (dir < 0 && pagerState.currentPage == 0) {
@@ -195,5 +198,6 @@ fun PagedReader(
                 }
             }
         }
+    }
     }
 }

@@ -39,12 +39,19 @@ fun ReaderScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val bookState by viewModel.repository.getBookFlow(bookId).collectAsState(null)
-    val chapters by viewModel.repository.getChaptersFlow(bookId).collectAsState(emptyList())
-    val archivedChapters by viewModel.progress.getArchivedChaptersFlow(bookId).collectAsState(emptyList())
-    val bookmarks by viewModel.repository.getBookmarksFlow(bookId).collectAsState(emptyList())
-    val glossaries by viewModel.repository.getGlossaryFlow(bookId).collectAsState(emptyList())
-    val textReplacementRules by viewModel.textRules.getRulesForBookFlow(bookId).collectAsState(emptyList())
+    // Flows are remembered: a new Flow on each recomposition restarts every query (all chapter
+    // text) while scrolling.
+    val bookState by remember(bookId) { viewModel.repository.getBookFlow(bookId) }.collectAsState(null)
+    val chapters by remember(bookId) { viewModel.repository.getChaptersFlow(bookId) }.collectAsState(emptyList())
+    val archivedChapters by remember(bookId) { viewModel.progress.getArchivedChaptersFlow(bookId) }.collectAsState(emptyList())
+    val bookmarks by remember(bookId) { viewModel.repository.getBookmarksFlow(bookId) }.collectAsState(emptyList())
+    val glossaries by remember(bookId) { viewModel.repository.getGlossaryFlow(bookId) }.collectAsState(emptyList())
+    val textReplacementRules by remember(bookId) { viewModel.textRules.getRulesForBookFlow(bookId) }.collectAsState(emptyList())
+
+    DisposableEffect(Unit) {
+        com.example.ui.components.ReaderPaging.readerShown()
+        onDispose { com.example.ui.components.ReaderPaging.readerHidden() }
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -151,11 +158,23 @@ fun ReaderScreen(
     }
 
     // Active Chapter object
-    val activeChapter = remember(chapters, currentChapterId) {
+    val activeChapter = remember(chapters, archivedChapters, currentChapterId) {
         if (currentChapterId.isEmpty()) {
             chapters.firstOrNull()
         } else {
-            chapters.find { it.id == currentChapterId }
+            // A hidden chapter opened from the drawer or a bookmark still opens.
+            chapters.find { it.id == currentChapterId } ?: archivedChapters.find { it.id == currentChapterId }
+        }
+    }
+
+    // In page-turn mode there is no scrolling list; PagedReader saves the paragraph on each page
+    // turn, so that is the position to keep (the list's index is stale there).
+    fun currentReadingParagraph(): Int {
+        val ch = activeChapter
+        return if (viewModel.settings.readerPageTurnMode && ch != null) {
+            viewModel.progress.getSavedParagraphIndex(bookId, ch.id).coerceAtLeast(0)
+        } else {
+            (lazyListState.firstVisibleItemIndex - READER_HEADER_ITEMS).coerceAtLeast(0)
         }
     }
 
@@ -185,9 +204,12 @@ fun ReaderScreen(
     }
 
     // Restore scroll position or scroll to initial target
+    var initialTargetUsed by remember { mutableStateOf(false) }
     LaunchedEffect(currentChapterId) {
         if (currentChapterId.isNotEmpty()) {
-            if (currentChapterId == initialChapterId && initialParaIndex >= 0) {
+            // The launch target applies once; coming back to that chapter later uses saved progress.
+            if (!initialTargetUsed && currentChapterId == initialChapterId && initialParaIndex >= 0) {
+                initialTargetUsed = true
                 lazyListState.scrollToItem(initialParaIndex + READER_HEADER_ITEMS)
             } else {
                 val savedPara = viewModel.progress.getSavedParagraphIndex(bookId, currentChapterId)
@@ -207,7 +229,7 @@ fun ReaderScreen(
     DisposableEffect(lifecycleOwner, activeChapter?.id, currentChapterId) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
-                val currentParagraphIndex = (lazyListState.firstVisibleItemIndex - READER_HEADER_ITEMS).coerceAtLeast(0)
+                val currentParagraphIndex = currentReadingParagraph()
                 if (activeChapter != null) {
                     val lines = activeChapter.content.split("\n\n", "\n").filter { it.isNotBlank() }
                     val currentParaText = lines.getOrNull(currentParagraphIndex) ?: ""
@@ -230,7 +252,7 @@ fun ReaderScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            val currentParagraphIndex = (lazyListState.firstVisibleItemIndex - READER_HEADER_ITEMS).coerceAtLeast(0)
+            val currentParagraphIndex = currentReadingParagraph()
             if (activeChapter != null) {
                 val lines = activeChapter.content.split("\n\n", "\n").filter { it.isNotBlank() }
                 val currentParaText = lines.getOrNull(currentParagraphIndex) ?: ""
@@ -523,18 +545,16 @@ fun ReaderScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val currentActiveChapterIsDeleted = chaptersToDelete.contains(currentChapterId)
-                        viewModel.progress.deleteChapters(bookId, chaptersToDelete) { msg ->
+                        val toDelete = chaptersToDelete.toSet() // the list is cleared before the callback
+                        val currentActiveChapterIsDeleted = currentChapterId in toDelete
+                        val currentIdx = chapters.indexOfFirst { it.id == currentChapterId }
+                        // Land on the nearest surviving chapter: the next one, else the previous one.
+                        val neighbour = (chapters.drop(currentIdx + 1) + chapters.take(maxOf(currentIdx, 0)).reversed())
+                            .firstOrNull { it.id !in toDelete }
+                        viewModel.progress.deleteChapters(bookId, toDelete.toList()) { msg ->
                             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                             if (currentActiveChapterIsDeleted) {
-                                scope.launch {
-                                    val remaining = chapters.filterNot { chaptersToDelete.contains(it.id) }
-                                    if (remaining.isNotEmpty()) {
-                                        currentChapterId = remaining.first().id
-                                    } else {
-                                        onBack()
-                                    }
-                                }
+                                if (neighbour != null) currentChapterId = neighbour.id else onBack()
                             }
                         }
                         showDeleteChaptersConfirmDialog = false
@@ -660,7 +680,9 @@ private fun PreviouslyOnCard(
         val idx = chapters.indexOfFirst { it.id == activeChapter.id }
         val previous = chapters.take(maxOf(idx, 0)).lastOrNull { it.content.isNotBlank() } ?: return@LaunchedEffect
         val text = viewModel.getChapterRecap(previous)
-        if (!text.isNullOrBlank() && !text.startsWith("Error") && !text.startsWith("No AI")) recap = text
+        if (!text.isNullOrBlank() && !text.startsWith("Error") && !text.startsWith("No AI") &&
+            !text.startsWith("No on-device") && !text.startsWith("That model")
+        ) recap = text
     }
 
     val shown = recap

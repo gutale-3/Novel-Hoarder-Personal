@@ -167,7 +167,8 @@ object TranslatorEngine {
             val indexStr = token.removePrefix("___G").removeSuffix("___")
             // Match any whitespace variations added by ML Kit
             val fuzzyRegex = Regex("___\\s*G\\s*${indexStr}\\s*___", RegexOption.IGNORE_CASE)
-            restoredText = restoredText.replace(fuzzyRegex, replacement)
+            // Literal replacement: a "$" or "\\" in a glossary term must not be read as a group.
+            restoredText = restoredText.replace(fuzzyRegex, Regex.escapeReplacement(replacement))
         }
 
         return restoredText
@@ -240,10 +241,10 @@ object TranslatorEngine {
 
             translatedChunks.joinToString("\n\n")
         } catch (e: Exception) {
+            // Callers keep the original text and count the failure; returning the source here
+            // made a failed translation look like a finished one.
             e.printStackTrace()
-            // Fallback: apply glossary directly to source text if ML Kit fails
-            val (prepared, map) = applyGlossaryPlaceholders(text, glossary)
-            restoreGlossaryPlaceholders(prepared, map)
+            throw e
         } finally {
             translator.close()
         }

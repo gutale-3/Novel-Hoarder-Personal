@@ -410,7 +410,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Chapter Title: ${chapter.title}
                 
                 Chapter Content:
-                ${chapter.content.take(3000)}
+                ${recapExcerpt(chapter.content)}
             """.trimIndent()
 
             val response = provider.generate(prompt, jsonMode = false)
@@ -433,6 +433,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         return null
     }
+
+    /** The start and, most importantly, the end of the chapter (where "previously" left off). */
+    private fun recapExcerpt(text: String): String =
+        if (text.length <= 6000) text else text.take(2000) + "\n…\n" + text.takeLast(4000)
 
     // --- Ask About Selection ---
     suspend fun askAboutSelection(selection: String, question: String): String {
