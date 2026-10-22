@@ -23,6 +23,10 @@ object BackupRestoreManager {
 
     private const val CHAPTER_ENTRY_PREFIX = "chapters/"
 
+    /** Library plus Trash, so glossaries and bookmarks of trashed novels still have their novel. */
+    private suspend fun backupBooks(repository: NovelRepository) =
+        repository.getAllBooks() + repository.getDeletedBooks()
+
     private fun chapterToJson(ch: ChapterEntity) = JSONObject().apply {
         put("id", ch.id)
         put("bookId", ch.bookId)
@@ -66,9 +70,9 @@ object BackupRestoreManager {
             zipOut.write(meta.toByteArray(Charsets.UTF_8))
             zipOut.closeEntry()
 
-            repository.getAllBooks().forEachIndexed { i, book ->
+            backupBooks(repository).forEachIndexed { i, book ->
                 zipOut.putNextEntry(ZipEntry("$CHAPTER_ENTRY_PREFIX$i.jsonl"))
-                for (ch in repository.getChapters(book.id)) {
+                for (ch in repository.getAllChaptersIncludingHidden(book.id)) {
                     zipOut.write((chapterToJson(ch).toString() + "\n").toByteArray(Charsets.UTF_8))
                 }
                 zipOut.closeEntry()
@@ -164,10 +168,10 @@ object BackupRestoreManager {
         repository: NovelRepository,
         includeChapters: Boolean = true
     ): String = withContext(Dispatchers.IO) {
-        val books = repository.getAllBooks()
+        val books = backupBooks(repository)
         val allChapters = mutableListOf<ChapterEntity>()
         if (includeChapters) for (book in books) {
-            allChapters.addAll(repository.getChapters(book.id))
+            allChapters.addAll(repository.getAllChaptersIncludingHidden(book.id))
         }
         val bookmarks = repository.getAllBookmarks()
         val glossaries = repository.getAllGlossaries()
@@ -196,6 +200,8 @@ object BackupRestoreManager {
                     put("autoArchiveHours", book.autoArchiveHours)
                     put("isDeleted", book.isDeleted)
                     put("updatedAt", book.updatedAt)
+                    put("category", book.category)
+                    put("lastReadChapterNumber", book.lastReadChapterNumber)
                 })
             }
             put("books", booksArray)
@@ -290,9 +296,12 @@ object BackupRestoreManager {
     ): Result<Int> = withContext(Dispatchers.IO) {
         try {
             // 1. A ZIP backup (new streamed format or the older single-file one)
-            val fromZip = runCatching {
+            // Only a file that isn't a ZIP falls through to JSON; a real restore error is reported.
+            val fromZip = try {
                 readArchive(context, repository) { context.contentResolver.openInputStream(inputUri) }
-            }.getOrNull()
+            } catch (e: java.util.zip.ZipException) {
+                null
+            }
             if (fromZip != null) return@withContext Result.success(fromZip)
 
             // 2. Otherwise a raw JSON export
@@ -336,7 +345,9 @@ object BackupRestoreManager {
                 totalChapters = b.optInt("totalChapters", 0),
                 autoArchiveHours = b.optInt("autoArchiveHours", 0),
                 isDeleted = b.optBoolean("isDeleted", false),
-                updatedAt = b.optLong("updatedAt", System.currentTimeMillis())
+                updatedAt = b.optLong("updatedAt", System.currentTimeMillis()),
+                category = b.optString("category", "Reading").ifBlank { "Reading" },
+                lastReadChapterNumber = b.optInt("lastReadChapterNumber", 0)
             )
             booksList.add(book)
             importedBooksCount++
@@ -479,13 +490,28 @@ object BackupRestoreManager {
             }
         }
 
-        // Bulk insert to repository
-        if (booksList.isNotEmpty()) repository.insertBooks(booksList)
+        // Insert-or-update each book: a REPLACE would delete the existing row first, and the
+        // database cascades that to all of the book's chapters and glossaries.
+        booksList.forEach { repository.insertBook(it) }
         if (chaptersList.isNotEmpty()) repository.insertChapters(chaptersList)
-        if (bookmarksList.isNotEmpty()) repository.insertBookmarks(bookmarksList)
-        if (glossariesList.isNotEmpty()) repository.insertGlossaries(glossariesList)
-        if (sessionsList.isNotEmpty()) repository.insertReadingSessions(sessionsList)
-        if (rulesList.isNotEmpty()) repository.insertReplacementRules(rulesList)
+
+        // Rows that point at a novel that isn't in this library would fail the whole restore.
+        val known = HashMap<String, Boolean>()
+        suspend fun ok(id: String) = known.getOrPut(id) { repository.getBook(id) != null }
+
+        bookmarksList.filter { ok(it.bookId) }.takeIf { it.isNotEmpty() }?.let { repository.insertBookmarks(it) }
+
+        // Restoring the same backup twice must not double glossaries, stats or text rules.
+        val haveGloss = repository.getAllGlossaries().map { it.bookId to it.originalText }.toSet()
+        glossariesList.filter { ok(it.bookId) && (it.bookId to it.originalText) !in haveGloss }
+            .distinctBy { it.bookId to it.originalText }
+            .takeIf { it.isNotEmpty() }?.let { repository.insertGlossaries(it) }
+        val haveSessions = repository.getAllReadingSessions().map { Triple(it.bookId, it.chapterId, it.timestamp) }.toSet()
+        sessionsList.filter { Triple(it.bookId, it.chapterId, it.timestamp) !in haveSessions }
+            .takeIf { it.isNotEmpty() }?.let { repository.insertReadingSessions(it) }
+        val haveRules = repository.getAllReplacementRules().map { Triple(it.bookId, it.pattern, it.replacement) }.toSet()
+        rulesList.filter { Triple(it.bookId, it.pattern, it.replacement) !in haveRules }
+            .takeIf { it.isNotEmpty() }?.let { repository.insertReplacementRules(it) }
 
         importedBooksCount
     }

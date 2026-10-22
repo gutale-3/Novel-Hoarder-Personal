@@ -52,7 +52,7 @@ object NovelCompiler {
                     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
                   </rootfiles>
                 </container>
-            """.trimIndent()
+            """.trimIndent().trimStart()
             zipStream.write(containerXml.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
@@ -98,7 +98,7 @@ object NovelCompiler {
                     display: block;
                     margin: 0 auto;
                 }
-            """.trimIndent()
+            """.trimIndent().trimStart()
             zipStream.write(css.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
@@ -135,7 +135,7 @@ object NovelCompiler {
                         </div>
                     </body>
                     </html>
-                """.trimIndent()
+                """.trimIndent().trimStart()
                 zipStream.write(coverXhtml.toByteArray(Charsets.UTF_8))
                 zipStream.closeEntry()
             }
@@ -164,14 +164,14 @@ object NovelCompiler {
                     </div>
                 </body>
                 </html>
-            """.trimIndent()
+            """.trimIndent().trimStart()
             zipStream.write(aboutHtml.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
             // 6. OEBPS/nav.xhtml (EPUB 3 Navigation Document)
             zipStream.putNextEntry(ZipEntry("OEBPS/nav.xhtml"))
-            val navListItems = chapters.map { ch ->
-                """<li><a href="chapter_${ch.chapterNumber}.xhtml">${escapeXml(ch.title)}</a></li>"""
+            val navListItems = chapters.mapIndexed { i, ch ->
+                """<li><a href="chapter_${i + 1}.xhtml">${escapeXml(ch.title)}</a></li>"""
             }.joinToString("\n                ")
             val navHtml = """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -191,13 +191,14 @@ object NovelCompiler {
                     </nav>
                 </body>
                 </html>
-            """.trimIndent()
+            """.trimIndent().trimStart()
             zipStream.write(navHtml.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
             // 7. OEBPS/chapter_X.xhtml files
-            for (chapter in chapters) {
-                zipStream.putNextEntry(ZipEntry("OEBPS/chapter_${chapter.chapterNumber}.xhtml"))
+            // Files are named by position: two chapters can share a chapter number.
+            for ((i, chapter) in chapters.withIndex()) {
+                zipStream.putNextEntry(ZipEntry("OEBPS/chapter_${i + 1}.xhtml"))
                 val contentParas = chapter.content
                     .split("\n")
                     .map { it.replace("\r", "").trim() }
@@ -219,7 +220,7 @@ object NovelCompiler {
                         </section>
                     </body>
                     </html>
-                """.trimIndent()
+                """.trimIndent().trimStart()
                 zipStream.write(chapHtml.toByteArray(Charsets.UTF_8))
                 zipStream.closeEntry()
             }
@@ -230,9 +231,9 @@ object NovelCompiler {
                 """
                 <navPoint id="navpoint-${idx + 1}" playOrder="${idx + 1}">
                   <navLabel><text>${escapeXml(ch.title)}</text></navLabel>
-                  <content src="chapter_${ch.chapterNumber}.xhtml"/>
+                  <content src="chapter_${idx + 1}.xhtml"/>
                 </navPoint>
-                """.trimIndent()
+                """.trimIndent().trimStart()
             }.joinToString("\n")
 
             val ncxXml = """
@@ -253,19 +254,19 @@ object NovelCompiler {
                     $navPoints
                   </navMap>
                 </ncx>
-            """.trimIndent()
+            """.trimIndent().trimStart()
             zipStream.write(ncxXml.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
             // 9. OEBPS/content.opf (Book manifest & packaging metadata)
             zipStream.putNextEntry(ZipEntry("OEBPS/content.opf"))
             
-            val manifestItems = chapters.map { ch ->
-                """<item id="chap_${ch.chapterNumber}" href="chapter_${ch.chapterNumber}.xhtml" media-type="application/xhtml+xml"/>"""
+            val manifestItems = chapters.mapIndexed { i, _ ->
+                """<item id="chap_${i + 1}" href="chapter_${i + 1}.xhtml" media-type="application/xhtml+xml"/>"""
             }.joinToString("\n                    ")
 
-            val spineRefs = chapters.map { ch ->
-                """<itemref idref="chap_${ch.chapterNumber}"/>"""
+            val spineRefs = chapters.mapIndexed { i, _ ->
+                """<itemref idref="chap_${i + 1}"/>"""
             }.joinToString("\n                    ")
 
             val opfXml = """
@@ -295,7 +296,7 @@ object NovelCompiler {
                     $spineRefs
                   </spine>
                 </package>
-            """.trimIndent()
+            """.trimIndent().trimStart()
             zipStream.write(opfXml.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 

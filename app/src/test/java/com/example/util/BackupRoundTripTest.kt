@@ -68,4 +68,21 @@ class BackupRoundTripTest {
         assertEquals(1234L, first.readAt)
         File(context.filesDir, "backups").deleteRecursively()
     }
+
+    @Test
+    fun restoringOverTheLibraryKeepsNewerAndHiddenChapters(): Unit = runBlocking {
+        val repo = NovelRepository(sourceDb.bookDao())
+        repo.insertBookAndChapters(book("a"), (1..3).map { ch("a", it) }.toMutableList().also {
+            it[2] = it[2].copy(isArchived = true) // hidden chapter 3
+        } )
+        val file = BackupRestoreManager.createLocalAutoBackup(context, repo).getOrThrow()
+        repo.insertChapters(listOf(ch("a", 4))) // downloaded after the backup
+
+        BackupRestoreManager.restoreFullBackupZip(context, repo, Uri.fromFile(file)).getOrThrow()
+        BackupRestoreManager.restoreFullBackupZip(context, repo, Uri.fromFile(file)).getOrThrow()
+        val all = repo.getAllChaptersIncludingHidden("a")
+        assertEquals(listOf(1, 2, 3, 4), all.map { it.chapterNumber })
+        assertTrue(all.first { it.chapterNumber == 3 }.isArchived)
+        File(context.filesDir, "backups").deleteRecursively()
+    }
 }

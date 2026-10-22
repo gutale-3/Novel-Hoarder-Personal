@@ -258,7 +258,7 @@ class ChapterUpdateWorker(
         val quota = com.example.data.scraper.DownloadQuota.get(context)
         val sourceKey = com.example.data.scraper.SourceKeys.keyFor(book.url)
 
-        val placeholders = newUrls.mapIndexed { i, url ->
+        val wanted = newUrls.mapIndexed { i, url ->
             val number = firstNumber + i
             val chapId = scraper.parseChapterId(url) ?: "ch_$number"
             com.example.data.local.ChapterEntity(
@@ -271,7 +271,8 @@ class ChapterUpdateWorker(
                 content = "",
                 hash = ""
             )
-        }.filter { repository.getChapter(it.id) == null }
+        }
+        val placeholders = wanted.filter { repository.getChapter(it.id) == null }
         if (placeholders.isNotEmpty()) {
             repository.insertChapters(placeholders)
             repository.updateBook(book.copy(totalChapters = repository.getChapters(book.id).size, updatedAt = System.currentTimeMillis()))
@@ -284,7 +285,12 @@ class ChapterUpdateWorker(
 
         var downloaded = 0
         var failuresInARow = 0
-        for ((i, chapter) in repository.getPendingChapters(book.id, budget).withIndex()) {
+        // Only the chapters just found: "pending" also matches old chapters whose text was
+        // cleared to save space, and hidden ones.
+        val toFetch = wanted.mapNotNull { repository.getChapter(it.id) }
+            .filter { it.content.isEmpty() && !it.isArchived && !it.isDeleted }
+            .take(budget)
+        for ((i, chapter) in toFetch.withIndex()) {
             if (isStopped || System.currentTimeMillis() > deadline) break
             val result = scraping.downloadSingleChapter(chapter)
             if (result.isSuccess) {

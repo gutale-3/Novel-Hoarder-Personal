@@ -87,7 +87,9 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
                 for (id in remoteStamps.keys()) {
                     val stamp = remoteStamps.getString(id)
                     if (pulled.optString(id) == stamp) continue
-                    dir.file(bookFileName(id))?.let { read(it) }?.let { changed.put(it) }
+                    // Not there yet (Drive still copying it)? Try again next sync.
+                    val book = dir.file(bookFileName(id))?.let { read(it) } ?: continue
+                    changed.put(book)
                     pulled.put(id, stamp)
                 }
                 total += merge(
@@ -266,7 +268,9 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
 
             // Chapters: add the ones this device has never seen (text downloads when opened),
             // and carry read marks over.
-            val localChapters = repository.getChapters(id).associateBy { it.id }
+            // Hidden and trashed chapters count as known: re-adding them would unhide them and
+            // wipe their text.
+            val localChapters = repository.getAllChaptersIncludingHidden(id).associateBy { it.id }
             val newOnes = ArrayList<ChapterEntity>()
             for (j in 0 until remoteChapters.length()) {
                 val rc = remoteChapters.getJSONObject(j)

@@ -113,6 +113,10 @@ interface BookDao {
     @Query("SELECT * FROM chapters WHERE bookId = :bookId AND isArchived = 0 AND isDeleted = 0 ORDER BY chapterNumber ASC")
     suspend fun getChaptersForBook(bookId: String): List<ChapterEntity>
 
+    /** Every chapter of a book, hidden and trashed ones included (for backups and sync). */
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY chapterNumber ASC")
+    suspend fun getAllChaptersForBookIncludingHidden(bookId: String): List<ChapterEntity>
+
     @Query("SELECT * FROM chapters WHERE isDeleted = 1 ORDER BY downloadedAt DESC")
     fun getDeletedChaptersFlow(): Flow<List<ChapterEntity>>
 

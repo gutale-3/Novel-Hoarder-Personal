@@ -95,7 +95,7 @@ object StorageMaintenanceManager {
     }
 
     suspend fun cleanOrphanedCovers(context: Context, repository: NovelRepository): Int = withContext(Dispatchers.IO) {
-        val books = repository.getAllBooks()
+        val books = repository.getAllBooks() + repository.getDeletedBooks() // Trash keeps its covers
         val validLocalPaths = books.mapNotNull { it.coverLocalPath }.toSet()
         var deletedCount = 0
 

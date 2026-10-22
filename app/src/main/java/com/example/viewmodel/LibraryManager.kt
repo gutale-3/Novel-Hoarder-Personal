@@ -408,8 +408,14 @@ class LibraryManager(
     // --- Bulk Operations ---
     fun bulkDeleteBooks(bookIds: Set<String>) {
         coroutineScope.launch(Dispatchers.IO) {
+            val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+            val sync = com.example.NovelHoarderApp.getContainer(application).cloudSync
             for (id in bookIds) {
+                if (prefs.getString("active_reading_book_id", null) == id) {
+                    prefs.edit().remove("active_reading_book_id").remove("active_reading_chapter_id").remove("active_reading_para_index").apply()
+                }
                 repository.softDeleteBook(id)
+                sync.recordRemoval(id) // so other devices drop it too
             }
             withContext(Dispatchers.Main) {
                 onClearSelection?.invoke()
