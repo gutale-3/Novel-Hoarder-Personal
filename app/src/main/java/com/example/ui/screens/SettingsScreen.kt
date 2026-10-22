@@ -117,11 +117,14 @@ fun SettingsScreen(
         if (uri != null) {
             coroutineScope.launch {
                 isBackingUp = true
-                val result = com.example.util.BackupRestoreManager.createFullBackupZip(
-                    context = context,
-                    repository = viewModel.repository,
-                    outputUri = uri
-                )
+                // Finishes even if Settings is closed meanwhile (half a zip is worse than none).
+                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    com.example.util.BackupRestoreManager.createFullBackupZip(
+                        context = context.applicationContext,
+                        repository = viewModel.repository,
+                        outputUri = uri
+                    )
+                }
                 isBackingUp = false
                 result.fold(
                     onSuccess = { count ->
@@ -142,11 +145,13 @@ fun SettingsScreen(
         if (uri != null) {
             coroutineScope.launch {
                 isRestoring = true
-                val result = com.example.util.BackupRestoreManager.restoreFullBackupZip(
-                    context = context,
-                    repository = viewModel.repository,
-                    inputUri = uri
-                )
+                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    com.example.util.BackupRestoreManager.restoreFullBackupZip(
+                        context = context.applicationContext,
+                        repository = viewModel.repository,
+                        inputUri = uri
+                    )
+                }
                 isRestoring = false
                 result.fold(
                     onSuccess = { count ->
@@ -1317,7 +1322,9 @@ fun SettingsScreen(
             onRestore = { file ->
                 coroutineScope.launch {
                     isRestoring = true
-                    val res = com.example.util.BackupRestoreManager.restoreLocalBackup(context, viewModel.repository, file)
+                    val res = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        com.example.util.BackupRestoreManager.restoreLocalBackup(context.applicationContext, viewModel.repository, file)
+                    }
                     isRestoring = false
                     res.fold(
                         onSuccess = { count ->

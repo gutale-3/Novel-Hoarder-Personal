@@ -101,7 +101,10 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        handleIntent(intent)
+        // On rotation/theme change the back stack is restored; handling the same launch intent
+        // again would stack a second copy of the screen.
+        if (savedInstanceState == null) handleIntent(intent)
+        val launchedForRoute = pendingRoute.value != null
 
         setContent {
             val viewModel: MainViewModel = viewModel()
@@ -120,11 +123,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Handle incoming intents (e.g. from TTS media notifications)
+            fun openReader(route: String) {
+                // Replace an open reader instead of piling readers on top of each other.
+                navController.navigate(route) {
+                    popUpTo(READER_ROUTE) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+
+            // Handle incoming intents (e.g. from notifications and the widget)
             val currentPendingRoute by pendingRoute
             LaunchedEffect(currentPendingRoute) {
                 currentPendingRoute?.let { route ->
-                    navController.navigate(route)
+                    when {
+                        route in TAB_ROUTES -> goToTab(route)
+                        route.startsWith("reader/") -> openReader(route)
+                        else -> navController.navigate(route) { launchSingleTop = true }
+                    }
                     pendingRoute.value = null
                 }
             }
@@ -134,7 +149,8 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(Unit) {
                 if (!hasRestoredSession) {
                     hasRestoredSession = true
-                    if (pendingRoute.value == null) {
+                    // Opened from a notification or the widget: go there, not to the last session.
+                    if (!launchedForRoute && pendingRoute.value == null) {
                         val activeBookId = viewModel.progress.getActiveReaderBookId()
                         if (!activeBookId.isNullOrEmpty()) {
                             val activeChapterId = viewModel.progress.getActiveReaderChapterId()
@@ -165,7 +181,8 @@ class MainActivity : ComponentActivity() {
                 // The security-check window and the browser are drawn over the whole app (below),
                 // so a paused download no longer needs to jump to the Scrape tab.
 
-                val isFullScreen = currentRoute.startsWith("reader") || currentRoute == "settings" || currentRoute == "plugins"
+                val isFullScreen = currentRoute.startsWith("reader") || currentRoute == "settings" ||
+                    currentRoute == "plugins" || currentRoute == "search" // search has its own top bar
 
                 Box(Modifier.fillMaxSize()) {
                 Scaffold(
@@ -187,14 +204,14 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 actions = {
-                                    IconButton(onClick = { navController.navigate("search") }) {
+                                    IconButton(onClick = { navController.navigate("search") { launchSingleTop = true } }) {
                                         Icon(
                                             imageVector = Icons.Default.Search,
                                             contentDescription = "Search & discover",
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }
-                                    IconButton(onClick = { navController.navigate("plugins") }) {
+                                    IconButton(onClick = { navController.navigate("plugins") { launchSingleTop = true } }) {
                                         Icon(
                                             imageVector = Icons.Default.Extension,
                                             contentDescription = "Sites & Add-ons Studio",
@@ -202,7 +219,7 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
 
-                                    IconButton(onClick = { navController.navigate("settings") }) {
+                                    IconButton(onClick = { navController.navigate("settings") { launchSingleTop = true } }) {
                                         Icon(
                                             imageVector = Icons.Default.Settings,
                                             contentDescription = "Settings",
@@ -383,7 +400,7 @@ class MainActivity : ComponentActivity() {
                             }
 
                             composable(
-                                route = "reader/{bookId}?chapterId={chapterId}&paraIndex={paraIndex}",
+                                route = READER_ROUTE,
                                 arguments = listOf(
                                     navArgument("bookId") { type = NavType.StringType },
                                     navArgument("chapterId") {
@@ -417,7 +434,7 @@ class MainActivity : ComponentActivity() {
                             viewModel = viewModel,
                             onNavigateToReader = { bookId, chapterId, paraIndex ->
                                 viewModel.progress.setActiveReaderSession(bookId, chapterId, paraIndex)
-                                navController.navigate("reader/$bookId?chapterId=$chapterId&paraIndex=$paraIndex")
+                                openReader("reader/$bookId?chapterId=$chapterId&paraIndex=$paraIndex")
                             },
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
@@ -462,3 +479,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+private const val READER_ROUTE = "reader/{bookId}?chapterId={chapterId}&paraIndex={paraIndex}"
+private val TAB_ROUTES = setOf("home", "scrape", "updates", "library")

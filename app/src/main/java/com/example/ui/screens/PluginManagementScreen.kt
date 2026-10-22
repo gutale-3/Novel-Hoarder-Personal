@@ -401,15 +401,11 @@ fun PluginManagementScreen(
                                         coroutineScope.launch { pluginManager.togglePlugin(plugin.id, enabled) }
                                     },
                                     onEdit = {
-                                        coroutineScope.launch {
-                                            pluginManager.forkBuiltIn(plugin.id)
-                                                .onSuccess { forked ->
-                                                    studioConfigToEdit = forked
-                                                    studioIsNew = false
-                                                    showStudioDialog = true
-                                                }
-                                                .onFailure { errorMessage = "Could not edit copy: ${it.message}" }
-                                        }
+                                        // A personal copy is only written on Save; cancelling must not
+                                        // freeze the site at this version (copies skip remote updates).
+                                        studioConfigToEdit = plugin
+                                        studioIsNew = false
+                                        showStudioDialog = true
                                     },
                                     onDuplicate = {
                                         coroutineScope.launch {
@@ -533,8 +529,18 @@ fun PluginManagementScreen(
                                         Button(
                                             onClick = {
                                                 coroutineScope.launch {
-                                                    pluginManager.savePluginConfig(preset.copy(isBuiltIn = false))
-                                                    Toast.makeText(context, "Installed ${preset.name} Add-on!", Toast.LENGTH_SHORT).show()
+                                                    if (plugins.any { it.id == preset.id }) {
+                                                        // Saving over a built-in would pin this older copy
+                                                        // and block its updates.
+                                                        Toast.makeText(context, "${preset.name} is already installed", Toast.LENGTH_SHORT).show()
+                                                        return@launch
+                                                    }
+                                                    val saved = pluginManager.savePluginConfig(preset.copy(isBuiltIn = false))
+                                                    Toast.makeText(
+                                                        context,
+                                                        if (saved.isSuccess) "Installed ${preset.name} Add-on!" else "Couldn't install ${preset.name}",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
                                                 }
                                             }
                                         ) {

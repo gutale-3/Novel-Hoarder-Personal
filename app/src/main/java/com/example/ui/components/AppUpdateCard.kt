@@ -91,11 +91,14 @@ fun AppUpdateCard(alwaysShow: Boolean) {
                             progress = 0f
                             status = "Downloading…"
                             scope.launch {
-                                runCatching { AppUpdater.download(context, release) { progress = it } }
-                                    .onSuccess {
-                                        status = null
-                                        AppUpdater.install(context, it)
+                                // Keeps going if the card scrolls off screen.
+                                runCatching {
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                                        AppUpdater.download(context, release) { progress = it }
+                                            .also { AppUpdater.install(context, it) }
                                     }
+                                }
+                                    .onSuccess { status = null }
                                     .onFailure { status = "Download failed: ${it.message}" }
                                 progress = null
                             }

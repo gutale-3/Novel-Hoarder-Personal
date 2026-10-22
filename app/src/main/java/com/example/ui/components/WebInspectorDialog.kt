@@ -309,6 +309,8 @@ fun WebInspectorDialog(
                                         override fun onPageFinished(view: WebView?, url: String?) {
                                             super.onPageFinished(view, url)
                                             isLoadingPage = false
+                                            // A new page: the previous page's detection no longer applies.
+                                            if ((url ?: "") != currentLoadedUrl) autoDetectedConfig = null
                                             currentLoadedUrl = url ?: ""
                                             if (currentLoadedUrl.isNotBlank()) {
                                                 urlInput = currentLoadedUrl

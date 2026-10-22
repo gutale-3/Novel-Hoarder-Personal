@@ -49,7 +49,9 @@ fun UpdatesScreen(
     val checkNowInfo by remember {
         WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(ChapterUpdateWorker.CHECK_NOW_WORK_NAME)
     }.collectAsState(initial = emptyList())
-    val isChecking = checkNowInfo.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val isChecking = checkNowInfo.any { it.state == WorkInfo.State.RUNNING }
+    // Queued but not started: usually waiting for a connection.
+    val isWaiting = !isChecking && checkNowInfo.any { it.state == WorkInfo.State.ENQUEUED }
 
     val withNew = books.mapNotNull { b -> entries[b.id]?.takeIf { it.newCount > 0 }?.let { b to it } }
         .sortedByDescending { it.second.checkedAt }
@@ -88,9 +90,11 @@ fun UpdatesScreen(
             TextButton(onClick = { showLimits = true }) { Text("Limits") }
             FilledTonalButton(
                 onClick = { ChapterUpdateWorker.checkNow(context) },
-                enabled = !isChecking
+                enabled = !isChecking && !isWaiting
             ) {
-                if (isChecking) {
+                if (isWaiting) {
+                    Text("Waiting for network")
+                } else if (isChecking) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text("Checking…")

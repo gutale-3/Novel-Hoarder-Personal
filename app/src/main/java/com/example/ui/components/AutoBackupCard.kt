@@ -135,7 +135,7 @@ private fun DeviceSyncSection(folderChosen: Boolean, onChooseFolder: () -> Unit)
                 syncing = true
                 result = null
                 scope.launch {
-                    result = sync.syncNow().fold(
+                    result = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { sync.syncNow() }.fold(
                         onSuccess = {
                             "Synced: ${it.booksAdded} novels added, ${it.positionsUpdated} positions updated, " +
                                 "${it.chaptersMarkedRead} chapters marked read"

@@ -358,8 +358,8 @@ interface BookDao {
             COUNT(CASE WHEN c.isRead = 0 AND c.isDeleted = 0 THEN 1 END) AS unreadCount,
             COUNT(CASE WHEN c.content != '' AND c.isDeleted = 0 THEN 1 END) AS downloadedCount,
             COALESCE(MAX(c.chapterNumber), 0) AS maxChapterNumber,
-            COALESCE(MAX(CASE WHEN c.isRead = 1 THEN c.chapterNumber ELSE 0 END), 0) AS maxReadChapterNumber,
-            COUNT(CASE WHEN c.isRead = 1 THEN 1 END) AS readCount
+            COALESCE(MAX(CASE WHEN c.isRead = 1 AND c.isDeleted = 0 THEN c.chapterNumber ELSE 0 END), 0) AS maxReadChapterNumber,
+            COUNT(CASE WHEN c.isRead = 1 AND c.isDeleted = 0 THEN 1 END) AS readCount
         FROM books b
         LEFT JOIN chapters c ON b.id = c.bookId
         WHERE b.isDeleted = 0
@@ -374,8 +374,8 @@ interface BookDao {
             COUNT(CASE WHEN c.isRead = 0 AND c.isDeleted = 0 THEN 1 END) AS unreadCount,
             COUNT(CASE WHEN c.content != '' AND c.isDeleted = 0 THEN 1 END) AS downloadedCount,
             COALESCE(MAX(c.chapterNumber), 0) AS maxChapterNumber,
-            COALESCE(MAX(CASE WHEN c.isRead = 1 THEN c.chapterNumber ELSE 0 END), 0) AS maxReadChapterNumber,
-            COUNT(CASE WHEN c.isRead = 1 THEN 1 END) AS readCount
+            COALESCE(MAX(CASE WHEN c.isRead = 1 AND c.isDeleted = 0 THEN c.chapterNumber ELSE 0 END), 0) AS maxReadChapterNumber,
+            COUNT(CASE WHEN c.isRead = 1 AND c.isDeleted = 0 THEN 1 END) AS readCount
         FROM books b
         LEFT JOIN chapters c ON b.id = c.bookId
         WHERE b.isDeleted = 0

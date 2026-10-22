@@ -112,10 +112,14 @@ fun PluginStudioDialog(
     var testBookCover by remember { mutableStateOf<String?>(null) }
     var testJob by remember { mutableStateOf<Job?>(null) }
 
+    // Fields the editor doesn't show (search, browse, language, TOC URL template, test URL,
+    // enabled state…) are carried over from here instead of being reset to defaults.
+    var baseConfig by remember { mutableStateOf(initialConfig) }
+
     fun buildCurrentConfig(): PluginConfig {
         val extraHosts = extraHostsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
         val junkList = junkSelectorsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
-        return PluginConfig(
+        return baseConfig.copy(
             id = id.trim(),
             name = name.trim(),
             version = version.trim().ifBlank { "1.0.0" },
@@ -130,7 +134,6 @@ fun PluginStudioDialog(
             chapterTitleSelector = chapterTitleSelector.trim(),
             chapterBodySelector = chapterBodySelector.trim(),
             customJs = customJs.trim().ifBlank { null },
-            isEnabled = true,
             extraHosts = extraHosts,
             tocPaginationMode = tocPaginationMode,
             tocPageParam = tocPageParam.trim(),
@@ -158,6 +161,7 @@ fun PluginStudioDialog(
     fun syncFromJson(jsonStr: String): Boolean {
         return try {
             val cfg = pluginManager.validatePluginJson(jsonStr)
+            baseConfig = cfg
             id = cfg.id
             name = cfg.name
             version = cfg.version
