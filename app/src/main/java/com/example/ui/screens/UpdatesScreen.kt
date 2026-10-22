@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.NewReleases
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,6 +56,12 @@ fun UpdatesScreen(
     val withErrors = books.mapNotNull { b -> entries[b.id]?.takeIf { it.error != null }?.let { b to it } }
     val lastChecked = entries.values.maxOfOrNull { it.checkedAt }
     var showLimits by remember { mutableStateOf(false) }
+    var showNotifications by remember { mutableStateOf(false) }
+    if (showNotifications) {
+        com.example.ui.components.NotificationSettingsDialog(books.filter { !it.isDeleted && !it.url.startsWith("local://") }) {
+            showNotifications = false
+        }
+    }
     if (showLimits) {
         com.example.ui.components.DownloadLimitsDialog(viewModel.pluginManager) { showLimits = false }
     }
@@ -74,6 +81,9 @@ fun UpdatesScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            IconButton(onClick = { showNotifications = true }) {
+                Icon(Icons.Default.Notifications, contentDescription = "Notification settings")
             }
             TextButton(onClick = { showLimits = true }) { Text("Limits") }
             FilledTonalButton(

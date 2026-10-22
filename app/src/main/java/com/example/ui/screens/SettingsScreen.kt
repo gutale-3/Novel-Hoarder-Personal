@@ -329,28 +329,74 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .padding(bottom = 8.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val gemini = remember { viewModel.aiRegistry.geminiProvider }
+                        var keyText by remember { mutableStateOf(gemini.apiKey) }
+                        var model by remember { mutableStateOf(gemini.modelChoice) }
+                        var keyStatus by remember { mutableStateOf<String?>(null) }
+                        var testing by remember { mutableStateOf(false) }
+                        Text("Google Gemini", style = MaterialTheme.typography.titleSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         Text(
-                            "Recaps, glossary and discovery need an AI. Either import an on-device model " +
-                                "(private, large download) or add a free Google Gemini key from aistudio.google.com " +
-                                "(sends the chapter being summarised to Google).",
+                            "Powers recaps, glossary and discovery. The key is free from Google AI Studio; " +
+                                "the text being summarised is sent to Google.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(Modifier.height(8.dp))
-                        val gemini = remember { viewModel.aiRegistry.geminiProvider }
-                        var keyText by remember { mutableStateOf(gemini.apiKey) }
                         OutlinedTextField(
                             value = keyText,
-                            onValueChange = { keyText = it; gemini.apiKey = it },
-                            label = { Text("Gemini API key (optional)") },
+                            onValueChange = { keyText = it; gemini.apiKey = it; keyStatus = null },
+                            label = { Text("Gemini API key") },
                             singleLine = true,
                             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("https://aistudio.google.com/apikey")
+                                    )
+                                )
+                            }) { Text("Get a free key", softWrap = false) }
+                            Button(
+                                enabled = keyText.isNotBlank() && !testing,
+                                onClick = {
+                                    testing = true
+                                    coroutineScope.launch {
+                                        keyStatus = gemini.testKey()?.let { "✗ $it" } ?: "✓ Key works"
+                                        testing = false
+                                    }
+                                }
+                            ) { Text(if (testing) "Testing…" else "Test key", softWrap = false) }
+                        }
+                        keyStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = model == "lite",
+                                onClick = { model = "lite"; gemini.modelChoice = "lite" },
+                                label = { Text("Fast (Flash-Lite)") }
+                            )
+                            FilterChip(
+                                selected = model == "flash",
+                                onClick = { model = "flash"; gemini.modelChoice = "flash" },
+                                label = { Text("Smarter (Flash)") }
+                            )
+                        }
+                        Text(
+                            "Fast is quickest and has the most free requests a day. If one model is busy or " +
+                                "out of free requests, the other is used automatically.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
+                Text(
+                    "Without a key: on-device model (private, large download)",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
                 val modelInstalled = aiModelManager.checkModelExists()
                 val modelSizeMb = aiModelManager.modelSizeBytes() / (1024 * 1024)
                 Text(

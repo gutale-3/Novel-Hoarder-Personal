@@ -40,7 +40,7 @@ class SiteHealthWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 before[plugin.id]?.status != SourceHealthChecker.Status.BROKEN
             ) newlyBroken += "${plugin.name} (${result.stage})"
         }
-        if (newlyBroken.isNotEmpty()) notifyBroken(newlyBroken)
+        if (newlyBroken.isNotEmpty() && NotificationPrefs.get(app).siteHealth) notifyBroken(newlyBroken)
         return Result.success()
     }
 

@@ -7,6 +7,7 @@ internal object ScrapeNotifications {
 
     /** Heads-up notification so a check is seen even when the phone is in a pocket or another app is open. */
     fun checkNeeded(application: android.app.Application, reason: String) {
+        if (!com.example.background.NotificationPrefs.get(application).downloadNeedsYou) return
         val nm = application.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             nm.createNotificationChannel(

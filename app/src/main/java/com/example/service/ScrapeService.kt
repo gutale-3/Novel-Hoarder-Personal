@@ -137,6 +137,8 @@ class ScrapeService : Service() {
             .setContentText(contentText)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
 
         if (totalChapters > 0) {
             builder.setProgress(totalChapters, currentChapter, false)

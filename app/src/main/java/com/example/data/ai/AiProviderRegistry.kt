@@ -3,8 +3,8 @@ package com.example.data.ai
 import android.content.Context
 
 /**
- * All AI runs on this device. There is no cloud provider and no API key — the only backend is a
- * local model file the user imports themselves.
+ * Google Gemini (with the user's free API key) is the main AI; an imported on-device model is the
+ * fallback when there is no key.
  */
 class AiProviderRegistry(context: Context) {
 
@@ -19,12 +19,8 @@ class AiProviderRegistry(context: Context) {
      */
     suspend fun best(): AiProvider = if (geminiProvider.isAvailable()) geminiProvider else localProvider
 
-    fun getProvider(id: String): AiProvider = localProvider
+    fun getProvider(id: String): AiProvider = if (id == geminiProvider.id) geminiProvider else localProvider
 
-    /**
-     * Kept for source compatibility with existing call sites. There is nothing to select between,
-     * so the parameters are ignored.
-     */
-    suspend fun getActiveProviderForTask(preferredId: String, requiresJson: Boolean): AiProvider =
-        localProvider
+    /** Kept for existing call sites; always the best available provider. */
+    suspend fun getActiveProviderForTask(preferredId: String, requiresJson: Boolean): AiProvider = best()
 }

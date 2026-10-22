@@ -28,6 +28,7 @@ class ChapterUpdateWorker(
         const val CHECK_NOW_WORK_NAME = "novel_chapter_update_check_now"
         /** Upper bound per book per background run, so one novel cannot hog the run. */
         const val MAX_AUTO_PER_RUN = 150
+        private const val RUN_BUDGET_MS = 8 * 60 * 1000L
 
         /** Runs the update check once, right away, for the Updates tab's "Check now" button. */
         fun checkNow(context: Context) {
@@ -110,7 +111,13 @@ class ChapterUpdateWorker(
 
         val updatesStore = ChapterUpdatesStore.get(context)
         val quota = com.example.data.scraper.DownloadQuota.get(context)
-        for ((index, book) in books.withIndex()) {
+        // WorkManager stops a run after ~10 minutes and starts it again soon after; staying well
+        // inside that keeps one run from turning into many (each used to post its own alerts).
+        val deadline = System.currentTimeMillis() + RUN_BUDGET_MS
+        val found = mutableListOf<Triple<String, String, Int>>()
+        val pendingNow = HashMap<String, Int>()
+        for (book in books) {
+            if (isStopped || System.currentTimeMillis() > deadline) break
             if (book.url.startsWith("local://")) continue
             try {
                 val scraper = SourceManager.getSourceForUrl(book.url)
@@ -169,7 +176,7 @@ class ChapterUpdateWorker(
 
                     var downloaded = 0
                     if (newCount > 0 && quota.isAutoDownloadEnabled(book.id, book.url)) {
-                        downloaded = autoDownload(book, scraper, chapterUrls.takeLast(newCount), nextChapterStart)
+                        downloaded = autoDownload(book, scraper, chapterUrls.takeLast(newCount), nextChapterStart, deadline)
                     }
                     val stillNew = (newCount - downloaded).coerceAtLeast(0)
                     if (stillNew > 0) {
@@ -182,30 +189,8 @@ class ChapterUpdateWorker(
                         updatesStore.clear(book.id)
                     }
 
-                    if (newCount > 0) {
-                        val autoGrab = downloaded > 0
-                        val openAppIntent = Intent(context, com.example.MainActivity::class.java)
-                        val openAppPendingIntent = PendingIntent.getActivity(
-                            context, index, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-
-                        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                            .setSmallIcon(android.R.drawable.ic_popup_sync)
-                            .setContentTitle("New Chapters for ${book.title}")
-                            .setContentText(
-                                when {
-                                    autoGrab && stillNew == 0 -> "Downloaded $downloaded new chapters (from Ch. $nextChapterStart) — ready offline"
-                                    autoGrab -> "Downloaded $downloaded of $newCount new chapters; the rest wait for the site's limit"
-                                    else -> "Found $newCount new chapters (from Ch. $nextChapterStart) available to download!"
-                                }
-                            )
-                            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                            .setContentIntent(openAppPendingIntent)
-                            .setAutoCancel(true)
-                            .build()
-
-                        notificationManager.notify(NOTIFICATION_ID_BASE + index, notification)
-                    }
+                    if (stillNew > 0) pendingNow[book.id] = stillNew
+                    if (newCount > 0) found += Triple(book.id, book.title, stillNew.takeIf { it > 0 } ?: downloaded)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -213,7 +198,46 @@ class ChapterUpdateWorker(
             delay(1000)
         }
 
+        notifyNewChapters(notificationManager, found, pendingNow)
         return Result.success()
+    }
+
+    /** One grouped alert per run at most, and only when the user's spacing allows it. */
+    private fun notifyNewChapters(
+        notificationManager: NotificationManager,
+        found: List<Triple<String, String, Int>>,
+        pendingNow: Map<String, Int>
+    ) {
+        val prefs = NotificationPrefs.get(context)
+        prefs.forgetCaughtUp(pendingNow)
+        val due = prefs.chapterAlertsDue(found)
+        if (due.isEmpty()) return
+        prefs.recordChapterAlert(found)
+
+        val intent = Intent(context, com.example.MainActivity::class.java)
+            .putExtra("open_route", "updates")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val pending = PendingIntent.getActivity(
+            context, NOTIFICATION_ID_BASE, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val lines = due.map { (_, title, n) -> "$title — $n new" }
+        val style = NotificationCompat.InboxStyle()
+        lines.take(6).forEach { style.addLine(it) }
+        if (lines.size > 6) style.setSummaryText("+${lines.size - 6} more")
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_popup_sync)
+            .setContentTitle(if (due.size == 1) "New chapters: ${due[0].second}" else "New chapters in ${due.size} novels")
+            .setContentText(lines.joinToString(" · "))
+            .setStyle(style)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .build()
+        // Clear the old one-per-novel alerts, then post the single summary.
+        notificationManager.activeNotifications
+            .filter { it.id in (NOTIFICATION_ID_BASE + 1)..(NOTIFICATION_ID_BASE + 999) }
+            .forEach { notificationManager.cancel(it.id) }
+        notificationManager.notify(NOTIFICATION_ID_BASE, notification)
     }
 
     /**
@@ -225,7 +249,8 @@ class ChapterUpdateWorker(
         book: com.example.data.local.BookEntity,
         scraper: com.example.data.scraper.NovelSource,
         newUrls: List<String>,
-        firstNumber: Int
+        firstNumber: Int,
+        deadline: Long
     ): Int {
         val container = com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application)
         val repository = container.repository
@@ -260,6 +285,7 @@ class ChapterUpdateWorker(
         var downloaded = 0
         var failuresInARow = 0
         for ((i, chapter) in repository.getPendingChapters(book.id, budget).withIndex()) {
+            if (isStopped || System.currentTimeMillis() > deadline) break
             val result = scraping.downloadSingleChapter(chapter)
             if (result.isSuccess) {
                 downloaded++
