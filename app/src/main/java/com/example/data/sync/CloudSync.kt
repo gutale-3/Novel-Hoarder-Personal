@@ -16,10 +16,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Keeps several phones/tablets in step through one small file in the backup folder (pick a
- * Google Drive folder and the Drive app carries it between devices — no account setup here).
+ * Keeps several phones/tablets in step through the backup folder (pick a Google Drive folder and
+ * the Drive app carries it between devices — no account setup here).
  *
- * The file holds the library, chapter list and read marks, bookmarks and the exact reading
+ * The folder gets an "Inkvault-sync" subfolder with one small file per novel plus a manifest of
+ * per-novel fingerprints, so a sync only reads and writes the novels that changed. Each novel's
+ * file holds its details, chapter list and read marks, bookmarks and the exact reading
  * position, but not chapter text: a chapter opened on another device downloads itself on
  * demand. Merging is additive — nothing is lost if two devices were used offline — and the
  * most recent reading position wins.
@@ -63,79 +65,139 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
     private fun removals(): JSONObject =
         runCatching { JSONObject(syncPrefs.getString(KEY_REMOVED, "{}")!!) }.getOrDefault(JSONObject())
 
-    /** Pull the other devices' state, merge it in, then publish the merged state. */
+    /** Pull the other devices' changes, merge them in, then publish what changed here. */
     suspend fun syncNow(): Result<Summary> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
                 val tree = folder() ?: throw IllegalStateException("Choose a backup folder first")
-                val doc = findOrCreate(tree)
-                val remote = read(doc)
-                val summary = if (remote != null) merge(remote) else Summary(0, 0, 0, 0)
-                write(doc, snapshot())
-                syncPrefs.edit().putLong(KEY_LAST, System.currentTimeMillis()).remove(KEY_ERROR).apply()
-                summary
+                val dir = SyncFolder(tree)
+                var total = Summary(0, 0, 0, 0)
+
+                // One-time upgrade from the old single-file sync.
+                if (!syncPrefs.getBoolean(KEY_LEGACY_DONE, false)) {
+                    dir.legacyFile()?.let { read(it) }?.let { total += merge(it) }
+                    syncPrefs.edit().putBoolean(KEY_LEGACY_DONE, true).apply()
+                }
+
+                // Pull: only novels whose fingerprint differs from what was last seen here.
+                val manifest = dir.file(MANIFEST)?.let { read(it) } ?: JSONObject()
+                val remoteStamps = manifest.optJSONObject("books") ?: JSONObject()
+                val pulled = stamps(KEY_PULLED)
+                val changed = JSONArray()
+                for (id in remoteStamps.keys()) {
+                    val stamp = remoteStamps.getString(id)
+                    if (pulled.optString(id) == stamp) continue
+                    dir.file(bookFileName(id))?.let { read(it) }?.let { changed.put(it) }
+                    pulled.put(id, stamp)
+                }
+                total += merge(
+                    JSONObject().put("books", changed)
+                        .put("bookmarks", manifest.optJSONArray("bookmarks") ?: JSONArray())
+                        .put("removed", manifest.optJSONObject("removed") ?: JSONObject())
+                )
+
+                // Push: rewrite only the novels that differ from the folder's copy.
+                val newStamps = JSONObject()
+                for (b in repository.getAllBooks()) {
+                    val json = bookJson(b).toString()
+                    val stamp = com.example.util.ContentHash.of(json)
+                    newStamps.put(b.id, stamp)
+                    if (remoteStamps.optString(b.id) != stamp) dir.write(bookFileName(b.id), json)
+                    pulled.put(b.id, stamp)
+                }
+                dir.write(
+                    MANIFEST,
+                    JSONObject().put("version", 2).put("savedAt", System.currentTimeMillis())
+                        .put("books", newStamps).put("bookmarks", bookmarksJson()).put("removed", removals())
+                        .toString()
+                )
+                syncPrefs.edit()
+                    .putString(KEY_PULLED, pulled.toString())
+                    .putLong(KEY_LAST, System.currentTimeMillis()).remove(KEY_ERROR).apply()
+                total
             }.onFailure { e ->
                 syncPrefs.edit().putString(KEY_ERROR, e.message ?: e::class.simpleName).apply()
             }
         }
     }
 
+    private operator fun Summary.plus(o: Summary) = Summary(
+        booksAdded + o.booksAdded, positionsUpdated + o.positionsUpdated,
+        chaptersMarkedRead + o.chaptersMarkedRead, removed + o.removed
+    )
+
+    private fun stamps(key: String): JSONObject =
+        runCatching { JSONObject(syncPrefs.getString(key, "{}")!!) }.getOrDefault(JSONObject())
+
     // ---------------- file access ----------------
 
-    private fun findOrCreate(tree: Uri): Uri {
-        val resolver = context.contentResolver
-        val treeId = DocumentsContract.getTreeDocumentId(tree)
-        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId)
-        resolver.query(
-            children,
-            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME),
-            null, null, null
-        )?.use { c ->
-            while (c.moveToNext()) {
-                if (c.getString(1) == FILE_NAME) return DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0))
+    /** The "Inkvault-sync" subfolder; its listing is read once per sync. */
+    private inner class SyncFolder(private val tree: Uri) {
+        private val resolver = context.contentResolver
+        private val rootId = DocumentsContract.getTreeDocumentId(tree)
+        private val dirUri: Uri = childOf(rootId, SUBFOLDER)
+            ?: DocumentsContract.createDocument(
+                resolver, DocumentsContract.buildDocumentUriUsingTree(tree, rootId),
+                DocumentsContract.Document.MIME_TYPE_DIR, SUBFOLDER
+            ) ?: throw java.io.IOException("Could not create the $SUBFOLDER folder")
+        private val files: MutableMap<String, Uri> = list(DocumentsContract.getDocumentId(dirUri))
+
+        private fun list(parentId: String): MutableMap<String, Uri> {
+            val out = HashMap<String, Uri>()
+            resolver.query(
+                DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId),
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null, null, null
+            )?.use { c ->
+                while (c.moveToNext()) out[c.getString(1)] = DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0))
             }
+            return out
         }
-        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, treeId)
-        return DocumentsContract.createDocument(resolver, parent, "application/json", FILE_NAME)
-            ?: throw java.io.IOException("Could not create $FILE_NAME in the folder")
+
+        private fun childOf(parentId: String, name: String): Uri? = list(parentId)[name]
+
+        fun legacyFile(): Uri? = childOf(rootId, LEGACY_FILE_NAME)
+
+        fun file(name: String): Uri? = files[name]
+
+        fun write(name: String, text: String) {
+            val doc = files[name] ?: DocumentsContract.createDocument(resolver, dirUri, "application/json", name)
+                ?.also { files[name] = it }
+                ?: throw java.io.IOException("Could not create $name")
+            resolver.openOutputStream(doc, "wt")?.use { it.write(text.toByteArray()) }
+                ?: throw java.io.IOException("Could not write $name")
+        }
     }
 
     private fun read(doc: Uri): JSONObject? = runCatching {
         context.contentResolver.openInputStream(doc)?.bufferedReader()?.use { it.readText() }
     }.getOrNull()?.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() }
 
-    private fun write(doc: Uri, json: JSONObject) {
-        context.contentResolver.openOutputStream(doc, "wt")?.use { it.write(json.toString().toByteArray()) }
-            ?: throw java.io.IOException("Could not write $FILE_NAME")
-    }
-
     // ---------------- snapshot ----------------
 
-    internal suspend fun snapshot(): JSONObject {
-        val books = JSONArray()
-        for (b in repository.getAllBooks()) {
-            val chapters = JSONArray()
-            for (c in repository.getChapters(b.id)) {
-                if (c.isDeleted) continue
-                chapters.put(
-                    JSONObject()
-                        .put("id", c.id).put("chapterId", c.chapterId).put("n", c.chapterNumber)
-                        .put("title", c.title).put("url", c.url)
-                        .put("read", c.isRead).put("readAt", c.readAt ?: 0L)
-                )
-            }
-            val chapterId = progressPrefs.getString("progress_chapter_${b.id}", null) ?: b.lastReadChapterId
-            books.put(
+    private suspend fun bookJson(b: BookEntity): JSONObject {
+        val chapters = JSONArray()
+        for (c in repository.getChapters(b.id)) {
+            if (c.isDeleted) continue
+            chapters.put(
                 JSONObject()
-                    .put("id", b.id).put("url", b.url).put("title", b.title).put("author", b.author)
-                    .put("synopsis", b.synopsis).put("coverUrl", b.coverUrl ?: "").put("category", b.category)
-                    .put("lastReadChapterId", chapterId ?: "")
-                    .put("lastReadChapterNumber", b.lastReadChapterNumber)
-                    .put("para", chapterId?.let { progressPrefs.getInt("progress_para_${b.id}_$it", 0) } ?: 0)
-                    .put("progressAt", progressAt(b.id))
-                    .put("chapters", chapters)
+                    .put("id", c.id).put("chapterId", c.chapterId).put("n", c.chapterNumber)
+                    .put("title", c.title).put("url", c.url)
+                    .put("read", c.isRead).put("readAt", c.readAt ?: 0L)
             )
         }
+        val chapterId = progressPrefs.getString("progress_chapter_${b.id}", null) ?: b.lastReadChapterId
+        return JSONObject()
+            .put("id", b.id).put("url", b.url).put("title", b.title).put("author", b.author)
+            .put("synopsis", b.synopsis).put("coverUrl", b.coverUrl ?: "").put("category", b.category)
+            .put("lastReadChapterId", chapterId ?: "")
+            .put("lastReadChapterNumber", b.lastReadChapterNumber)
+            .put("para", chapterId?.let { progressPrefs.getInt("progress_para_${b.id}_$it", 0) } ?: 0)
+            .put("progressAt", progressAt(b.id))
+            .put("chapters", chapters)
+    }
+
+    private suspend fun bookmarksJson(): JSONArray {
         val bookmarks = JSONArray()
         for (m in repository.getAllBookmarks()) {
             bookmarks.put(
@@ -143,11 +205,18 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
                     .put("para", m.paragraphIndex).put("text", m.text).put("note", m.note).put("at", m.timestamp)
             )
         }
+        return bookmarks
+    }
+
+    /** Everything in one object (the old single-file format; [merge] reads both). */
+    internal suspend fun snapshot(): JSONObject {
+        val books = JSONArray()
+        for (b in repository.getAllBooks()) books.put(bookJson(b))
         return JSONObject()
             .put("version", 1)
             .put("savedAt", System.currentTimeMillis())
             .put("books", books)
-            .put("bookmarks", bookmarks)
+            .put("bookmarks", bookmarksJson())
             .put("removed", removals())
     }
 
@@ -257,7 +326,14 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
     }
 
     companion object {
-        const val FILE_NAME = "NovelHoarder-sync.json"
+        const val LEGACY_FILE_NAME = "NovelHoarder-sync.json"
+        const val SUBFOLDER = "Inkvault-sync"
+        private const val MANIFEST = "manifest.json"
+        private const val KEY_PULLED = "pulled_stamps"
+        private const val KEY_LEGACY_DONE = "legacy_imported"
+
+        /** Book ids can hold any character, so files are named by a fingerprint of the id. */
+        fun bookFileName(id: String) = "book_" + com.example.util.ContentHash.of(id) + ".json"
         private const val KEY_ENABLED = "enabled"
         private const val KEY_LAST = "last_sync"
         private const val KEY_ERROR = "last_error"
