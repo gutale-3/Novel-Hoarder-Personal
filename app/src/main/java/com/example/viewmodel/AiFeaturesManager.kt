@@ -429,7 +429,7 @@ class AiFeaturesManager(
                         }
                     }
                 } finally {
-                    withContext(Dispatchers.Main) {
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                         com.example.util.WebViewFactory.destroySafely(webView)
                     }
                 }

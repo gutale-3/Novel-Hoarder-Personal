@@ -316,12 +316,11 @@ class ScrapingManager(
                         addLog("[WATCHDOG] Scraper progress stalled in limbo for ${elapsed / 1000}s (>180s)! Triggering automatic stop-clear-restart cycle...")
                         lastProgressTimestamp = System.currentTimeMillis()
                         
-                        withContext(Dispatchers.Main) {
+                        // In its own job: stopScraping() cancels this watchdog, which would
+                        // otherwise kill the restart before it happens.
+                        coroutineScope.launch(Dispatchers.Main) {
                             stopScraping()
-                        }
-                        delay(2000L)
-                        
-                        withContext(Dispatchers.Main) {
+                            delay(2000L)
                             clearLogs()
                             addLog("[WATCHDOG] Auto-restarting scraper session from last saved state...")
                             continueScraping()
@@ -426,7 +425,7 @@ class ScrapingManager(
                 e.printStackTrace()
             } finally {
                 markSessionEnded()
-                withContext(Dispatchers.Main) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                     isScraping = false
                     isScrapePaused = false
                     shouldSkipCurrentChapter = false
@@ -581,7 +580,7 @@ class ScrapingManager(
                     missingChaptersSummary = "Error during search: ${e.message}"
                 }
             } finally {
-                withContext(Dispatchers.Main) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                     com.example.util.WebViewFactory.destroySafely(webView)
                 }
             }
@@ -630,7 +629,7 @@ class ScrapingManager(
                         }
                     }
                 } finally {
-                    withContext(Dispatchers.Main) {
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                         com.example.util.WebViewFactory.destroySafely(webView)
                     }
                 }
@@ -773,7 +772,7 @@ class ScrapingManager(
                 e.printStackTrace()
             } finally {
                 markSessionEnded()
-                withContext(Dispatchers.Main) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                     isScraping = false
                     isScrapePaused = false
                     shouldSkipCurrentChapter = false
@@ -815,7 +814,8 @@ class ScrapingManager(
         markSessionActive(url, scrapeBookName.trim())
         scrapeJob = coroutineScope.launch(Dispatchers.IO) {
             try {
-                val existingChapters = repository.getChapters(bookId)
+                // Empty placeholders (from a table-of-contents refresh or update check) don't count.
+                val existingChapters = repository.getChapters(bookId).filter { it.content.isNotBlank() }
                 val maxChapterNum = existingChapters.maxOfOrNull { it.chapterNumber } ?: 0
                 addLog("Last downloaded chapter number: $maxChapterNum")
                 
@@ -835,7 +835,7 @@ class ScrapingManager(
                 e.printStackTrace()
             } finally {
                 markSessionEnded()
-                withContext(Dispatchers.Main) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                     isScraping = false
                     isScrapePaused = false
                     shouldSkipCurrentChapter = false
@@ -1121,8 +1121,13 @@ class ScrapingManager(
                         val alt = runCatching {
                             sourceFallback.fetchChapter(currentBookState, absoluteChapterNum, altWebView)
                         }.getOrNull()
-                        if (alt != null) {
-                            var body = cleanScrapedBody(scraper, alt.second, aggressiveClean)
+                        // Backup text gets the generic cleaner (Tomato's would cut real lines), and a
+                        // security page there must not end the whole download.
+                        val altBody = alt?.let {
+                            runCatching { cleanScrapedBody(com.example.util.GenericScraper, it.second, aggressiveClean) }.getOrNull()
+                        }?.takeIf { it.isNotBlank() }
+                        if (alt != null && altBody != null) {
+                            var body = altBody
                             if (glossaries.isNotEmpty()) body = repository.applyGlossary(body, glossaries)
                             repository.insertChapter(
                                 ChapterEntity(
@@ -1143,7 +1148,7 @@ class ScrapingManager(
                             addLog("No backup site could provide chapter $absoluteChapterNum.")
                         }
                     } finally {
-                        withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(altWebView) }
+                        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(altWebView) }
                     }
                 }
 
@@ -1231,7 +1236,7 @@ class ScrapingManager(
             scrapingStatus = "● Finished"
             addLog("Scrape Session completed! Successfully processed all targeted chapters.")
         } finally {
-            withContext(Dispatchers.Main) {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                 com.example.util.WebViewFactory.destroySafely(webView)
             }
         }
@@ -1310,7 +1315,9 @@ class ScrapingManager(
                     alt.first to alt.second
                 }
                 var title = rawContent.first
-                var cleanedBody = cleanScrapedBody(scraper, rawContent.second, aggressiveClean)
+                var cleanedBody = cleanScrapedBody(
+                    if (usedBackup) com.example.util.GenericScraper else scraper, rawContent.second, aggressiveClean
+                )
 
                 val glossaries = repository.getGlossary(chapter.bookId)
                 com.example.data.scraper.RawTranslation.localize(
@@ -1335,7 +1342,7 @@ class ScrapingManager(
                 repository.insertChapter(updatedChapter)
                 if (!usedBackup) quota.record(sourceKey)
             } finally {
-                withContext(Dispatchers.Main) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                     try { webView.destroy() } catch (_: Exception) {}
                 }
             }
@@ -1389,12 +1396,19 @@ class ScrapingManager(
                         scraper.scrapeChapterList(webView, book.url)
                     } ?: emptyList()
                 } finally {
-                    withContext(Dispatchers.Main) {
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                         try { webView.destroy() } catch (_: Exception) {}
                     }
                 }
 
-                val existingChapters = repository.getChapters(bookId).associateBy { it.url }
+                if (chapterUrls.isEmpty()) {
+                    throw java.io.IOException("the site returned no chapters (try again, or open it in the browser)")
+                }
+                // Hidden and trashed chapters count as existing; match by id too, since a site
+                // can change domain while chapter ids stay the same.
+                val known = repository.getAllChaptersIncludingHidden(bookId)
+                val existingChapters = known.associateBy { it.url }
+                val existingIds = known.map { it.id }.toHashSet()
                 var newCount = 0
                 val chapterEntities = mutableListOf<ChapterEntity>()
 
@@ -1403,8 +1417,8 @@ class ScrapingManager(
                     val chapId = scraper.parseChapterId(chapterUrl) ?: "ch_$chapNum"
                     val fullChapId = "${bookId}_$chapId"
                     val existing = existingChapters[chapterUrl]
-                    if (existing != null) {
-                        chapterEntities.add(existing)
+                    if (existing != null || fullChapId in existingIds) {
+                        // Left untouched: re-writing it could overwrite text downloaded meanwhile.
                     } else {
                         newCount++
                         chapterEntities.add(
@@ -1422,15 +1436,16 @@ class ScrapingManager(
                     }
                 }
 
-                repository.insertChapters(chapterEntities)
-                val updatedBook = book.copy(
-                    totalChapters = chapterEntities.size,
+                if (chapterEntities.isNotEmpty()) repository.insertChapters(chapterEntities)
+                val total = repository.getChapters(bookId).size
+                val updatedBook = (repository.getBook(bookId) ?: book).copy(
+                    totalChapters = total,
                     updatedAt = System.currentTimeMillis()
                 )
                 repository.updateBook(updatedBook)
 
                 withContext(Dispatchers.Main) {
-                    onComplete?.invoke(true, "Table of contents updated! Found $newCount new chapter(s). Total: ${chapterEntities.size}")
+                    onComplete?.invoke(true, "Table of contents updated! Found $newCount new chapter(s). Total: $total")
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -1492,9 +1507,9 @@ class ScrapingManager(
             val result = try {
                 runCatching { refetchChapter(chapter, webView) }
             } finally {
-                withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
             }
-            withContext(Dispatchers.Main) {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                 rescrapingChapterId = null
                 result.fold(
                     onSuccess = { onComplete(true, "Successfully rescraped chapter: $it") },
@@ -1524,10 +1539,10 @@ class ScrapingManager(
                 } catch (e: Exception) {
                     e.printStackTrace()
                 } finally {
-                    withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
                 }
             }
-            withContext(Dispatchers.Main) {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                 rescrapingChapterId = null
                 onComplete(true, "Rescraped $successCount of ${chapters.size} chapters.")
             }
@@ -1579,10 +1594,10 @@ class ScrapingManager(
                         delay(1500)
                     }
                 } finally {
-                    withContext(Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { com.example.util.WebViewFactory.destroySafely(webView) }
                 }
 
-                withContext(Dispatchers.Main) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                     isRescrapingBookId = null
                     onComplete(true, "Completed! Successfully rescraped $successCount out of ${corrupted.size} corrupted chapters.")
                 }

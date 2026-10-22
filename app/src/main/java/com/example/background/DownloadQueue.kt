@@ -106,6 +106,12 @@ class DownloadQueueWorker(context: Context, params: WorkerParameters) : Coroutin
         val blockedSites = HashSet<String>()
         var downloaded = 0
         var index = 0
+        // The foreground download fetches in order too; running both doubles the site's load.
+        if (scraping.isScraping) return Result.success()
+        // A chapter that keeps failing (removed from the site, broken page) is set aside after
+        // three tries so it can't block the rest of the novel forever.
+        val failPrefs = applicationContext.getSharedPreferences("download_queue_fails", Context.MODE_PRIVATE)
+        fun fails(id: String) = failPrefs.getInt(id, 0)
 
         while (System.currentTimeMillis() < deadline) {
             val active = queue.books.value.filter { id ->
@@ -119,15 +125,21 @@ class DownloadQueueWorker(context: Context, params: WorkerParameters) : Coroutin
                 val book = repository.getBook(bookId) ?: continue
                 val key = SourceKeys.keyFor(book.url)
                 if (key in blockedSites) continue
-                val pending = repository.getPendingVisibleChapters(bookId, PER_TURN)
-                if (pending.isEmpty()) { queue.remove(bookId); continue } // finished
+                val pending = repository.getPendingVisibleChapters(bookId, 500)
+                    .filter { fails(it.id) < MAX_FAILS }.take(PER_TURN)
+                if (pending.isEmpty()) { queue.remove(bookId); continue } // finished (or only failures left)
                 for (ch in pending) {
+                    if (isStopped || scraping.isScraping) break
                     if (quota.remaining(key) <= 0) { blockedSites += key; break }
                     val r = scraping.downloadSingleChapter(ch)
                     if (r.isSuccess) {
                         downloaded++; progressThisRound = true
+                        failPrefs.edit().remove(ch.id).apply()
                     } else if (r.exceptionOrNull() is CloudflareException) {
                         blockedSites += key; break // needs the user; other sites carry on
+                    } else {
+                        failPrefs.edit().putInt(ch.id, fails(ch.id) + 1).apply()
+                        progressThisRound = true // the next try moves past it
                     }
                     delay(HumanPacing.nextDelayMs(applicationContext, key, baseDelay, ++index))
                 }
@@ -142,5 +154,8 @@ class DownloadQueueWorker(context: Context, params: WorkerParameters) : Coroutin
         return Result.success()
     }
 
-    private companion object { const val PER_TURN = 5 }
+    private companion object {
+        const val PER_TURN = 5
+        const val MAX_FAILS = 3
+    }
 }

@@ -379,12 +379,18 @@ object TomatoScraper : NovelSource {
             throw IOException("Failed to scrape chapter text content")
         }
 
+        if (shouldSkip()) throw IOException("Chapter skipped")
         val json = JSONObject(jsonStr)
         val title = json.optString("title", "Chapter").trim()
         val body = json.optString("body", "").trim()
 
         if (body.isEmpty()) {
             throw IOException("No chapter text content found on page")
+        }
+        // Text still loading (placeholders left) when the wait ran out: saving it would keep a
+        // half chapter forever, since a saved chapter is never fetched again.
+        if (!json.optBoolean("ready", false)) {
+            throw IOException("Chapter text was still loading")
         }
 
         val bodyLower = body.lowercase()

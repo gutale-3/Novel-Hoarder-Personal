@@ -48,14 +48,22 @@ class ScrapeService : Service() {
                 putExtra(EXTRA_CURRENT_CHAPTER, currentChapter)
                 putExtra(EXTRA_STATUS, status)
             }
-            context.startService(intent)
+            // Throws when the app is in the background and the service isn't running.
+            try { context.startService(intent) } catch (_: Exception) {}
         }
 
         fun stop(context: Context) {
             val intent = Intent(context, ScrapeService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            try {
+                context.startService(intent)
+            } catch (_: Exception) {
+                // Not running (or not allowed to start): just make sure no progress card is left.
+                runCatching {
+                    (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIFICATION_ID)
+                }
+            }
         }
     }
 
@@ -110,6 +118,7 @@ class ScrapeService : Service() {
             }
             ACTION_STOP -> {
                 stopForeground(true)
+                notificationManager.cancel(NOTIFICATION_ID)
                 stopSelf()
             }
         }
@@ -147,6 +156,22 @@ class ScrapeService : Service() {
         }
 
         return builder.build()
+    }
+
+    /**
+     * Android 15+ allows a data-sync service about 6 hours a day; past that the app is killed
+     * unless the service stops. The download itself keeps going while the app is open.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        notificationManager.cancel(NOTIFICATION_ID)
+        stopSelf()
+    }
+
+    @Deprecated("Pre-Android 15 signature")
+    override fun onTimeout(startId: Int) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

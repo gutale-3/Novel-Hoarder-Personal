@@ -649,7 +649,7 @@ fun PluginManagementScreen(
                                                 diagnosticOutput += "\n[DIAGNOSTIC ERROR] ${e::class.simpleName}: ${e.message}\n"
                                             }
                                         } finally {
-                                            withContext(Dispatchers.Main) {
+                                            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                                                 try {
                                                     testWebView?.stopLoading()
                                                     testWebView?.destroy()

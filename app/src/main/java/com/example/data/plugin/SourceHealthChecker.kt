@@ -98,7 +98,7 @@ class SourceHealthChecker(
         } catch (e: Exception) {
             Result(plugin.id, Status.BROKEN, stage, e.message ?: e::class.simpleName.orEmpty(), url)
         } finally {
-            withContext(Dispatchers.Main) { WebViewFactory.destroySafely(webView) }
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { WebViewFactory.destroySafely(webView) }
         }
         save(result)
         return result

@@ -175,7 +175,9 @@ class ChapterUpdateWorker(
                     }
 
                     var downloaded = 0
-                    if (newCount > 0 && quota.isAutoDownloadEnabled(book.id, book.url)) {
+                    val foregroundBusy = com.example.NovelHoarderApp
+                        .getContainer(context.applicationContext as android.app.Application).scraping.isScraping
+                    if (newCount > 0 && !foregroundBusy && quota.isAutoDownloadEnabled(book.id, book.url)) {
                         downloaded = autoDownload(book, scraper, chapterUrls.takeLast(newCount), nextChapterStart, deadline)
                     }
                     val stillNew = (newCount - downloaded).coerceAtLeast(0)

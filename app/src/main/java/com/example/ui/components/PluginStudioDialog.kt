@@ -413,7 +413,7 @@ fun PluginStudioDialog(
                                             testLogs += "\n❌ TEST FAILED: ${e::class.simpleName}: ${e.message}\n"
                                         }
                                     } finally {
-                                        withContext(Dispatchers.Main) {
+                                        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
                                             try {
                                                 testWebView?.stopLoading()
                                                 testWebView?.destroy()

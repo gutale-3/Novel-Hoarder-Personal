@@ -127,7 +127,8 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
                 ?: buildPaginatedTocScript()
 
             // A custom script may fetch many pages itself, so allow far longer than a DOM read needs.
-            val timeoutMs = if (config.customTocJs.isNullOrBlank()) 30_000L else 120_000L
+            // Paginated lists fetch up to tocMaxPages pages, which can take well over 30 s.
+            val timeoutMs = if (config.customTocJs.isNullOrBlank() && config.tocPaginationMode == "none") 30_000L else 120_000L
             var jsonResult: String? = null
             val startTime = System.currentTimeMillis()
 
