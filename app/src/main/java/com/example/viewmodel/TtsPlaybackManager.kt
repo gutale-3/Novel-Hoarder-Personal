@@ -107,8 +107,12 @@ class TtsPlaybackManager(
     var sleepTimerRemainingSeconds by mutableStateOf<Int?>(
         if (prefs.getInt("tts_sleep_timer_minutes", 0) > 0) prefs.getInt("tts_sleep_timer_minutes", 0) * 60 else null
     )
-    var sleepTimerAutoRestart by mutableStateOf(prefs.getBoolean("tts_sleep_timer_auto_restart", true))
-        private set
+    /**
+     * The timer always sticks: once chosen it stays until turned Off, and every play after a
+     * pause, stop or the timer running out starts the full duration again. (An old "auto-restart"
+     * switch could be off, which made the timer switch itself off after it fired once.)
+     */
+    val sleepTimerAutoRestart: Boolean = true
     var sleepTimerFadeOutEnabled by mutableStateOf(prefs.getBoolean("tts_sleep_timer_fade_out", true))
         private set
     private var sleepTimerJob: Job? = null
@@ -453,10 +457,8 @@ class TtsPlaybackManager(
         } catch (ignored: Exception) {}
     }
 
-    fun updateSleepTimerAutoRestart(enabled: Boolean) {
-        sleepTimerAutoRestart = enabled
-        prefs.edit().putBoolean("tts_sleep_timer_auto_restart", enabled).apply()
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun updateSleepTimerAutoRestart(enabled: Boolean) = Unit
 
     fun startSleepTimer(minutes: Int) {
         sleepTimerJob?.cancel()
@@ -576,14 +578,8 @@ class TtsPlaybackManager(
             applyTtsVolume(1.0f)
         }
 
-        if (sleepTimerAutoRestart) {
-            // Keep configured duration active and reset countdown for when playback resumes
-            sleepTimerRemainingSeconds = sleepTimerMinutes * 60
-        } else {
-            sleepTimerMinutes = 0
-            sleepTimerRemainingSeconds = null
-            prefs.edit().putInt("tts_sleep_timer_minutes", 0).apply()
-        }
+        // Keep the chosen duration; the next play starts it again from the full length.
+        sleepTimerRemainingSeconds = sleepTimerMinutes * 60
     }
 
     fun initMediaSession() {
@@ -1290,10 +1286,6 @@ class TtsPlaybackManager(
                             if (sleepTimerMinutes == -1) {
                                 addLog("End of chapter reached for sleep timer. Pausing playback.")
                                 pauseTts()
-                                if (!sleepTimerAutoRestart) {
-                                    sleepTimerMinutes = 0
-                                    prefs.edit().putInt("tts_sleep_timer_minutes", 0).apply()
-                                }
                             } else {
                                 playNextChapterTts()
                             }
@@ -1425,10 +1417,6 @@ class TtsPlaybackManager(
                                         if (sleepTimerMinutes == -1) {
                                             addLog("End of chapter reached for sleep timer. Pausing playback.")
                                             pauseTts()
-                                            if (!sleepTimerAutoRestart) {
-                                                sleepTimerMinutes = 0
-                                                prefs.edit().putInt("tts_sleep_timer_minutes", 0).apply()
-                                            }
                                         } else {
                                             playNextChapterTts()
                                         }

@@ -246,6 +246,8 @@ class LibraryManager(
     fun emptyTrash() {
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                // Each trashed novel's own folder (downloaded images etc.) goes too.
+                repository.getDeletedBooks().forEach { File(application.applicationContext.filesDir, it.id).deleteRecursively() }
                 repository.emptyTrash()
                 scrapingManager.addLog("Emptied trash permanently")
             } catch (e: Exception) {

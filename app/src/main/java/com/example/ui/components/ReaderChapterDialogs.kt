@@ -557,7 +557,7 @@ fun ParagraphBookmarkActionDialog(
                                 scope.launch {
                                     if (activeChapter != null) {
                                         val lines = activeChapter.content.split("\n")
-                                        val indexInLines = lines.indexOfFirst { it.trim() == paragraphText.trim() }
+                                        val indexInLines = locateParagraphLine(lines, paragraphText, paragraphIndex)
                                         if (indexInLines != -1) {
                                             // Save snapshot into revision history before truncating
                                             viewModel.repository.saveChapterHistorySnapshot(
@@ -607,7 +607,7 @@ fun ParagraphBookmarkActionDialog(
                                 scope.launch {
                                     if (activeChapter != null) {
                                         val lines = activeChapter.content.split("\n")
-                                        val indexInLines = lines.indexOfFirst { it.trim() == paragraphText.trim() }
+                                        val indexInLines = locateParagraphLine(lines, paragraphText, paragraphIndex)
                                         if (indexInLines != -1) {
                                             // Save snapshot into revision history before truncating
                                             viewModel.repository.saveChapterHistorySnapshot(
@@ -777,4 +777,26 @@ fun ParagraphBookmarkActionDialog(
             }
         }
     )
+}
+
+/**
+ * The line of [lines] that the tapped paragraph came from. Repeated lines ("***", "…") match
+ * several places, so the copy nearest the paragraph's position wins instead of the first one.
+ * -1 when the text isn't found as-is (e.g. a text-replacement rule changed what is shown).
+ */
+internal fun locateParagraphLine(lines: List<String>, paragraphText: String, paragraphIndex: Int): Int {
+    val target = paragraphText.trim()
+    if (target.isEmpty()) return -1
+    var visible = -1
+    var best = -1
+    var bestDistance = Int.MAX_VALUE
+    lines.forEachIndexed { i, line ->
+        if (line.isBlank()) return@forEachIndexed
+        visible++
+        if (line.trim() == target) {
+            val d = kotlin.math.abs(visible - paragraphIndex)
+            if (d < bestDistance) { bestDistance = d; best = i }
+        }
+    }
+    return best
 }

@@ -144,8 +144,9 @@ class NovelRepository(private val bookDao: BookDao) {
     suspend fun deleteChapters(ids: List<String>) = bookDao.deleteChaptersByIds(ids)
 
     // Trash management
+    /** Also removes trashed novels' bookmarks, recaps, glossaries and polished copies. */
     suspend fun emptyTrash() {
-        bookDao.permanentlyDeleteAllDeletedBooks()
+        for (book in bookDao.getDeletedBooks()) bookDao.deleteBookFully(book.id)
         bookDao.permanentlyDeleteAllDeletedChapters()
     }
 

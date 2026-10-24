@@ -1069,7 +1069,7 @@ fun TtsPlayerBar(
                                 if (viewModel.sleepTimerMinutes > 0) {
                                     val mins = viewModel.sleepTimerMinutes
                                     Text(
-                                        text = if (viewModel.sleepTimerAutoRestart) "$mins min (Auto-Restart)" else "$mins min",
+                                        text = "$mins min · restarts each play",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = FontWeight.SemiBold
@@ -1089,32 +1089,6 @@ fun TtsPlayerBar(
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
-                            }
-
-                            // Auto-Restart / Sticky Timer Toggle
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Auto-Restart on Play / Pause",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                                    )
-                                    Text(
-                                        text = "Restarts full timer duration whenever playback is paused or played until turned Off",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = viewModel.sleepTimerAutoRestart,
-                                    onCheckedChange = { viewModel.sleepTimerAutoRestart = it }
-                                )
                             }
 
                             // Smooth Audio Fade-Out Toggle

@@ -257,7 +257,8 @@ object EpubImporter {
                 }
                 
                 val bookTitle = fallbackFilenameTitle.ifEmpty { "Imported Zip" }
-                val bookId = "epub_${bookTitle.hashCode()}"
+                // Unique per import: two files with the same name used to overwrite each other.
+                val bookId = "epub_${bookTitle.hashCode()}_${System.currentTimeMillis()}"
                 val book = BookEntity(
                     id = bookId,
                     url = "local://$bookId",

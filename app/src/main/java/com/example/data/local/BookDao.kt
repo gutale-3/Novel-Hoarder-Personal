@@ -51,11 +51,20 @@ interface BookDao {
     @Query("UPDATE chapters SET isDeleted = 1 WHERE bookId = :bookId")
     suspend fun softDeleteChaptersByBookId(bookId: String)
 
+    /**
+     * Trashing a novel leaves its chapters' own Trash flags alone, so restoring it doesn't also
+     * bring back chapters that were deleted on their own earlier.
+     */
     @Transaction
     suspend fun softDeleteBookFully(bookId: String) {
         softDeleteBookById(bookId)
-        softDeleteChaptersByBookId(bookId)
     }
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId")
+    suspend fun countAllChapters(bookId: String): Int
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId AND isDeleted = 0")
+    suspend fun countLiveChapters(bookId: String): Int
 
     @Query("UPDATE books SET isDeleted = 0 WHERE id = :id")
     suspend fun restoreBookById(id: String)
@@ -66,7 +75,8 @@ interface BookDao {
     @Transaction
     suspend fun restoreBookFully(bookId: String) {
         restoreBookById(bookId)
-        restoreChaptersByBookId(bookId)
+        // Novels trashed by older versions had every chapter flagged too; only then undo that.
+        if (countAllChapters(bookId) > 0 && countLiveChapters(bookId) == 0) restoreChaptersByBookId(bookId)
     }
 
     @Query("DELETE FROM books WHERE id = :id")
