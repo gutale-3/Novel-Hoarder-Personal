@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -321,19 +322,24 @@ class MainActivity : ComponentActivity() {
                         val isTtsActive = viewModel.ttsPlayingBook != null && viewModel.ttsPlayingChapter != null
                         val hasResumeSession = viewModel.hasResumableSession && viewModel.ttsPlayingBook == null
 
-                        val ttsBottomPadding = when {
-                            isTtsActive && !viewModel.isTtsPlayerBarMinimized -> 165.dp
-                            isTtsActive && viewModel.isTtsPlayerBarMinimized -> 72.dp
-                            hasResumeSession -> 72.dp
-                            else -> 0.dp
-                        }
+                        // The player floats over the page; lists on these screens scroll underneath
+                        // it and add its height as bottom padding. Other screens stop above it.
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        var overlayHeightPx by remember { mutableIntStateOf(0) }
+                        val showResumePill = currentRoute == "home"
+                        val overlayVisible = isTtsActive || (hasResumeSession && showResumePill)
+                        val overlayHeight = if (overlayVisible) with(density) { overlayHeightPx.toDp() } else 0.dp
+                        val floatsOverContent = currentRoute in setOf("home", "library", "updates") || currentRoute.startsWith("reader")
 
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            com.example.ui.components.LocalPlayerOverlayPadding provides overlayHeight
+                        ) {
                         NavHost(
                             navController = navController,
                             startDestination = "home",
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(bottom = ttsBottomPadding)
+                                .padding(bottom = if (floatsOverContent) 0.dp else overlayHeight)
                         ) {
                             composable("home") {
                                 HomeScreen(
@@ -430,15 +436,18 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
+                        } // CompositionLocalProvider
+
                         TtsPlayerBar(
                             viewModel = viewModel,
+                            showResume = showResumePill,
                             onNavigateToReader = { bookId, chapterId, paraIndex ->
                                 viewModel.progress.setActiveReaderSession(bookId, chapterId, paraIndex)
                                 openReader("reader/$bookId?chapterId=$chapterId&paraIndex=$paraIndex")
                             },
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 8.dp)
+                                .then(androidx.compose.ui.Modifier.onSizeChanged { overlayHeightPx = it.height })
                         )
                     }
                 }

@@ -874,7 +874,7 @@ fun LibraryScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp + com.example.ui.components.LocalPlayerOverlayPadding.current)
                 ) {
             if (filteredAndSortedBooks.isEmpty()) {
                 item {

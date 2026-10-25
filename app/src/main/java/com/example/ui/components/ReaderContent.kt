@@ -352,7 +352,7 @@ fun ReaderContent(
                         .align(Alignment.TopCenter)
                         .padding(horizontal = viewModel.readerMargin.dp),
                     verticalArrangement = Arrangement.spacedBy(viewModel.settings.readerParagraphSpacing.dp),
-                    contentPadding = PaddingValues(top = 20.dp, bottom = 100.dp)
+                    contentPadding = PaddingValues(top = 20.dp, bottom = 100.dp + com.example.ui.components.LocalPlayerOverlayPadding.current)
                 ) {
                     // Title, Reading Time Estimate & Milestone Tags
                     item {

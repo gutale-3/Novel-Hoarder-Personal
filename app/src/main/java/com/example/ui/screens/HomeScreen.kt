@@ -54,7 +54,7 @@ fun HomeScreen(
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
+        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp + com.example.ui.components.LocalPlayerOverlayPadding.current)
     ) {
         item {
             com.example.ui.components.InterruptedDownloadCard(viewModel.scraping, onResumed = onNavigateToScrape)

@@ -256,7 +256,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         container.aiFeatures.aggressiveCleanProvider = { container.scraping.aggressiveClean }
         container.library.scheduleChapterUpdatesCheck()
-        container.tts.onSpeakStarted = { isTtsPlayerBarMinimized = false }
+        // The player stays the size the user left it (small by default) instead of
+        // jumping open over the page each time playback starts.
     }
 
     // --- Stats state (Optimized Reactive Flows) ---
@@ -287,7 +288,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun purgeReadChaptersContent() = com.example.util.StorageMaintenanceManager.purgeReadChaptersContent(repository)
 
     // --- TTS Minimize State ---
-    var isTtsPlayerBarMinimized by mutableStateOf(false)
+    var isTtsPlayerBarMinimized by mutableStateOf(true)
 
     // --- Text To Speech (TTS) System ---
     var isTtsReady: Boolean

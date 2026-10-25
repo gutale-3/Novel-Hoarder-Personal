@@ -44,61 +44,48 @@ import java.io.File
 fun TtsPlayerBar(
     viewModel: MainViewModel,
     onNavigateToReader: (String, String, Int) -> Unit = { _, _, _ -> },
+    showResume: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val playingBook = viewModel.ttsPlayingBook
     val playingChapter = viewModel.ttsPlayingChapter
 
     if (playingBook == null || playingChapter == null) {
-        if (viewModel.hasResumableSession) {
-            Card(
+        // "Continue listening" only where it helps (Home), as a slim pill.
+        if (viewModel.hasResumableSession && showResume) {
+            Surface(
                 modifier = modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .testTag("tts_resume_bar"),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                ),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.95f),
+                shadowElevation = 4.dp
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { viewModel.progress.resumeLastSession() }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        .padding(start = 8.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Resume Playback",
+                        Icons.Default.PlayArrow, contentDescription = "Resume listening",
                         tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.padding(8.dp).size(24.dp)
                     )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Continue listening",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        Text(
-                            text = "${viewModel.resumeBookName} • ${viewModel.resumeChapterTitle}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    IconButton(
-                        onClick = { viewModel.progress.clearTtsProgress(); viewModel.progress.loadResumableTtsSession() },
-                        modifier = Modifier.size(48.dp)
-                    ) {
+                    Text(
+                        text = "Continue: ${viewModel.resumeBookName}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { viewModel.progress.clearTtsProgress(); viewModel.progress.loadResumableTtsSession() }) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Dismiss Resume Bar",
+                            Icons.Default.Close, contentDescription = "Dismiss",
                             tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f),
                             modifier = Modifier.size(18.dp)
                         )
@@ -110,442 +97,222 @@ fun TtsPlayerBar(
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
+    val activePara = viewModel.ttsActiveParagraphIndex ?: -1
+    val totalParas = viewModel.ttsTotalParagraphs
+    val fraction = if (totalParas <= 1 || activePara < 0) 0f else (activePara.toFloat() / (totalParas - 1)).coerceIn(0f, 1f)
+    val sleepLabel: String? = run {
+        val secs = viewModel.sleepTimerRemainingSeconds
+        when {
+            secs != null && secs > 0 && viewModel.ttsIsPlaying -> "%d:%02d".format(secs / 60, secs % 60)
+            secs != null && secs > 0 -> "${secs / 60}m"
+            viewModel.sleepTimerMinutes == -1 -> "End of ch."
+            else -> null
+        }
+    }
+    val openReader = { onNavigateToReader(playingBook.id, playingChapter.id, viewModel.ttsActiveParagraphIndex ?: 0) }
+    val playPause = { if (viewModel.ttsIsPlaying) viewModel.tts.pauseTts() else viewModel.tts.resumeTts() }
 
+    @Composable
+    fun Cover(size: androidx.compose.ui.unit.Dp) {
+        val coverBitmap = remember(playingBook.coverLocalPath) {
+            playingBook.coverLocalPath?.takeIf { it.isNotEmpty() }?.let { File(it) }?.takeIf { it.exists() }
+                ?.let { runCatching { BitmapFactory.decodeFile(it.absolutePath) }.getOrNull() }
+        }
+        if (coverBitmap != null) {
+            Image(
+                bitmap = coverBitmap.asImageBitmap(), contentDescription = null,
+                modifier = Modifier.size(size).clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                Modifier.size(size).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) { Icon(Icons.Default.Headphones, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(size / 2)) }
+        }
+    }
+
+    // Mini player: one slim, slightly see-through row; the page keeps scrolling underneath.
     if (viewModel.isTtsPlayerBarMinimized) {
-        Card(
+        Surface(
             modifier = modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp)
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .clickable {
-                    onNavigateToReader(playingBook.id, playingChapter.id, viewModel.ttsActiveParagraphIndex ?: 0)
-                }
                 .testTag("tts_player_bar_minimized"),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
-            ),
-            shape = RoundedCornerShape(24.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp).copy(alpha = 0.92f),
+            shadowElevation = 6.dp
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                IconButton(
-                    onClick = { viewModel.isTtsPlayerBarMinimized = false },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.UnfoldMore,
-                        contentDescription = "Expand Player Controls",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                Text(
-                    text = "${playingBook.title} - ${playingChapter.title}",
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+            Column {
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    trackColor = Color.Transparent
                 )
-
-                if (viewModel.isPreparingVoice) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                } else {
-                    IconButton(
-                        onClick = {
-                            if (viewModel.ttsIsPlaying) {
-                                viewModel.tts.pauseTts()
-                            } else {
-                                viewModel.tts.resumeTts()
-                            }
-                        },
-                        modifier = Modifier.size(48.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 2.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.clickable(onClick = openReader)) { Cover(40.dp) }
+                    Column(
+                        Modifier.weight(1f).padding(horizontal = 10.dp).clickable { viewModel.isTtsPlayerBarMinimized = false }
                     ) {
-                        Icon(
-                            imageVector = if (viewModel.ttsIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (viewModel.ttsIsPlaying) "Pause Playback" else "Resume Playback",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
+                        Text(
+                            playingChapter.title, style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            listOfNotNull(playingBook.title, sleepLabel?.let { "⏾ $it" }).joinToString("  ·  "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
                     }
-                }
-
-                IconButton(
-                    onClick = { viewModel.tts.stopTts() },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Stop Playback",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    if (viewModel.isPreparingVoice) {
+                        CircularProgressIndicator(Modifier.padding(12.dp).size(24.dp), strokeWidth = 2.dp)
+                    } else {
+                        IconButton(onClick = playPause) {
+                            Icon(
+                                if (viewModel.ttsIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (viewModel.ttsIsPlaying) "Pause" else "Play",
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+                    IconButton(onClick = { viewModel.tts.playNextChapterTts() }) {
+                        Icon(Icons.Default.SkipNext, contentDescription = "Next chapter")
+                    }
+                    IconButton(onClick = { viewModel.isTtsPlayerBarMinimized = false }) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Show all controls")
+                    }
                 }
             }
         }
         return
     }
 
-    Card(
+    // Full controls
+    Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .testTag("tts_player_bar"),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
-        ),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp).copy(alpha = 0.97f),
+        shadowElevation = 8.dp
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // First Row: Cover, Book Title, Chapter Title, Voice In Use
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Book Cover
-                val coverFile = remember(playingBook.coverLocalPath) {
-                    if (!playingBook.coverLocalPath.isNullOrEmpty()) File(playingBook.coverLocalPath) else null
-                }
-                val coverBitmap = remember(coverFile) {
-                    if (coverFile != null && coverFile.exists()) {
-                        runCatching { BitmapFactory.decodeFile(coverFile.absolutePath) }.getOrNull()
-                    } else null
-                }
-
-                if (coverBitmap != null) {
-                    Image(
-                        bitmap = coverBitmap.asImageBitmap(),
-                        contentDescription = "Book Cover",
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.primary,
-                                        MaterialTheme.colorScheme.tertiary
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VolumeUp,
-                            contentDescription = "Playing Audio",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-
-                // Info text
-                val selectedVoiceName = remember(viewModel.selectedVoiceId, viewModel.ttsVoices) {
-                    viewModel.ttsVoices.find { it.id == viewModel.selectedVoiceId }?.name
-                        ?.replace("Piper - ", "")?.replace("Kokoro - ", "") ?: "Default Voice"
-                }
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable {
-                            onNavigateToReader(playingBook.id, playingChapter.id, viewModel.ttsActiveParagraphIndex ?: 0)
-                        },
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.clickable(onClick = openReader)) { Cover(44.dp) }
+                Column(Modifier.weight(1f).padding(horizontal = 10.dp).clickable(onClick = openReader)) {
                     Text(
-                        text = playingBook.title,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        playingChapter.title, style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = playingChapter.title,
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "Voice: $selectedVoiceName",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                            fontSize = 11.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        playingBook.title, style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
-
-                // Minimize and stop buttons
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    IconButton(
-                        onClick = { viewModel.isTtsPlayerBarMinimized = true },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.UnfoldLess,
-                            contentDescription = "Minimize Player Controls",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = { viewModel.tts.stopTts() },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Stop Playback",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                IconButton(onClick = { viewModel.isTtsPlayerBarMinimized = true }) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Make smaller")
+                }
+                IconButton(onClick = { viewModel.tts.stopTts() }) {
+                    Icon(Icons.Default.Close, contentDescription = "Stop", tint = MaterialTheme.colorScheme.error)
                 }
             }
 
-            // Preparing Voice Banner
             if (viewModel.isPreparingVoice) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Preparing voice engine...",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-
-            // Second Row: Progress Slider
-            val activePara = viewModel.ttsActiveParagraphIndex ?: -1
-            val totalParas = viewModel.ttsTotalParagraphs
-            val sliderValue = if (activePara < 0) 0f else activePara.toFloat()
-            val maxSliderValue = if (totalParas <= 1) 1f else (totalParas - 1).toFloat()
-
-            var draggingValue by remember { mutableStateOf<Float?>(null) }
-            val currentSliderValue = draggingValue ?: sliderValue
-
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (activePara < 0) "Reading Chapter Title" else "Paragraph ${currentSliderValue.toInt() + 1} of $totalParas",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    // Sleep Timer Countdown Indicator
-                    val sleepSecs = viewModel.sleepTimerRemainingSeconds
-                    if (sleepSecs != null && sleepSecs > 0) {
-                        val m = sleepSecs / 60
-                        val s = sleepSecs % 60
-                        Text(
-                            text = if (viewModel.ttsIsPlaying) "Sleep in ${m}m ${s}s" else "Sleep: ${m}m",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.tertiary
-                        )
-                    } else if (viewModel.sleepTimerMinutes == -1) {
-                        Text(
-                            text = "Sleep at end of Ch.",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.tertiary
-                        )
-                    } else {
-                        Text(
-                            text = "${((currentSliderValue / maxSliderValue) * 100).toInt().coerceIn(0, 100)}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-                Slider(
-                    value = currentSliderValue.coerceIn(0f, maxSliderValue),
-                    onValueChange = { draggingValue = it },
-                    onValueChangeFinished = {
-                        draggingValue?.let {
-                            viewModel.progress.seekToParagraph(it.toInt())
-                        }
-                        draggingValue = null
-                    },
-                    valueRange = 0f..maxSliderValue,
-                    modifier = Modifier.fillMaxWidth().height(24.dp).testTag("tts_slider"),
-                    colors = SliderDefaults.colors(
-                        thumbColor = MaterialTheme.colorScheme.primary,
-                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                    )
+                Text(
+                    "Preparing voice…", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp)
                 )
             }
 
-            // Third Row: Control Buttons
+            // Position: drag to jump to a paragraph
+            val sliderValue = if (activePara < 0) 0f else activePara.toFloat()
+            val maxSliderValue = if (totalParas <= 1) 1f else (totalParas - 1).toFloat()
+            var draggingValue by remember { mutableStateOf<Float?>(null) }
+            val currentSliderValue = draggingValue ?: sliderValue
+            Slider(
+                value = currentSliderValue.coerceIn(0f, maxSliderValue),
+                onValueChange = { draggingValue = it },
+                onValueChangeFinished = {
+                    draggingValue?.let { viewModel.progress.seekToParagraph(it.toInt()) }
+                    draggingValue = null
+                },
+                valueRange = 0f..maxSliderValue,
+                modifier = Modifier.fillMaxWidth().height(28.dp).testTag("tts_slider")
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    if (activePara < 0) "Title" else "¶ ${currentSliderValue.toInt() + 1} / $totalParas",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "${(fraction * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Transport
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Auto-Scroll Toggle Button
-                IconButton(
-                    onClick = { viewModel.tts.toggleTtsAutoScroll() },
-                    modifier = Modifier.size(48.dp).testTag("tts_quick_autoscroll_btn")
-                ) {
-                    Icon(
-                        imageVector = if (viewModel.ttsAutoScrollEnabled) Icons.Default.MenuBook else Icons.Default.Book,
-                        contentDescription = "Toggle Auto-Scroll Spoken Text",
-                        tint = if (viewModel.ttsAutoScrollEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(20.dp)
-                    )
+                IconButton(onClick = { viewModel.tts.playPreviousChapterTts() }) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous chapter")
                 }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // Prev Chapter
-                IconButton(
-                    onClick = { viewModel.tts.playPreviousChapterTts() },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SkipPrevious,
-                        contentDescription = "Skip to Previous Chapter",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
+                IconButton(onClick = { viewModel.progress.skipParagraph(-1) }) {
+                    Icon(Icons.Default.NavigateBefore, contentDescription = "Back one paragraph", modifier = Modifier.size(30.dp))
                 }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // Skip back 1 paragraph
-                IconButton(
-                    onClick = { viewModel.progress.skipParagraph(-1) },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.NavigateBefore,
-                        contentDescription = "Rewind One Paragraph",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Play / Pause Toggle Button
                 FilledIconButton(
-                    onClick = {
-                        if (viewModel.ttsIsPlaying) {
-                            viewModel.tts.pauseTts()
-                        } else {
-                            viewModel.tts.resumeTts()
-                        }
-                    },
+                    onClick = playPause,
                     enabled = !viewModel.isPreparingVoice,
-                    modifier = Modifier.size(52.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
+                    modifier = Modifier.size(60.dp)
                 ) {
                     Icon(
-                        imageVector = if (viewModel.ttsIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (viewModel.ttsIsPlaying) "Pause Playback" else "Start Playback",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(30.dp)
+                        if (viewModel.ttsIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (viewModel.ttsIsPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(34.dp)
                     )
                 }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Skip forward 1 paragraph
-                IconButton(
-                    onClick = { viewModel.progress.skipParagraph(1) },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.NavigateNext,
-                        contentDescription = "Fast-Forward One Paragraph",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp)
-                    )
+                IconButton(onClick = { viewModel.progress.skipParagraph(1) }) {
+                    Icon(Icons.Default.NavigateNext, contentDescription = "Forward one paragraph", modifier = Modifier.size(30.dp))
                 }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // Next Chapter
-                IconButton(
-                    onClick = { viewModel.tts.playNextChapterTts() },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SkipNext,
-                        contentDescription = "Skip to Next Chapter",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
+                IconButton(onClick = { viewModel.tts.playNextChapterTts() }) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "Next chapter")
                 }
+            }
 
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // Voice Settings Button
-                IconButton(
-                    onClick = {
-                        viewModel.tts.initTts()
-                        showSettingsDialog = true
+            // Quick settings: labelled chips instead of unexplained icons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+            ) {
+                AssistChip(
+                    onClick = { viewModel.tts.initTts(); showSettingsDialog = true },
+                    label = {
+                        val sp = viewModel.ttsSpeed
+                        Text(if (sp % 1f == 0f) "${sp.toInt()}x" else "%.2f".format(sp).trimEnd('0') + "x")
                     },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Voice & Speech Settings",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    leadingIcon = { Icon(Icons.Default.Speed, null, Modifier.size(16.dp)) }
+                )
+                AssistChip(
+                    onClick = { viewModel.tts.initTts(); showSettingsDialog = true },
+                    label = { Text(sleepLabel ?: "Sleep") },
+                    leadingIcon = { Icon(Icons.Default.Bedtime, null, Modifier.size(16.dp)) }
+                )
+                FilterChip(
+                    selected = viewModel.ttsAutoScrollEnabled,
+                    onClick = { viewModel.tts.toggleTtsAutoScroll() },
+                    label = { Text("Follow") },
+                    leadingIcon = { Icon(Icons.Default.MenuBook, null, Modifier.size(16.dp)) }
+                )
+                IconButton(onClick = { viewModel.tts.initTts(); showSettingsDialog = true }) {
+                    Icon(Icons.Default.Tune, contentDescription = "Voice settings")
                 }
             }
         }
