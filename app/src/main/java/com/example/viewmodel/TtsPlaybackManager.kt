@@ -1075,6 +1075,10 @@ class TtsPlaybackManager(
         prefs.edit()
             .putFloat("tts_pitch", pitch)
             .putFloat("tts_speed", speed)
+            .apply {
+                // Remember it for the novel being read aloud too.
+                ttsPlayingBook?.let { putFloat("tts_speed_${it.id}", speed) }
+            }
             .apply()
         tts?.setPitch(pitch)
         tts?.setSpeechRate(speed)
@@ -1198,6 +1202,8 @@ class TtsPlaybackManager(
 
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
         onSpeakStarted?.invoke()
+        // Each novel remembers its own speed (set the last time it was changed while playing it).
+        prefs.getFloat("tts_speed_${book.id}", -1f).takeIf { it > 0f && it != ttsSpeed }?.let { ttsSpeed = it }
         TtsPlaybackService.updateWakeLock(true)
 
         if (!audioFocusHelper.requestFocus()) {

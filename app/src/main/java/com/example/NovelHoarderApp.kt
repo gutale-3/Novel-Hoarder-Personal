@@ -119,6 +119,7 @@ class NovelHoarderApp : Application() {
             com.example.background.DownloadQueue.schedule(this)
             com.example.background.SiteHealthWorker.schedule(this)
             com.example.background.ChapterAlerts.scheduleDigest(this)
+            com.example.viewmodel.AutoShelves.start(this, container.repository, container.appScope)
         } catch (t: Throwable) {
             Log.e("NovelHoarderApp", "Failed to schedule background chapter updates", t)
         }

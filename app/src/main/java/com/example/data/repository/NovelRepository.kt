@@ -121,6 +121,10 @@ class NovelRepository(private val bookDao: BookDao) {
         }
     }
 
+    /** "I've read everything up to here": marks every earlier chapter read. Returns how many changed. */
+    suspend fun markChaptersReadBefore(bookId: String, number: Int): Int =
+        bookDao.markChaptersReadBefore(bookId, number, System.currentTimeMillis())
+
     suspend fun updateChapterReadStatus(chapterId: String, isRead: Boolean, readAt: Long? = if (isRead) System.currentTimeMillis() else null) = bookDao.updateChapterReadStatus(chapterId, isRead, readAt)
 
     suspend fun updateChaptersReadStatus(chapterIds: List<String>, isRead: Boolean, readAt: Long? = if (isRead) System.currentTimeMillis() else null) = bookDao.updateChaptersReadStatus(chapterIds, isRead, readAt)

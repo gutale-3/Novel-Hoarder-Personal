@@ -157,6 +157,9 @@ interface BookDao {
     @Query("UPDATE chapters SET isRead = :isRead, readAt = :readAt WHERE id = :chapterId")
     suspend fun updateChapterReadStatus(chapterId: String, isRead: Boolean, readAt: Long?)
 
+    @Query("UPDATE chapters SET isRead = 1, readAt = COALESCE(readAt, :now) WHERE bookId = :bookId AND chapterNumber < :number AND isRead = 0")
+    suspend fun markChaptersReadBefore(bookId: String, number: Int, now: Long): Int
+
     @Query("UPDATE chapters SET isRead = :isRead, readAt = :readAt WHERE id IN (:chapterIds)")
     suspend fun updateChaptersReadStatus(chapterIds: List<String>, isRead: Boolean, readAt: Long?)
 

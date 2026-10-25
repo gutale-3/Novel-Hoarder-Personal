@@ -221,6 +221,21 @@ fun LibraryScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    var autoShelves by remember { mutableStateOf(com.example.viewmodel.AutoShelves.isEnabled(context)) }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Automatic Waiting shelf", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Caught-up novels move to Waiting and back to Reading when new chapters arrive",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = autoShelves, onCheckedChange = {
+                            autoShelves = it
+                            com.example.viewmodel.AutoShelves.setEnabled(context, it)
+                        })
+                    }
                     val custom = remember(shelfVersion) { LibraryPrefs.customShelves(context) }
                     if (custom.isNotEmpty()) Text("Your shelves", style = MaterialTheme.typography.labelLarge)
                     custom.forEach { name ->

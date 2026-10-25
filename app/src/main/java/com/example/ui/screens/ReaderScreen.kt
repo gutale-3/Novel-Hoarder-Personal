@@ -27,6 +27,7 @@ import com.example.ui.components.*
 import com.example.util.WatermarkCleaner
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
+import com.example.ui.components.BrightnessEdge
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -455,6 +456,8 @@ fun ReaderScreen(
                         onOpenTags = { showTagDialogForChapter = activeChapter }
                     )
                 }
+
+                BrightnessEdge()
 
                 PreviouslyOnCard(
                     bookId = bookId,

@@ -131,6 +131,32 @@ fun PolishDialog(
                     }
                 }
                 if (showNames) {
+                    item {
+                        var newName by remember { mutableStateOf("") }
+                        var wrong by remember { mutableStateOf("") }
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Add or fix a name", style = MaterialTheme.typography.labelLarge)
+                            OutlinedTextField(
+                                value = newName, onValueChange = { newName = it }, singleLine = true,
+                                label = { Text("Correct spelling, e.g. Lin Feng") }, modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = wrong, onValueChange = { wrong = it }, singleLine = true,
+                                label = { Text("Wrong spellings (comma separated)") }, modifier = Modifier.fillMaxWidth()
+                            )
+                            TextButton(enabled = newName.isNotBlank(), onClick = {
+                                // An edited name replaces the old entry, so the correct spelling becomes the main one.
+                                polisher.removeName(bookId, newName.trim())
+                                wrong.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { polisher.removeName(bookId, it) }
+                                polisher.mergeNames(
+                                    bookId,
+                                    listOf(ChapterPolisher.Name(newName.trim(), wrong.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
+                                )
+                                names = polisher.names(bookId)
+                                newName = ""; wrong = ""
+                            }) { Text("Save name") }
+                        }
+                    }
                     if (names.isEmpty()) item {
                         Text("Names are collected as chapters are polished.", style = MaterialTheme.typography.bodySmall)
                     }

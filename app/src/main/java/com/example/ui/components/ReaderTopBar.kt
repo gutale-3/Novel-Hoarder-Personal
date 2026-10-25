@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -201,6 +202,35 @@ fun ReaderTopBar(
                         expanded = showMenu,
                         onDismissRequest = { showMenu = false }
                     ) {
+                        var brightnessSwipe by remember { mutableStateOf(ReaderBrightness.swipeEnabled(context)) }
+                        DropdownMenuItem(
+                            text = { Text(if (brightnessSwipe) "Brightness swipe (left edge): On" else "Brightness swipe (left edge): Off") },
+                            leadingIcon = { Icon(Icons.Default.BrightnessMedium, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                            onClick = {
+                                brightnessSwipe = !brightnessSwipe
+                                ReaderBrightness.setSwipeEnabled(context, brightnessSwipe)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Mark earlier chapters read") },
+                            leadingIcon = { Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                            onClick = {
+                                showMenu = false
+                                val ch = activeChapter
+                                val bk = bookState
+                                if (ch != null && bk != null) {
+                                    com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application)
+                                        .appScope.launch {
+                                            val n = viewModel.repository.markChaptersReadBefore(bk.id, ch.chapterNumber)
+                                            viewModel.repository.getBook(bk.id)?.let {
+                                                viewModel.repository.updateBook(it.copy(lastReadChapterNumber = maxOf(it.lastReadChapterNumber, ch.chapterNumber)))
+                                            }
+                                            android.widget.Toast.makeText(context, "Marked $n earlier chapters read", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                }
+                            }
+                        )
+
                         DropdownMenuItem(
                             text = { Text("Milestone Tags") },
                             leadingIcon = { Icon(Icons.Default.Label, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) },
