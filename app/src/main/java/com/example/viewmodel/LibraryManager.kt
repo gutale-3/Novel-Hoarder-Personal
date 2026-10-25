@@ -224,6 +224,9 @@ class LibraryManager(
     fun permanentlyDeleteChapter(chapterId: String) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                repository.getChapter(chapterId)?.let {
+                    com.example.util.ChapterUrls.rememberDeleted(application, it.bookId, listOf(it.url))
+                }
                 repository.deleteChapter(chapterId)
                 scrapingManager.addLog("Permanently deleted chapter: $chapterId")
             } catch (e: Exception) {
@@ -235,6 +238,10 @@ class LibraryManager(
     fun permanentlyDeleteChapters(chapterIds: List<String>) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                // Remember them so "check for new chapters" doesn't bring them back.
+                chapterIds.mapNotNull { repository.getChapter(it) }.groupBy { it.bookId }.forEach { (bookId, list) ->
+                    com.example.util.ChapterUrls.rememberDeleted(application, bookId, list.map { it.url })
+                }
                 repository.deleteChapters(chapterIds)
                 scrapingManager.addLog("Permanently deleted ${chapterIds.size} chapters")
             } catch (e: Exception) {
@@ -247,7 +254,13 @@ class LibraryManager(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 // Each trashed novel's own folder (downloaded images etc.) goes too.
-                repository.getDeletedBooks().forEach { File(application.applicationContext.filesDir, it.id).deleteRecursively() }
+                repository.getDeletedBooks().forEach {
+                    File(application.applicationContext.filesDir, it.id).deleteRecursively()
+                    com.example.util.ChapterUrls.forget(application, it.id)
+                }
+                repository.getDeletedChapters().groupBy { it.bookId }.forEach { (bookId, list) ->
+                    com.example.util.ChapterUrls.rememberDeleted(application, bookId, list.map { it.url })
+                }
                 repository.emptyTrash()
                 scrapingManager.addLog("Emptied trash permanently")
             } catch (e: Exception) {

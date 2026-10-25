@@ -60,6 +60,9 @@ class ManualCaptureManager(
         }
     }
 
+    /** Where the previous save went, so author notes without a number land right after it. */
+    private var lastCapturedNumber: Int? = null
+
     fun clearSession() {
         captureBookId = null
         captureBookTitle = ""
@@ -201,29 +204,27 @@ class ManualCaptureManager(
                     }
 
                     val bookTitle = repository.getBook(targetBookId)?.title.orEmpty()
-                    val byUrl = existingChapters.firstOrNull { pageUrl.isNotBlank() && it.url == pageUrl }
+                    val all = repository.getAllChaptersIncludingHidden(targetBookId)
+                    val normUrl = com.example.util.ChapterUrls.normalize(pageUrl)
+                    val byUrl = all.firstOrNull { pageUrl.isNotBlank() && com.example.util.ChapterUrls.normalize(it.url) == normUrl }
                     val parsedNumber = GenericScraper.parseChapterNumber(rawTitle, pageUrl)
-                    val byNumber = parsedNumber?.let { n -> existingChapters.firstOrNull { it.chapterNumber == n } }
-
-                    // Where this chapter goes: the same URL already in the list (e.g. a chapter
-                    // listed but never downloaded), else its own number if that slot is free or
-                    // empty, else the end of the novel.
-                    val target = byUrl ?: byNumber?.takeIf { it.content.isBlank() }
-                    val number = target?.chapterNumber
-                        ?: parsedNumber?.takeIf { byNumber == null }
-                        ?: ((existingChapters.maxOfOrNull { it.chapterNumber } ?: 0) + 1)
+                    val plan = ChapterPlacement.place(all, byUrl, parsedNumber, lastCapturedNumber)
+                    val number = plan.position
                     val title = com.example.util.ChapterTitleCleaner.clean(
-                        rawTitle.takeIf { it.isNotBlank() && it != "Chapter" } ?: "Chapter $number",
-                        bookTitle, chapterNumber = number
+                        rawTitle.takeIf { it.isNotBlank() && it != "Chapter" } ?: "Chapter ${parsedNumber ?: number}",
+                        bookTitle, chapterNumber = parsedNumber ?: number
                     )
 
+                    val target = plan.fill
                     val chapter = target?.copy(
                         title = title, content = cleanBody, hash = contentHash,
+                        isDeleted = false, isArchived = false,
                         downloadedAt = System.currentTimeMillis()
                     ) ?: ChapterEntity(
-                        id = "${targetBookId}_ch_$number",
+                        // Unique per page, so moving chapters around can never make ids collide.
+                        id = "${targetBookId}_m_${md5(normUrl.ifBlank { contentHash }).take(12)}",
                         bookId = targetBookId,
-                        chapterId = "ch_$number",
+                        chapterId = "m_${md5(normUrl.ifBlank { contentHash }).take(12)}",
                         chapterNumber = number,
                         title = title,
                         url = pageUrl.ifBlank { "manual://$targetBookId/ch/$number" },
@@ -231,15 +232,16 @@ class ManualCaptureManager(
                         hash = contentHash
                     )
 
-                    repository.insertChapter(chapter)
+                    if (target != null) repository.insertChapter(chapter) else repository.insertChapterAt(chapter)
+                    lastCapturedNumber = chapter.chapterNumber
                     val newCount = repository.getChapterCount(targetBookId)
                     repository.getBook(targetBookId)?.let { repository.updateBook(it.copy(totalChapters = newCount)) }
 
                     withContext(Dispatchers.Main) {
                         captureChapterCount = newCount
                         onResult(
-                            (if (target != null) "Filled in Chapter $number: " else "Saved Chapter $number: ") +
-                                "${chapter.title} → $bookTitle"
+                            (if (target != null) "Filled in: " else "Saved as #$number: ") +
+                                "${chapter.title} → $bookTitle" + plan.note
                         )
                     }
                 }

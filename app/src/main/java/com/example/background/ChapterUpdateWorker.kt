@@ -146,10 +146,11 @@ class ChapterUpdateWorker(
                     var nextChapterStart = 1
                     if (maxChapNum > 0) {
                         val sortedLocals = localChapters.sortedByDescending { it.chapterNumber }
+                        val tocNormalized = chapterUrls.map { com.example.util.ChapterUrls.normalize(it) }
                         var matchedIdx = -1
                         var matchedNum = maxChapNum
                         for (loc in sortedLocals) {
-                            val idx = chapterUrls.indexOf(loc.url)
+                            val idx = tocNormalized.indexOf(com.example.util.ChapterUrls.normalize(loc.url))
                             if (idx >= 0) {
                                 matchedIdx = idx
                                 matchedNum = loc.chapterNumber
@@ -241,7 +242,11 @@ class ChapterUpdateWorker(
                 hash = ""
             )
         }
-        val placeholders = wanted.filter { repository.getChapter(it.id) == null }
+        val known = repository.getAllChaptersIncludingHidden(book.id).map { com.example.util.ChapterUrls.normalize(it.url) }.toHashSet()
+        val deleted = com.example.util.ChapterUrls.deletedFor(context, book.id)
+        val placeholders = wanted.filter {
+            repository.getChapter(it.id) == null && com.example.util.ChapterUrls.normalize(it.url) !in known && com.example.util.ChapterUrls.normalize(it.url) !in deleted
+        }
         if (placeholders.isNotEmpty()) {
             repository.insertChapters(placeholders)
             repository.updateBook(book.copy(totalChapters = repository.getChapters(book.id).size, updatedAt = System.currentTimeMillis()))

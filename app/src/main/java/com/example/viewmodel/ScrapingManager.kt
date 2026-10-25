@@ -520,23 +520,25 @@ class ScrapingManager(
                 val localChapters = repository.getChapters(bookId)
                 val maxLocalChapNum = localChapters.maxOfOrNull { it.chapterNumber } ?: 0
                 val userFromCap = fromChapterInput.toIntOrNull()
+                val deletedUrls = com.example.util.ChapterUrls.deletedFor(application, bookId)
 
                 val missingList = mutableListOf<MissingChapter>()
                 if (maxLocalChapNum == 0) {
-                    val localUrls = localChapters.map { it.url }.toSet()
+                    val localUrls = localChapters.map { com.example.util.ChapterUrls.normalize(it.url) }.toSet()
                     val localNums = localChapters.map { it.chapterNumber }.toSet()
                     for ((index, chapUrl) in chapterUrls.withIndex()) {
                         val chapNum = index + 1
-                        if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
+                        if (!localUrls.contains(com.example.util.ChapterUrls.normalize(chapUrl)) && !localNums.contains(chapNum)) {
                             missingList.add(MissingChapter(chapUrl, chapNum))
                         }
                     }
                 } else {
                     val sortedLocals = localChapters.sortedByDescending { it.chapterNumber }
+                    val tocNormalized = chapterUrls.map { com.example.util.ChapterUrls.normalize(it) }
                     var matchedTocIndex = -1
                     var matchedChapNum = maxLocalChapNum
                     for (loc in sortedLocals) {
-                        val idx = chapterUrls.indexOf(loc.url)
+                        val idx = tocNormalized.indexOf(com.example.util.ChapterUrls.normalize(loc.url))
                         if (idx >= 0) {
                             matchedTocIndex = idx
                             matchedChapNum = loc.chapterNumber
@@ -556,7 +558,7 @@ class ScrapingManager(
                         } else {
                             maxLocalChapNum + 1 + (i - startIndex)
                         }
-                        if (userFromCap == null || chapNum >= userFromCap) {
+                        if ((userFromCap == null || chapNum >= userFromCap) && com.example.util.ChapterUrls.normalize(chapUrl) !in deletedUrls) {
                             missingList.add(MissingChapter(chapUrl, chapNum))
                         }
                     }
@@ -644,14 +646,15 @@ class ScrapingManager(
 
                 val localChapters = repository.getChapters(book.id)
                 val maxLocalChapNum = localChapters.maxOfOrNull { it.chapterNumber } ?: 0
+                val deletedUrls = com.example.util.ChapterUrls.deletedFor(application, book.id)
 
                 val missingList = mutableListOf<MissingChapter>()
                 if (maxLocalChapNum == 0) {
-                    val localUrls = localChapters.map { it.url }.toSet()
+                    val localUrls = localChapters.map { com.example.util.ChapterUrls.normalize(it.url) }.toSet()
                     val localNums = localChapters.map { it.chapterNumber }.toSet()
                     for ((index, chapUrl) in chapterUrls.withIndex()) {
                         val chapNum = index + 1
-                        if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
+                        if (!localUrls.contains(com.example.util.ChapterUrls.normalize(chapUrl)) && !localNums.contains(chapNum)) {
                             missingList.add(MissingChapter(chapUrl, chapNum))
                         }
                     }
@@ -659,10 +662,11 @@ class ScrapingManager(
                     // Strictly grab chapters starting after the user's latest downloaded chapter (e.g. 501 if 500, 672 if 671, 1001 if 1000)
                     // Even if earlier chapters were deleted to save scrolling length, never grab deleted chapters.
                     val sortedLocals = localChapters.sortedByDescending { it.chapterNumber }
+                    val tocNormalized = chapterUrls.map { com.example.util.ChapterUrls.normalize(it) }
                     var matchedTocIndex = -1
                     var matchedChapNum = maxLocalChapNum
                     for (loc in sortedLocals) {
-                        val idx = chapterUrls.indexOf(loc.url)
+                        val idx = tocNormalized.indexOf(com.example.util.ChapterUrls.normalize(loc.url))
                         if (idx >= 0) {
                             matchedTocIndex = idx
                             matchedChapNum = loc.chapterNumber
@@ -682,7 +686,7 @@ class ScrapingManager(
                         } else {
                             maxLocalChapNum + 1 + (i - startIndex)
                         }
-                        missingList.add(MissingChapter(chapUrl, chapNum))
+                        if (com.example.util.ChapterUrls.normalize(chapUrl) !in deletedUrls) missingList.add(MissingChapter(chapUrl, chapNum))
                     }
                 }
 
@@ -980,6 +984,9 @@ class ScrapingManager(
             )
 
             var sessionDownloadedCount = 0
+            val knownByUrl = repository.getAllChaptersIncludingHidden(currentBookState.id)
+                .associateBy { com.example.util.ChapterUrls.normalize(it.url) }
+            val deletedUrls = com.example.util.ChapterUrls.deletedFor(application, currentBookState.id)
             val glossaries = repository.getGlossary(currentBookState.id)
             val sourceKey = com.example.data.scraper.SourceKeys.keyFor(bookUrl)
 
@@ -1013,11 +1020,19 @@ class ScrapingManager(
                     "Downloading"
                 )
 
-                val chapId = scraper.parseChapterId(chapterUrl) ?: "ch_$absoluteChapterNum"
-                val fullChapId = "${currentBookState.id}_$chapId"
+                // The same chapter saved under another address (e.g. from the browser) counts as
+                // this one: fill or skip it instead of adding a second copy.
+                val sameChapter = knownByUrl[com.example.util.ChapterUrls.normalize(chapterUrl)]
+                if (sameChapter?.isDeleted == true || com.example.util.ChapterUrls.normalize(chapterUrl) in deletedUrls) {
+                    addLog("Chapter $absoluteChapterNum was deleted by you. Skipping.")
+                    continue
+                }
+                val chapId = sameChapter?.chapterId ?: scraper.parseChapterId(chapterUrl) ?: "ch_$absoluteChapterNum"
+                val fullChapId = sameChapter?.id ?: "${currentBookState.id}_$chapId"
+                val slotNumber = sameChapter?.chapterNumber ?: absoluteChapterNum
 
                 // Check if already downloaded locally
-                val existing = repository.getChapter(fullChapId)
+                val existing = sameChapter ?: repository.getChapter(fullChapId)
                 if (existing != null && existing.content.length > 100) {
                     addLog("Chapter $absoluteChapterNum already downloaded. Skipping.")
                     continue
@@ -1058,7 +1073,7 @@ class ScrapingManager(
                             id = fullChapId,
                             bookId = currentBookState.id,
                             chapterId = chapId,
-                            chapterNumber = absoluteChapterNum,
+                            chapterNumber = slotNumber,
                             title = com.example.util.ChapterTitleCleaner.clean(title, currentBookState.title, scraper.sourceName, absoluteChapterNum),
                             url = chapterUrl,
                             content = cleanedBody,
@@ -1134,7 +1149,7 @@ class ScrapingManager(
                                     id = fullChapId,
                                     bookId = currentBookState.id,
                                     chapterId = chapId,
-                                    chapterNumber = absoluteChapterNum,
+                                    chapterNumber = slotNumber,
                                     title = com.example.util.ChapterTitleCleaner.clean(alt.first, currentBookState.title, alt.third, absoluteChapterNum),
                                     url = chapterUrl,
                                     content = body,
@@ -1407,7 +1422,8 @@ class ScrapingManager(
                 // Hidden and trashed chapters count as existing; match by id too, since a site
                 // can change domain while chapter ids stay the same.
                 val known = repository.getAllChaptersIncludingHidden(bookId)
-                val existingChapters = known.associateBy { it.url }
+                val existingChapters = known.associateBy { com.example.util.ChapterUrls.normalize(it.url) }
+                val deletedUrls = com.example.util.ChapterUrls.deletedFor(application, bookId)
                 val existingIds = known.map { it.id }.toHashSet()
                 var newCount = 0
                 val chapterEntities = mutableListOf<ChapterEntity>()
@@ -1416,8 +1432,8 @@ class ScrapingManager(
                     val chapNum = index + 1
                     val chapId = scraper.parseChapterId(chapterUrl) ?: "ch_$chapNum"
                     val fullChapId = "${bookId}_$chapId"
-                    val existing = existingChapters[chapterUrl]
-                    if (existing != null || fullChapId in existingIds) {
+                    val existing = existingChapters[com.example.util.ChapterUrls.normalize(chapterUrl)]
+                    if (existing != null || fullChapId in existingIds || com.example.util.ChapterUrls.normalize(chapterUrl) in deletedUrls) {
                         // Left untouched: re-writing it could overwrite text downloaded meanwhile.
                     } else {
                         newCount++

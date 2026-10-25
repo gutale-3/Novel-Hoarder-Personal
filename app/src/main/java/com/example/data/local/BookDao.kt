@@ -130,6 +130,10 @@ interface BookDao {
     @Query("SELECT * FROM chapters WHERE isDeleted = 1 ORDER BY downloadedAt DESC")
     fun getDeletedChaptersFlow(): Flow<List<ChapterEntity>>
 
+    /** Makes room at [position] by moving it and every later chapter (hidden ones too) down one. */
+    @Query("UPDATE chapters SET chapterNumber = chapterNumber + 1 WHERE bookId = :bookId AND chapterNumber >= :position")
+    suspend fun shiftChaptersFrom(bookId: String, position: Int)
+
     @Query("SELECT * FROM chapters WHERE isDeleted = 1 ORDER BY downloadedAt DESC")
     suspend fun getDeletedChapters(): List<ChapterEntity>
 

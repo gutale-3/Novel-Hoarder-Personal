@@ -44,6 +44,14 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun getDeletedBooks(): List<BookEntity> = bookDao.getDeletedBooks()
 
+    suspend fun getDeletedChapters(): List<ChapterEntity> = bookDao.getDeletedChapters()
+
+    /** Inserts [chapter] at its chapterNumber, moving that slot and everything after it down one. */
+    suspend fun insertChapterAt(chapter: ChapterEntity) {
+        bookDao.shiftChaptersFrom(chapter.bookId, chapter.chapterNumber)
+        bookDao.insertChapter(chapter)
+    }
+
     fun getArchivedChaptersFlow(bookId: String): Flow<List<ChapterEntity>> = bookDao.getArchivedChaptersForBookFlow(bookId)
 
     suspend fun getArchivedChapters(bookId: String): List<ChapterEntity> = bookDao.getArchivedChaptersForBook(bookId)

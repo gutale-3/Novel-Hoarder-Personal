@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.BookmarkEntity
 import com.example.data.local.ChapterEntity
 import com.example.viewmodel.MainViewModel
+import com.example.viewmodel.DuplicateChapters
 import com.example.util.ChapterGroup
 import com.example.util.ChapterSubdivisionHelper
 import com.example.util.TocSubdivisionMode
@@ -58,6 +59,43 @@ fun ReaderDrawerContent(
     var selectedChapters by remember { mutableStateOf(setOf<String>()) }
     var expandedHiddenRuns by remember { mutableStateOf(setOf<String>()) }
     var chapterForTagging by remember { mutableStateOf<ChapterEntity?>(null) }
+    var duplicateGroups by remember { mutableStateOf<List<List<ChapterEntity>>>(emptyList()) }
+    var showDuplicates by remember { mutableStateOf(false) }
+    if (showDuplicates) {
+        val extras = duplicateGroups.sumOf { it.size - 1 }
+        AlertDialog(
+            onDismissRequest = { showDuplicates = false },
+            title = { Text("Remove $extras duplicate chapter${if (extras == 1) "" else "s"}?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "For each chapter saved twice, the copy you've read (or the older one) is kept and the " +
+                            "others go to the Trash, where you can restore them.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    duplicateGroups.take(8).forEach { g ->
+                        Text("• ${g.first().title} ×${g.size}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (duplicateGroups.size > 8) Text("…and ${duplicateGroups.size - 8} more", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDuplicates = false
+                    val groups = duplicateGroups
+                    scope.launch {
+                        for (g in groups) {
+                            val keep = g.first()
+                            if (!keep.isRead && g.any { it.isRead }) viewModel.repository.updateChapterReadStatus(keep.id, true)
+                        }
+                        viewModel.repository.softDeleteChapters(groups.flatMap { it.drop(1) }.map { it.id })
+                        android.widget.Toast.makeText(context, "Moved $extras duplicates to the Trash", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { showDuplicates = false }) { Text("Cancel") } }
+        )
+    }
 
     var subdivisionMode by remember(bookId) {
         mutableStateOf(TocSubdivisionMode.fromCode(viewModel.settings.getBookTocSubdivisionMode(bookId)))
@@ -302,6 +340,21 @@ fun ReaderDrawerContent(
                                     text = { Text("Undo & history") },
                                     leadingIcon = { Icon(Icons.Default.History, null) },
                                     onClick = { toolsMenu = false; onOpenRevisionHistory() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Remove duplicate chapters") },
+                                    leadingIcon = { Icon(Icons.Default.CopyAll, null) },
+                                    onClick = {
+                                        toolsMenu = false
+                                        scope.launch {
+                                            duplicateGroups = DuplicateChapters.find(
+                                                viewModel.repository.getAllChaptersIncludingHidden(bookId)
+                                            )
+                                            if (duplicateGroups.isEmpty()) {
+                                                android.widget.Toast.makeText(context, "No duplicate chapters found", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else showDuplicates = true
+                                        }
+                                    }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Group chapters") },
