@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.Velocity
 import kotlin.math.roundToInt
 import com.example.ui.theme.AppTheme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryBookItem(
     book: BookEntity,
@@ -100,112 +101,33 @@ fun LibraryBookItem(
         }
     }
 
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(enabled = !isBatchMode) { onRead() }
-            .testTag("library_book_card_${book.id}"),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = if (isBatchMode) Modifier.clickable { onToggleSelect() } else Modifier
+    val progress = remember(book, bookStats) { com.example.util.ReadingProgress.of(book, bookStats) }
+
+    // The full menu as a bottom sheet: it scrolls and clears the gesture bar, so every action
+    // (Delete included) can be reached.
+    if (expandedMenu) {
+        ModalBottomSheet(onDismissRequest = { expandedMenu = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(bottom = 12.dp)
             ) {
-                if (isBatchMode) {
-                    Checkbox(
-                        checked = isSelected,
-                        onCheckedChange = { onToggleSelect() },
-                        modifier = Modifier.align(Alignment.CenterVertically)
-                    )
-                }
-                // Cover image or Placeholder
-                val hasLocalCover = !book.coverLocalPath.isNullOrEmpty() && File(book.coverLocalPath!!).exists()
-                if (hasLocalCover) {
-                    AsyncImage(
-                        model = File(book.coverLocalPath!!),
-                        contentDescription = "${book.title} Cover",
-                        modifier = Modifier
-                            .size(width = 64.dp, height = 90.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                } else if (!book.coverUrl.isNullOrEmpty()) {
-                    AsyncImage(
-                        model = book.coverUrl,
-                        contentDescription = "${book.title} Cover",
-                        modifier = Modifier
-                            .size(width = 64.dp, height = 90.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(width = 64.dp, height = 90.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.primaryContainer,
-                                        MaterialTheme.colorScheme.secondary
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = book.title.take(1).uppercase(),
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 24.sp
-                            )
-                        )
-                    }
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Text(
-                            text = displayTitle,
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 15.sp,
-                                lineHeight = 19.sp
-                            ),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        Box {
-                            IconButton(
-                                onClick = { expandedMenu = true },
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Menu")
-                            }
-                            DropdownMenu(
-                                expanded = expandedMenu,
-                                onDismissRequest = { expandedMenu = false }
-                            ) {
+                Text(
+                    book.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+                Text(
+                    progress.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)
+                )
                                 DropdownMenuItem(
                                     text = { Text("Listen (TTS)") },
                                     onClick = {
@@ -408,176 +330,136 @@ fun LibraryBookItem(
                                     },
                                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
                                 )
-                            }
-                        }
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "Author: ${book.author}",
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        if (book.url.startsWith("local://")) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                shape = RoundedCornerShape(4.dp)
-                            ) {
-                                Text(
-                                    text = "Imported",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = book.synopsis,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                        ),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-
-            // Info row (Chapters Downloaded and unread count)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (downloadedCount == book.totalChapters) "${book.totalChapters} Chapters Downloaded" else "$downloadedCount / ${book.totalChapters} Downloaded",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                )
-                if (unreadCount > 0) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        shape = RoundedCornerShape(4.dp),
-                        modifier = Modifier.padding(start = 8.dp)
-                    ) {
-                        Text(
-                            text = "$unreadCount unread",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-                if (isCheckingNewChapters) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            // Offline availability progress bar
-            if (downloadedCount < book.totalChapters && book.totalChapters > 0) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Offline Available: ${((downloadedCount.toFloat() / book.totalChapters) * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                        Text(
-                            text = "${book.totalChapters - downloadedCount} pending",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    LinearProgressIndicator(
-                        progress = downloadedCount.toFloat() / book.totalChapters,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                        color = MaterialTheme.colorScheme.secondary,
-                        trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-                }
-            }
-
-            // Reading progress percentage & bar
-            val totalChaps = maxOf(book.totalChapters, downloadedCount, bookStats?.maxChapterNumber ?: 0)
-            val currentReadChNum = maxOf(
-                book.lastReadChapterNumber,
-                bookStats?.maxReadChapterNumber ?: 0,
-                bookStats?.readCount ?: 0,
-                if (totalChaps > 0) (totalChaps - unreadCount).coerceAtLeast(0) else 0
-            )
-            val progressPercent = if (totalChaps > 0) {
-                ((currentReadChNum.toFloat() / totalChaps) * 100).toInt().coerceIn(0, 100)
-            } else {
-                0
-            }
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (totalChaps > 0) {
-                            if (currentReadChNum >= totalChaps) "Reading Progress: 100% (Completed)"
-                            else "Reading Progress: $progressPercent%"
-                        } else {
-                            "Reading Progress: Not started"
-                        },
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Medium
-                        )
-                    )
-                    Text(
-                        text = if (totalChaps > 0) {
-                            if (currentReadChNum > 0) "Ch. $currentReadChNum / $totalChaps Read"
-                            else "0 / $totalChaps Read"
-                        } else {
-                            "0 Chapters"
-                        },
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                    )
-                }
-                LinearProgressIndicator(
-                    progress = if (totalChaps > 0) (currentReadChNum.toFloat() / totalChaps).coerceIn(0f, 1f) else 0f,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.outlineVariant
-                )
+                            
             }
         }
+    }
+
+    // Swipe right to continue reading, left to listen.
+    val swipeState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> onRead()
+                SwipeToDismissBoxValue.EndToStart -> onListen()
+                else -> {}
+            }
+            false // snap back; the card stays in the list
+        },
+        positionalThreshold = { it * 0.35f }
+    )
+    SwipeToDismissBox(
+        state = swipeState,
+        enableDismissFromStartToEnd = !isBatchMode,
+        enableDismissFromEndToStart = !isBatchMode,
+        modifier = modifier,
+        backgroundContent = {
+            val toRead = swipeState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .padding(horizontal = 20.dp),
+                contentAlignment = if (toRead) Alignment.CenterStart else Alignment.CenterEnd
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(
+                        if (toRead) Icons.Default.MenuBook else Icons.Default.Headphones, null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        if (toRead) "Continue reading" else "Listen",
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    ) {
+    // Compact card: cover, title, one progress line — several novels fit on screen.
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { if (isBatchMode) onToggleSelect() else onRead() }
+            .testTag("library_book_card_${book.id}"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isBatchMode) {
+                Checkbox(checked = isSelected, onCheckedChange = { onToggleSelect() })
+            }
+            val cover: Any? = book.coverLocalPath?.takeIf { it.isNotEmpty() && File(it).exists() }?.let { File(it) }
+                ?: book.coverUrl?.takeIf { it.isNotEmpty() }
+            if (cover != null) {
+                AsyncImage(
+                    model = cover,
+                    contentDescription = null,
+                    modifier = Modifier.size(width = 46.dp, height = 64.dp).clip(RoundedCornerShape(6.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(width = 46.dp, height = 64.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        book.title.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = displayTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        progress.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (progress.caughtUp) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (progress.caughtUp) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (progress.caughtUp) Text("✓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    if (isCheckingNewChapters) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                }
+                LinearProgressIndicator(
+                    progress = { progress.fraction },
+                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                    trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                )
+                val offline = progress.downloaded
+                if (offline > 0 || book.url.startsWith("local://")) {
+                    Text(
+                        if (book.url.startsWith("local://")) "Imported · $offline offline" else "$offline offline",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                    )
+                }
+            }
+            IconButton(onClick = { expandedMenu = true }) {
+                Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Menu for ${book.title}")
+            }
+        }
+    }
     }
 }
 

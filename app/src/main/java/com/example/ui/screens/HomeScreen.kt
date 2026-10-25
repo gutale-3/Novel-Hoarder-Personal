@@ -47,6 +47,8 @@ fun HomeScreen(
     val totalBooksCount by viewModel.totalBooks.collectAsState(0)
     val totalChaptersCount by viewModel.totalChapters.collectAsState(0)
     val bookStatsMap by viewModel.allBookStatsMap.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val recent = remember(books, bookStatsMap) { books.sortedByDescending { LibraryPrefs.lastReadAt(context, it.id) } }
 
     LazyColumn(
         modifier = modifier
@@ -88,232 +90,58 @@ fun HomeScreen(
             com.example.ui.components.AppUpdateCard(alwaysShow = false)
         }
 
-        // 1. Offline Mode Indicator
-        item {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 6.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .background(Color(0xFF34D399), RoundedCornerShape(50))
-                )
-                Text(
-                    text = "OFFLINE MODE ACTIVE",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        color = Color(0xFF34D399),
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp
-                    )
-                )
-            }
-        }
-
-        // 2. Hero Section / Immersive Storage Card
-        item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                Color(0xFF1B1D2F),
-                                Color(0xFF0F101A)
-                            )
-                        )
-                    )
-                    .border(
-                        BorderStroke(
-                            1.5.dp,
-                            Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color(0xFFFFE885).copy(alpha = 0.6f),
-                                    Color(0xFFD4AF37).copy(alpha = 0.2f),
-                                    Color(0xFFFFE885).copy(alpha = 0.5f)
-                                )
-                            )
-                        ),
-                        RoundedCornerShape(28.dp)
-                    )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
+        // Continue reading: the novel you were last in, one tap away.
+        recent.firstOrNull()?.takeIf { LibraryPrefs.lastReadAt(context, it.id) > 0 }?.let { last ->
+            item {
+                val progress = com.example.util.ReadingProgress.of(last, bookStatsMap[last.id])
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { onOpenBook(last.id) },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "NOVEL HOARDER",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 2.sp,
-                                    color = Color(0xFFFFD700)
-                                ),
-                                modifier = Modifier.testTag("app_hero_title")
-                            )
-                            Text(
-                                text = "OFFLINE VAULT",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Normal,
-                                    letterSpacing = 1.sp,
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-                                ),
-                                modifier = Modifier.padding(top = 2.dp)
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val cover: Any? = last.coverLocalPath?.takeIf { it.isNotEmpty() && File(it).exists() }?.let { File(it) }
+                            ?: last.coverUrl?.takeIf { it.isNotEmpty() }
+                        if (cover != null) {
+                            AsyncImage(
+                                model = cover, contentDescription = null,
+                                modifier = Modifier.size(width = 60.dp, height = 84.dp).clip(RoundedCornerShape(10.dp)),
+                                contentScale = ContentScale.Crop
                             )
                         }
-                        Image(
-                            painter = painterResource(id = com.example.R.drawable.inkvault_logo),
-                            contentDescription = "Inkvault logo",
-                            modifier = Modifier.size(56.dp)
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "Offline Database",
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                color = Color(0xFF909194),
-                                fontWeight = FontWeight.Medium,
-                                letterSpacing = 0.5.sp
-                            )
-                        )
-                        Row(
-                            verticalAlignment = Alignment.Bottom,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        ) {
+                        Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "100",
-                                style = MaterialTheme.typography.displayMedium.copy(
-                                    fontWeight = FontWeight.Light,
-                                    color = Color.White
-                                )
+                                "Continue reading", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
                             )
                             Text(
-                                text = "%",
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                modifier = Modifier.padding(bottom = 8.dp, start = 2.dp)
+                                last.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 2, overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                text = "Synced Local Cache",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = Color(0xFF909194)
-                                ),
-                                modifier = Modifier.padding(bottom = 8.dp)
+                                progress.label, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                            )
+                            LinearProgressIndicator(
+                                progress = { progress.fraction },
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
                             )
                         }
-
-                        // Progress bar mimicking the mockup
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(Color(0xFF2D2F31))
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth() // 100% cache active
-                                    .background(MaterialTheme.colorScheme.primary)
-                            )
+                        FilledIconButton(onClick = { onOpenBook(last.id) }, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Continue reading ${last.title}")
                         }
                     }
                 }
             }
         }
 
-        // 3. Statistics Cards (Horizontal)
+        // Library at a glance
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Book Count Card
-                Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(96.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF1C1E21)
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, Color(0xFF2D2F31))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Saved Novels",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = Color(0xFF909194),
-                                fontWeight = FontWeight.Medium
-                            )
-                        )
-                        Text(
-                            text = "$totalBooksCount",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        )
-                    }
-                }
-
-                // Chapter Count Card
-                Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(96.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF1C1E21)
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, Color(0xFF2D2F31))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Total Chapters",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = Color(0xFF909194),
-                                fontWeight = FontWeight.Medium
-                            )
-                        )
-                        Text(
-                            text = "$totalChaptersCount",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        )
-                    }
-                }
-            }
+            Text(
+                "$totalBooksCount novels · $totalChaptersCount chapters saved",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         // Quick Actions Row
@@ -359,89 +187,6 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Open Library", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // Continue Listening Card
-        if (viewModel.hasResumableSession) {
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { viewModel.progress.resumeLastSession() }
-                        .testTag("home_continue_listening_card"),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Play Icon Button
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "CONTINUE LISTENING",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = viewModel.resumeBookName,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = viewModel.resumeChapterTitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        // Close button to clear progress
-                        IconButton(
-                            onClick = {
-                                viewModel.progress.clearTtsProgress()
-                                viewModel.progress.loadResumableTtsSession()
-                            },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear session",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -502,10 +247,10 @@ fun HomeScreen(
                 }
             }
         } else {
-            items(books.take(5)) { book ->
+            items(recent.take(5), key = { it.id }) { book ->
                 RecentBookRow(
                     book = book,
-                    unreadCount = bookStatsMap[book.id]?.unreadCount ?: 0,
+                    stats = bookStatsMap[book.id],
                     onClick = { onOpenBook(book.id) }
                 )
             }
@@ -516,16 +261,11 @@ fun HomeScreen(
 @Composable
 fun RecentBookRow(
     book: BookEntity,
-    unreadCount: Int,
+    stats: com.example.data.local.BookStats?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val readChapters = (book.totalChapters - unreadCount).coerceAtLeast(0)
-    val progressPercent = if (book.totalChapters > 0) {
-        (readChapters.toFloat() / book.totalChapters * 100).toInt().coerceIn(0, 100)
-    } else {
-        0
-    }
+    val progress = remember(book, stats) { com.example.util.ReadingProgress.of(book, stats) }
 
     Card(
         modifier = modifier
@@ -541,7 +281,7 @@ fun RecentBookRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Elegant Cover Image with text fallback
@@ -551,7 +291,7 @@ fun RecentBookRow(
                     model = File(book.coverLocalPath!!),
                     contentDescription = "${book.title} Cover",
                     modifier = Modifier
-                        .size(width = 52.dp, height = 72.dp)
+                        .size(width = 42.dp, height = 58.dp)
                         .clip(RoundedCornerShape(10.dp)),
                     contentScale = ContentScale.Crop
                 )
@@ -560,14 +300,14 @@ fun RecentBookRow(
                     model = book.coverUrl,
                     contentDescription = "${book.title} Cover",
                     modifier = Modifier
-                        .size(width = 52.dp, height = 72.dp)
+                        .size(width = 42.dp, height = 58.dp)
                         .clip(RoundedCornerShape(10.dp)),
                     contentScale = ContentScale.Crop
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(width = 52.dp, height = 72.dp)
+                        .size(width = 42.dp, height = 58.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(
                             Brush.linearGradient(
@@ -605,41 +345,14 @@ fun RecentBookRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Author: ${book.author}",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = progress.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (progress.caughtUp) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "$progressPercent% Read",
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
-                    Text(
-                        text = "$readChapters/${book.totalChapters} Chs",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                    )
-                }
-                
                 LinearProgressIndicator(
-                    progress = if (book.totalChapters > 0) readChapters.toFloat() / book.totalChapters else 0f,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp)),
-                    color = MaterialTheme.colorScheme.primary,
+                    progress = { progress.fraction },
+                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
                     trackColor = MaterialTheme.colorScheme.outlineVariant
                 )
             }
