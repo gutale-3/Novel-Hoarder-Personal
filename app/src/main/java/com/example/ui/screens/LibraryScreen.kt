@@ -79,6 +79,7 @@ fun LibraryScreen(
     var searchQuery by remember { mutableStateOf("") }
     var sortBy by remember { mutableStateOf(LibraryPrefs.sort(context)) }
     var quickFilter by remember { mutableStateOf(LibraryPrefs.filter(context)) }
+    var hideFinished by remember { mutableStateOf(LibraryPrefs.hideFinished(context)) }
     val updateEntries by remember { com.example.background.ChapterUpdatesStore.get(context).entries }.collectAsState()
     var isBatchMode by remember { mutableStateOf(false) }
     var selectedBookIds by remember { mutableStateOf(emptySet<String>()) }
@@ -179,19 +180,20 @@ fun LibraryScreen(
         }
     }
 
-    val filteredAndSortedBooks = remember(books, searchQuery, sortBy, selectedCategory, bookStatsMap, quickFilter, updateEntries) {
+    val filteredAndSortedBooks = remember(books, searchQuery, sortBy, selectedCategory, bookStatsMap, quickFilter, updateEntries, hideFinished) {
         var list = books.filter {
             (selectedCategory == "All" || it.category.equals(selectedCategory, ignoreCase = true)) &&
             (it.title.contains(searchQuery, ignoreCase = true) || it.author.contains(searchQuery, ignoreCase = true))
         }
         list = list.filter { b ->
-            val st = bookStatsMap[b.id]
+            // Same chapter-number progress as the cards show.
+            val p = com.example.util.ReadingProgress.of(b, bookStatsMap[b.id])
             when (quickFilter) {
-                "Unread" -> (st?.unreadCount ?: 0) > 0
+                "Unread" -> p.left > 0
                 "New chapters" -> (updateEntries[b.id]?.newCount ?: 0) > 0
-                "Not started" -> (st?.readCount ?: 0) == 0
-                "Finished" -> st != null && st.readCount > 0 && st.unreadCount == 0
-                else -> true
+                "Not started" -> !p.started
+                "Finished" -> p.caughtUp
+                else -> !(hideFinished && p.caughtUp)
             }
         }
 
@@ -641,6 +643,16 @@ fun LibraryScreen(
                             expanded = showSortMenu,
                             onDismissRequest = { showSortMenu = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("Hide finished novels") },
+                                leadingIcon = { Checkbox(checked = hideFinished, onCheckedChange = null) },
+                                onClick = {
+                                    hideFinished = !hideFinished
+                                    LibraryPrefs.setHideFinished(context, hideFinished)
+                                    showSortMenu = false
+                                }
+                            )
+                            HorizontalDivider()
                             LibraryPrefs.SORTS.forEach { option ->
                                 DropdownMenuItem(
                                     text = { Text(option) },

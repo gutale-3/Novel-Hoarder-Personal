@@ -547,6 +547,18 @@ fun ReaderContent(
                                     onTap = {
                                         onToggleControls()
                                     },
+                                    // Double-tap: read aloud from this paragraph, or pause if it's the one being read.
+                                    onDoubleTap = {
+                                        val book = bookState
+                                        val thisChapter = viewModel.ttsPlayingChapter?.id == activeChapter.id
+                                        when {
+                                            book == null -> {}
+                                            thisChapter && viewModel.ttsIsPlaying && viewModel.ttsActiveParagraphIndex == idx -> viewModel.tts.pauseTts()
+                                            // seekToParagraph starts speaking from there (also when paused)
+                                            thisChapter && (viewModel.ttsIsPlaying || viewModel.ttsIsPaused) -> viewModel.progress.seekToParagraph(idx)
+                                            else -> viewModel.tts.speak(activeChapter.content, book, activeChapter, startFromParagraphIndex = idx)
+                                        }
+                                    },
                                     onLongPress = {
                                         onParagraphLongClick(idx, para)
                                     }

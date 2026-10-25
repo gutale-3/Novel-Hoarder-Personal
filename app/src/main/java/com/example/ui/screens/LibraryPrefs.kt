@@ -18,6 +18,10 @@ object LibraryPrefs {
     fun filter(c: Context) = prefs(c).getString("filter", "")!!
     fun setFilter(c: Context, v: String) = prefs(c).edit().putString("filter", v).apply()
 
+    /** Leave novels you've caught up on out of the list unless the Finished filter is chosen. */
+    fun hideFinished(c: Context) = prefs(c).getBoolean("hide_finished", false)
+    fun setHideFinished(c: Context, v: Boolean) = prefs(c).edit().putBoolean("hide_finished", v).apply()
+
     fun customShelves(c: Context): List<String> = runCatching {
         val a = JSONArray(prefs(c).getString("shelves", "[]"))
         (0 until a.length()).map { a.getString(it) }

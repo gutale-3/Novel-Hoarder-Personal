@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.text.format.DateUtils
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,6 +38,7 @@ import java.io.File
  * Every book with new chapters in one place, like Mihon's Updates tab. Fed by the periodic
  * background check and by "Check now"; "Download" queues the new chapters immediately.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UpdatesScreen(
     viewModel: MainViewModel,
@@ -153,6 +155,21 @@ fun UpdatesScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(withNew, key = { it.first.id }) { (book, entry) ->
+                // Swipe either way to mark it seen (it leaves the list and the badge).
+                val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
+                    if (v != SwipeToDismissBoxValue.Settled) store.clear(book.id)
+                    v != SwipeToDismissBoxValue.Settled
+                })
+                SwipeToDismissBox(
+                    state = swipe,
+                    backgroundContent = {
+                        Box(
+                            Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer).padding(horizontal = 20.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) { Text("Mark as seen", color = MaterialTheme.colorScheme.onSecondaryContainer) }
+                    }
+                ) {
                 UpdateRow(
                     book = book,
                     entry = entry,
@@ -167,6 +184,7 @@ fun UpdatesScreen(
                         }
                     }
                 )
+                }
             }
             if (withErrors.isNotEmpty()) {
                 item {

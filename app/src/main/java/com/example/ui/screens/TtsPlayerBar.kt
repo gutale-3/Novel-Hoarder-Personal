@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -191,7 +192,11 @@ fun TtsPlayerBar(
         return
     }
 
-    // Full controls
+    // Full controls (optionally with big buttons, for listening in bed in the dark)
+    val ctx = LocalContext.current
+    var large by remember { mutableStateOf(ctx.getSharedPreferences("novel_hoarder_prefs", 0).getBoolean("player_large", false)) }
+    val btn = if (large) 60.dp else 48.dp
+    val ico = if (large) 36.dp else 24.dp
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -262,34 +267,34 @@ fun TtsPlayerBar(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { viewModel.tts.playPreviousChapterTts() }) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous chapter")
+                IconButton(onClick = { viewModel.tts.playPreviousChapterTts() }, modifier = Modifier.size(btn)) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous chapter", modifier = Modifier.size(ico))
                 }
-                IconButton(onClick = { viewModel.progress.skipParagraph(-1) }) {
-                    Icon(Icons.Default.NavigateBefore, contentDescription = "Back one paragraph", modifier = Modifier.size(30.dp))
+                IconButton(onClick = { viewModel.progress.skipParagraph(-1) }, modifier = Modifier.size(btn)) {
+                    Icon(Icons.Default.NavigateBefore, contentDescription = "Back one paragraph", modifier = Modifier.size(ico + 6.dp))
                 }
                 FilledIconButton(
                     onClick = playPause,
                     enabled = !viewModel.isPreparingVoice,
-                    modifier = Modifier.size(60.dp)
+                    modifier = Modifier.size(if (large) 84.dp else 60.dp)
                 ) {
                     Icon(
                         if (viewModel.ttsIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (viewModel.ttsIsPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(if (large) 48.dp else 34.dp)
                     )
                 }
-                IconButton(onClick = { viewModel.progress.skipParagraph(1) }) {
-                    Icon(Icons.Default.NavigateNext, contentDescription = "Forward one paragraph", modifier = Modifier.size(30.dp))
+                IconButton(onClick = { viewModel.progress.skipParagraph(1) }, modifier = Modifier.size(btn)) {
+                    Icon(Icons.Default.NavigateNext, contentDescription = "Forward one paragraph", modifier = Modifier.size(ico + 6.dp))
                 }
-                IconButton(onClick = { viewModel.tts.playNextChapterTts() }) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next chapter")
+                IconButton(onClick = { viewModel.tts.playNextChapterTts() }, modifier = Modifier.size(btn)) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "Next chapter", modifier = Modifier.size(ico))
                 }
             }
 
             // Quick settings: labelled chips instead of unexplained icons
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
             ) {
                 AssistChip(
@@ -300,17 +305,36 @@ fun TtsPlayerBar(
                     },
                     leadingIcon = { Icon(Icons.Default.Speed, null, Modifier.size(16.dp)) }
                 )
-                AssistChip(
-                    onClick = { viewModel.tts.initTts(); showSettingsDialog = true },
-                    label = { Text(sleepLabel ?: "Sleep") },
-                    leadingIcon = { Icon(Icons.Default.Bedtime, null, Modifier.size(16.dp)) }
-                )
+                // Sleep timer straight from the chip, including "stop at the end of this chapter".
+                Box {
+                    var sleepMenu by remember { mutableStateOf(false) }
+                    AssistChip(
+                        onClick = { sleepMenu = true },
+                        label = { Text(sleepLabel ?: "Sleep") },
+                        leadingIcon = { Icon(Icons.Default.Bedtime, null, Modifier.size(16.dp)) }
+                    )
+                    DropdownMenu(expanded = sleepMenu, onDismissRequest = { sleepMenu = false }) {
+                        listOf(0 to "Off", 15 to "15 minutes", 30 to "30 minutes", 45 to "45 minutes", 60 to "1 hour", 90 to "1½ hours", -1 to "End of this chapter")
+                            .forEach { (m, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label, fontWeight = if (viewModel.sleepTimerMinutes == m) FontWeight.Bold else FontWeight.Normal) },
+                                    onClick = { viewModel.tts.startSleepTimer(m); sleepMenu = false }
+                                )
+                            }
+                    }
+                }
                 FilterChip(
                     selected = viewModel.ttsAutoScrollEnabled,
                     onClick = { viewModel.tts.toggleTtsAutoScroll() },
                     label = { Text("Follow") },
                     leadingIcon = { Icon(Icons.Default.MenuBook, null, Modifier.size(16.dp)) }
                 )
+                IconButton(onClick = {
+                    large = !large
+                    ctx.getSharedPreferences("novel_hoarder_prefs", 0).edit().putBoolean("player_large", large).apply()
+                }) {
+                    Icon(Icons.Default.FormatSize, contentDescription = if (large) "Normal-size buttons" else "Big buttons")
+                }
                 IconButton(onClick = { viewModel.tts.initTts(); showSettingsDialog = true }) {
                     Icon(Icons.Default.Tune, contentDescription = "Voice settings")
                 }
