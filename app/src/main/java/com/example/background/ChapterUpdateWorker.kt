@@ -98,16 +98,6 @@ class ChapterUpdateWorker(
         if (books.isEmpty()) return Result.success()
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Chapter Updates",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Notifies when new novel chapters are released"
-            }
-            notificationManager.createNotificationChannel(channel)
-        }
 
         val updatesStore = ChapterUpdatesStore.get(context)
         val quota = com.example.data.scraper.DownloadQuota.get(context)
@@ -206,40 +196,17 @@ class ChapterUpdateWorker(
 
     /** One grouped alert per run at most, and only when the user's spacing allows it. */
     private fun notifyNewChapters(
-        notificationManager: NotificationManager,
+        @Suppress("UNUSED_PARAMETER") notificationManager: NotificationManager,
         found: List<Triple<String, String, Int>>,
         pendingNow: Map<String, Int>
     ) {
         val prefs = NotificationPrefs.get(context)
         prefs.forgetCaughtUp(pendingNow)
+        if (prefs.digestHour >= 0) return // the daily summary reports them instead
         val due = prefs.chapterAlertsDue(found)
         if (due.isEmpty()) return
         prefs.recordChapterAlert(found)
-
-        val intent = Intent(context, com.example.MainActivity::class.java)
-            .putExtra("open_route", "updates")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val pending = PendingIntent.getActivity(
-            context, NOTIFICATION_ID_BASE, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val lines = due.map { (_, title, n) -> "$title — $n new" }
-        val style = NotificationCompat.InboxStyle()
-        lines.take(6).forEach { style.addLine(it) }
-        if (lines.size > 6) style.setSummaryText("+${lines.size - 6} more")
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_popup_sync)
-            .setContentTitle(if (due.size == 1) "New chapters: ${due[0].second}" else "New chapters in ${due.size} novels")
-            .setContentText(lines.joinToString(" · "))
-            .setStyle(style)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(pending)
-            .setAutoCancel(true)
-            .build()
-        // Clear the old one-per-novel alerts, then post the single summary.
-        notificationManager.activeNotifications
-            .filter { it.id in (NOTIFICATION_ID_BASE + 1)..(NOTIFICATION_ID_BASE + 999) }
-            .forEach { notificationManager.cancel(it.id) }
-        notificationManager.notify(NOTIFICATION_ID_BASE, notification)
+        ChapterAlerts.post(context, due.map { (_, title, n) -> title to n })
     }
 
     /**

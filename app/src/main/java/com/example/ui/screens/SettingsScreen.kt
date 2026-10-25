@@ -423,6 +423,21 @@ fun SettingsScreen(
 
             // --- 4. Downloads ---
             item {
+                SectionHeader("Notifications")
+                var showNotifDialog by remember { mutableStateOf(false) }
+                val allBooksForNotif by viewModel.repository.allBooks.collectAsState(initial = emptyList())
+                if (showNotifDialog) {
+                    com.example.ui.components.NotificationSettingsDialog(
+                        allBooksForNotif.filter { !it.url.startsWith("local://") }
+                    ) { showNotifDialog = false }
+                }
+                OutlinedButton(onClick = { showNotifDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("New chapters, download checks, site alerts…")
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            }
+
+            item {
                 SectionHeader("Downloads & Web Scraping")
 
                 Row(

@@ -24,6 +24,9 @@ fun NotificationSettingsDialog(books: List<BookEntity>, onDismiss: () -> Unit) {
     var needsYou by remember { mutableStateOf(prefs.downloadNeedsYou) }
     var siteHealth by remember { mutableStateOf(prefs.siteHealth) }
     var muted by remember { mutableStateOf(prefs.mutedBooks()) }
+    var digestHour by remember { mutableIntStateOf(prefs.digestHour) }
+    var sound by remember { mutableStateOf(prefs.chapterSound) }
+    val ctx = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -37,6 +40,24 @@ fun NotificationSettingsDialog(books: List<BookEntity>, onDismiss: () -> Unit) {
                     }
                 }
                 if (newChapters) item {
+                    Text("When", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = digestHour < 0,
+                            onClick = { digestHour = -1; prefs.digestHour = -1; com.example.background.ChapterAlerts.scheduleDigest(ctx) },
+                            label = { Text("As they're found") }
+                        )
+                        listOf(8, 12, 18, 21).forEach { h ->
+                            FilterChip(
+                                selected = digestHour == h,
+                                onClick = { digestHour = h; prefs.digestHour = h; com.example.background.ChapterAlerts.scheduleDigest(ctx) },
+                                label = { Text("Daily at ${if (h <= 12) "$h am".replace("12 am", "12 pm") else "${h - 12} pm"}") }
+                            )
+                        }
+                    }
+                    ToggleRow("Sound", "Off: alerts arrive silently", sound) { sound = it; prefs.chapterSound = it }
+                }
+                if (newChapters && digestHour < 0) item {
                     Text("At most", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(0 to "Every check", 6 to "Every 6 h", 12 to "Every 12 h", 24 to "Once a day", 72 to "Every 3 days", 168 to "Once a week")

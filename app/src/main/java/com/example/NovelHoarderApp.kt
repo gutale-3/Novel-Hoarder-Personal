@@ -118,6 +118,7 @@ class NovelHoarderApp : Application() {
             com.example.background.AutoBackupWorker.schedule(this)
             com.example.background.DownloadQueue.schedule(this)
             com.example.background.SiteHealthWorker.schedule(this)
+            com.example.background.ChapterAlerts.scheduleDigest(this)
         } catch (t: Throwable) {
             Log.e("NovelHoarderApp", "Failed to schedule background chapter updates", t)
         }

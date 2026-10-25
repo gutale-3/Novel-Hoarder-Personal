@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -84,9 +85,6 @@ fun UpdatesScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = { showNotifications = true }) {
-                Icon(Icons.Default.Notifications, contentDescription = "Notification settings")
-            }
             TextButton(onClick = { showLimits = true }) { Text("Limits") }
             FilledTonalButton(
                 onClick = { ChapterUpdateWorker.checkNow(context) },
@@ -103,6 +101,29 @@ fun UpdatesScreen(
                     Spacer(Modifier.width(6.dp))
                     Text("Check now")
                 }
+            }
+        }
+
+        // Plain on/off for new-chapter alerts, always visible; "Options" for timing, sound, novels.
+        run {
+            val nPrefs = remember { com.example.background.NotificationPrefs.get(context) }
+            var alertsOn by remember { mutableStateOf(nPrefs.newChapters) }
+            LaunchedEffect(showNotifications) { if (!showNotifications) alertsOn = nPrefs.newChapters }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (alertsOn) Icons.Default.Notifications else Icons.Default.NotificationsOff, null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    if (alertsOn) "New-chapter notifications on" else "New-chapter notifications off",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f).padding(start = 10.dp)
+                )
+                TextButton(onClick = { showNotifications = true }) { Text("Options") }
+                Switch(checked = alertsOn, onCheckedChange = { alertsOn = it; nPrefs.newChapters = it })
             }
         }
 

@@ -20,6 +20,16 @@ class NotificationPrefs private constructor(context: Context) {
         get() = prefs.getInt("min_hours", 24)
         set(v) = prefs.edit().putInt("min_hours", v).apply()
 
+    /** Hour of day (0–23) for a single daily summary instead of alerts as chapters are found; -1 = off. */
+    var digestHour: Int
+        get() = prefs.getInt("digest_hour", -1)
+        set(v) = prefs.edit().putInt("digest_hour", v).apply()
+
+    /** New-chapter alerts are silent unless this is on. */
+    var chapterSound: Boolean
+        get() = prefs.getBoolean("chapter_sound", false)
+        set(v) = prefs.edit().putBoolean("chapter_sound", v).apply()
+
     var downloadNeedsYou: Boolean
         get() = prefs.getBoolean("download_needs_you", true)
         set(v) = prefs.edit().putBoolean("download_needs_you", v).apply()
