@@ -73,7 +73,7 @@ class GeminiProvider(private val context: Context) : AiProvider {
             conn.requestMethod = "POST"
             conn.doOutput = true
             conn.connectTimeout = 20_000
-            conn.readTimeout = 60_000
+            conn.readTimeout = 150_000 // a long chapter takes a while to rewrite
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("x-goog-api-key", key)
             conn.outputStream.use { it.write(body.toString().toByteArray()) }

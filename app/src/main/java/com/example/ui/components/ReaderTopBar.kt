@@ -37,7 +37,9 @@ fun ReaderTopBar(
     onOpenTapZones: () -> Unit,
     onOpenSourceMigration: () -> Unit,
     onOpenTags: () -> Unit = {},
-    onOpenRevisionHistory: () -> Unit = {}
+    onOpenRevisionHistory: () -> Unit = {},
+    onOpenPolish: () -> Unit = {},
+    polishActive: Boolean = false
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -123,6 +125,15 @@ fun ReaderTopBar(
                         Icons.Default.RecordVoiceOver
                     }
                     Icon(imageVector = icon, contentDescription = if (isCurrentChapterPlaying) "Pause narration" else "Listen to Chapter")
+                }
+
+                // AI polish (lit when this novel shows polished text)
+                IconButton(onClick = onOpenPolish) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = "Polish translation",
+                        tint = if (polishActive) MaterialTheme.colorScheme.primary else barContentColor.copy(alpha = 0.7f)
+                    )
                 }
 
                 // Open TOC drawer (Always visible)

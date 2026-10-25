@@ -158,12 +158,36 @@ fun ReaderScreen(
     }
 
     // Active Chapter object
-    val activeChapter = remember(chapters, archivedChapters, currentChapterId) {
+    val rawActiveChapter = remember(chapters, archivedChapters, currentChapterId) {
         if (currentChapterId.isEmpty()) {
             chapters.firstOrNull()
         } else {
             // A hidden chapter opened from the drawer or a bookmark still opens.
             chapters.find { it.id == currentChapterId } ?: archivedChapters.find { it.id == currentChapterId }
+        }
+    }
+
+    // AI polish: show the polished copy when the novel has it switched on (the original stays
+    // in the database and is what editing tools change).
+    val polisher = remember { com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application).polisher }
+    var polishOn by remember(bookId) { mutableStateOf(polisher.isEnabled(bookId)) }
+    var showPolishDialog by remember { mutableStateOf(false) }
+    val polishedCopy by remember(rawActiveChapter?.id) {
+        rawActiveChapter?.let { viewModel.repository.getPolishedChapterFlow(it.id) } ?: kotlinx.coroutines.flow.flowOf(null)
+    }.collectAsState(null)
+    val activeChapter = remember(rawActiveChapter, polishedCopy, polishOn) {
+        val raw = rawActiveChapter
+        val p = polishedCopy
+        if (raw != null && polishOn && p != null && p.chapterId == raw.id && polisher.isCurrent(p, raw)) raw.copy(content = p.content) else raw
+    }
+    // Polish this chapter and the next two as they're reached.
+    LaunchedEffect(rawActiveChapter?.id, polishOn) {
+        val raw = rawActiveChapter ?: return@LaunchedEffect
+        if (!polishOn || !polisher.isAvailable()) return@LaunchedEffect
+        val idx = chapters.indexOfFirst { it.id == raw.id }
+        val ahead = listOf(raw) + (if (idx >= 0) chapters.drop(idx + 1).take(2) else emptyList())
+        com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application).appScope.launch {
+            for (ch in ahead) if (ch.content.isNotBlank()) polisher.polish(ch)
         }
     }
 
@@ -179,7 +203,7 @@ fun ReaderScreen(
     }
 
     // Whenever active chapter changes, save reading progress in database and prefetch next chapters
-    LaunchedEffect(activeChapter) {
+    LaunchedEffect(rawActiveChapter) {
         if (activeChapter != null && bookState != null) {
             viewModel.repository.updateBook(
                 bookState!!.copy(
@@ -357,7 +381,9 @@ fun ReaderScreen(
                     onOpenTapZones = { showTapZonesDialog = true },
                     onOpenSourceMigration = { showSourceMigrationDialog = true },
                     onOpenTags = { showTagDialogForChapter = activeChapter },
-                    onOpenRevisionHistory = { showRevisionHistoryDialog = true }
+                    onOpenRevisionHistory = { showRevisionHistoryDialog = true },
+                    onOpenPolish = { showPolishDialog = true },
+                    polishActive = polishOn
                 )
             },
             bottomBar = {
@@ -462,6 +488,17 @@ fun ReaderScreen(
     }
 
     // --- Dialogs ---
+    if (showPolishDialog) {
+        com.example.ui.components.PolishDialog(
+            bookId = bookId,
+            chapter = rawActiveChapter,
+            polisher = polisher,
+            hasPolishedCopy = polishedCopy?.let { p -> rawActiveChapter?.let { polisher.isCurrent(p, it) } } == true,
+            enabled = polishOn,
+            onEnabledChange = { on -> polishOn = on; polisher.setEnabled(bookId, on) },
+            onDismiss = { showPolishDialog = false }
+        )
+    }
     if (showSettingsDialog) {
         ReaderSettingsDialog(
             viewModel = viewModel,
@@ -487,7 +524,7 @@ fun ReaderScreen(
         ParagraphBookmarkActionDialog(
             bookId = bookId,
             currentChapterId = currentChapterId,
-            activeChapter = activeChapter,
+            activeChapter = rawActiveChapter, // edits change the original text, never the polished copy
             bookState = bookState,
             paragraphIndex = selectedParaIndexForBookmark!!,
             paragraphText = selectedParaTextForBookmark,

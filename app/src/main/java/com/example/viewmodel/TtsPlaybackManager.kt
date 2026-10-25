@@ -1507,8 +1507,11 @@ class TtsPlaybackManager(
                     withContext(Dispatchers.Main) { stopTts() }
                     return@launch
                 }
+                // Read the polished text when the novel has polish on.
+                val text = com.example.NovelHoarderApp.getContainer(application).polisher.contentFor(nextChapter)
+                val shown = nextChapter.copy(content = text)
                 withContext(Dispatchers.Main) {
-                    speak(nextChapter.content, book, nextChapter)
+                    speak(shown.content, book, shown)
                 }
             } else {
                 withContext(Dispatchers.Main) {
@@ -1526,7 +1529,10 @@ class TtsPlaybackManager(
             val chapters = repository.getChapters(book.id)
             val currentIdx = chapters.indexOfFirst { it.id == currentChapter.id }
             if (currentIdx > 0) {
-                val prevChapter = chapters[currentIdx - 1]
+                val prev = chapters[currentIdx - 1]
+                val prevChapter = prev.copy(
+                    content = com.example.NovelHoarderApp.getContainer(application).polisher.contentFor(prev)
+                )
                 withContext(Dispatchers.Main) {
                     speak(prevChapter.content, book, prevChapter)
                 }
@@ -1697,7 +1703,9 @@ class TtsPlaybackManager(
         if (bookId.isNotEmpty() && chapterId.isNotEmpty()) {
             coroutineScope.launch(Dispatchers.IO) {
                 val book = repository.getBook(bookId)
-                val chapter = repository.getChapter(chapterId)
+                val chapter = repository.getChapter(chapterId)?.let {
+                    it.copy(content = com.example.NovelHoarderApp.getContainer(application).polisher.contentFor(it))
+                }
                 if (book != null && chapter != null) {
                     withContext(Dispatchers.Main) {
                         speak(chapter.content, book, chapter, startFromParagraphIndex = para)
