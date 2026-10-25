@@ -1651,6 +1651,7 @@ class TtsPlaybackManager(
         prefs.edit()
             .putInt("progress_para_${book.id}_${chapter.id}", if (para < 0) 0 else para)
             .putString("progress_chapter_${book.id}", chapter.id)
+            .putLong("progress_at_${book.id}", System.currentTimeMillis()) // listening counts as reading
             .apply()
 
         if (lastSavedPositionChapterId != chapter.id) {

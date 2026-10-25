@@ -79,6 +79,7 @@ fun LibraryBookItem(
     downloadedCount: Int = 0,
     bookStats: BookStats? = null,
     onUpdateCategory: (String) -> Unit = {},
+    shelves: List<String> = LibraryPrefs.DEFAULT_SHELVES,
     onMigrateSource: () -> Unit = {},
     onEditDetails: () -> Unit,
     modifier: Modifier = Modifier
@@ -231,13 +232,14 @@ fun LibraryBookItem(
                                     ),
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                 )
-                                val shelfOptions = listOf(
+                                val shelfIcons = mapOf(
                                     "Reading" to Icons.Default.MenuBook,
                                     "Plan to Read" to Icons.Default.BookmarkBorder,
                                     "Waiting" to Icons.Default.HourglassEmpty,
                                     "Completed" to Icons.Default.CheckCircleOutline,
                                     "Favorites" to Icons.Default.FavoriteBorder
                                 )
+                                val shelfOptions = shelves.map { it to (shelfIcons[it] ?: Icons.Default.Folder) }
                                 shelfOptions.forEach { (catName, icon) ->
                                     val isCurrent = book.category.equals(catName, ignoreCase = true)
                                     DropdownMenuItem(

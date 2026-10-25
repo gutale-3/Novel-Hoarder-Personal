@@ -77,7 +77,9 @@ fun LibraryScreen(
 
     // Search, Filter, Sort, Batch state
     var searchQuery by remember { mutableStateOf("") }
-    var sortBy by remember { mutableStateOf("Title A-Z") } // "Title A-Z", "Title Z-A", "Total Chapters", "Unread Chapters", "Last Updated"
+    var sortBy by remember { mutableStateOf(LibraryPrefs.sort(context)) }
+    var quickFilter by remember { mutableStateOf(LibraryPrefs.filter(context)) }
+    val updateEntries by remember { com.example.background.ChapterUpdatesStore.get(context).entries }.collectAsState()
     var isBatchMode by remember { mutableStateOf(false) }
     var selectedBookIds by remember { mutableStateOf(emptySet<String>()) }
 
@@ -90,7 +92,11 @@ fun LibraryScreen(
     val bookStatsMap by viewModel.allBookStatsMap.collectAsState()
 
     // Category / Shelf state
-    val categories = listOf("All", "Reading", "Plan to Read", "Waiting", "Completed", "Favorites")
+    var shelfVersion by remember { mutableIntStateOf(0) } // bumps when a shelf is added/removed
+    val shelves = remember(shelfVersion) { LibraryPrefs.shelves(context) }
+    val categories = listOf("All") + shelves
+    var showNewShelfDialog by remember { mutableStateOf(false) }
+    var shelfToRemove by remember { mutableStateOf<String?>(null) }
     var selectedCategory by remember { mutableStateOf(viewModel.settings.activeLibraryCategory) }
 
     // Export with missing chapters state
@@ -173,21 +179,93 @@ fun LibraryScreen(
         }
     }
 
-    val filteredAndSortedBooks = remember(books, searchQuery, sortBy, selectedCategory, bookStatsMap) {
+    val filteredAndSortedBooks = remember(books, searchQuery, sortBy, selectedCategory, bookStatsMap, quickFilter, updateEntries) {
         var list = books.filter {
             (selectedCategory == "All" || it.category.equals(selectedCategory, ignoreCase = true)) &&
             (it.title.contains(searchQuery, ignoreCase = true) || it.author.contains(searchQuery, ignoreCase = true))
         }
-        
+        list = list.filter { b ->
+            val st = bookStatsMap[b.id]
+            when (quickFilter) {
+                "Unread" -> (st?.unreadCount ?: 0) > 0
+                "New chapters" -> (updateEntries[b.id]?.newCount ?: 0) > 0
+                "Not started" -> (st?.readCount ?: 0) == 0
+                "Finished" -> st != null && st.readCount > 0 && st.unreadCount == 0
+                else -> true
+            }
+        }
+
         list = when (sortBy) {
+            "Recently read" -> list.sortedByDescending { LibraryPrefs.lastReadAt(context, it.id) }
             "Title A-Z" -> list.sortedBy { it.title.lowercase() }
             "Title Z-A" -> list.sortedByDescending { it.title.lowercase() }
             "Total Chapters" -> list.sortedByDescending { it.totalChapters }
-            "Unread Chapters" -> list.sortedByDescending { bookStatsMap[it.id]?.unreadCount ?: 0 }
+            "Most unread" -> list.sortedByDescending { bookStatsMap[it.id]?.unreadCount ?: 0 }
             "Last Updated" -> list.sortedByDescending { it.updatedAt }
             else -> list.sortedBy { it.title.lowercase() }
         }
         list
+    }
+
+    if (showNewShelfDialog) {
+        var newShelf by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showNewShelfDialog = false },
+            title = { Text("Shelves") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newShelf,
+                        onValueChange = { newShelf = it },
+                        label = { Text("New shelf name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    val custom = remember(shelfVersion) { LibraryPrefs.customShelves(context) }
+                    if (custom.isNotEmpty()) Text("Your shelves", style = MaterialTheme.typography.labelLarge)
+                    custom.forEach { name ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { shelfToRemove = name }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove shelf $name")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = newShelf.isNotBlank(), onClick = {
+                    if (LibraryPrefs.addShelf(context, newShelf)) {
+                        shelfVersion++
+                        newShelf = ""
+                    } else {
+                        android.widget.Toast.makeText(context, "That shelf already exists", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showNewShelfDialog = false }) { Text("Done") } }
+        )
+    }
+    shelfToRemove?.let { name ->
+        AlertDialog(
+            onDismissRequest = { shelfToRemove = null },
+            title = { Text("Remove \"$name\"?") },
+            text = { Text("Its novels move to Reading. Nothing is deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val ids = books.filter { it.category.equals(name, true) }.map { it.id }.toSet()
+                    if (ids.isNotEmpty()) viewModel.library.bulkUpdateCategory(ids, "Reading") { }
+                    LibraryPrefs.removeShelf(context, name)
+                    if (selectedCategory == name) {
+                        selectedCategory = "All"
+                        viewModel.settings.updateActiveLibraryCategory("All")
+                    }
+                    shelfVersion++
+                    shelfToRemove = null
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { shelfToRemove = null }) { Text("Cancel") } }
+        )
     }
 
     // Glossary state
@@ -548,11 +626,12 @@ fun LibraryScreen(
                             expanded = showSortMenu,
                             onDismissRequest = { showSortMenu = false }
                         ) {
-                            listOf("Title A-Z", "Title Z-A", "Total Chapters", "Unread Chapters", "Last Updated").forEach { option ->
+                            LibraryPrefs.SORTS.forEach { option ->
                                 DropdownMenuItem(
                                     text = { Text(option) },
                                     onClick = {
                                         sortBy = option
+                                        LibraryPrefs.setSort(context, option)
                                         showSortMenu = false
                                     }
                                 )
@@ -662,7 +741,7 @@ fun LibraryScreen(
                                     expanded = showBatchCategoryMenu,
                                     onDismissRequest = { showBatchCategoryMenu = false }
                                 ) {
-                                    listOf("Reading", "Plan to Read", "Waiting", "Completed", "Favorites").forEach { cat ->
+                                    shelves.forEach { cat ->
                                         DropdownMenuItem(
                                             text = { Text("Move to $cat") },
                                             onClick = {
@@ -719,6 +798,26 @@ fun LibraryScreen(
             }
         }
 
+        // Quick filters: one tap narrows the shelf to what you want to read now.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            LibraryPrefs.FILTERS.forEach { f ->
+                FilterChip(
+                    selected = quickFilter == f,
+                    onClick = {
+                        quickFilter = if (quickFilter == f) "" else f
+                        LibraryPrefs.setFilter(context, quickFilter)
+                    },
+                    label = { Text(f, fontSize = 12.sp) }
+                )
+            }
+        }
+
         // Category Shelves / Tabs
         ScrollableTabRow(
             selectedTabIndex = categories.indexOf(selectedCategory).coerceAtLeast(0),
@@ -753,6 +852,11 @@ fun LibraryScreen(
                     }
                 )
             }
+            Tab(
+                selected = false,
+                onClick = { showNewShelfDialog = true },
+                text = { Text("+ Shelf", color = MaterialTheme.colorScheme.primary) }
+            )
         }
                 } // ends if (currentMainTab == 0) header controls
             } // ends Column inside Box
@@ -827,6 +931,7 @@ fun LibraryScreen(
             } else {
                 items(filteredAndSortedBooks) { book ->
                     LibraryBookItem(
+                        shelves = shelves,
                         book = book,
                         onRead = { onOpenBook(book.id) },
                         onListen = { viewModel.progress.startTtsForBook(book) },
@@ -1458,7 +1563,7 @@ fun LibraryScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("Reading", "Plan to Read", "Waiting", "Completed", "Favorites").forEach { cat ->
+                        shelves.forEach { cat ->
                             FilterChip(
                                 selected = editCategory == cat,
                                 onClick = { editCategory = cat },

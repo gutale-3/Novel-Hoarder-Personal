@@ -64,6 +64,26 @@ fun HomeScreen(
             com.example.ui.components.CrashReportCard()
         }
 
+        // Reading streak at a glance (details in Reading Stats)
+        if (viewModel.settings.enableReadingStats &&
+            (viewModel.stats.currentStreakDays > 0 || viewModel.stats.todayReadingSeconds >= 60)
+        ) {
+            item {
+                val streak = viewModel.stats.currentStreakDays
+                val todayMin = (viewModel.stats.todayReadingSeconds / 60).toInt()
+                Text(
+                    buildString {
+                        if (streak > 0) append("🔥 $streak-day streak")
+                        if (streak > 0 && todayMin > 0) append("  ·  ")
+                        if (todayMin > 0) append("$todayMin min today")
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
         item {
             com.example.ui.components.AppUpdateCard(alwaysShow = false)
         }
