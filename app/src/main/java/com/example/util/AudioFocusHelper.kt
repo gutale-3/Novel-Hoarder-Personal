@@ -13,7 +13,8 @@ import android.os.Build
 class AudioFocusHelper(
     context: Context,
     private val onFocusLost: (isTransient: Boolean) -> Unit,
-    private val onFocusGained: () -> Unit
+    private val onFocusGained: () -> Unit,
+    private val onDuck: (Boolean) -> Unit = {}
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var focusRequest: AudioFocusRequest? = null
@@ -21,9 +22,10 @@ class AudioFocusHelper(
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> onFocusLost(false)
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> onFocusLost(true)
-            AudioManager.AUDIOFOCUS_GAIN -> onFocusGained()
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> onFocusLost(true)
+            // A short sound (notification, navigation prompt): keep reading, just quieter.
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> onDuck(true)
+            AudioManager.AUDIOFOCUS_GAIN -> { onDuck(false); onFocusGained() }
         }
     }
 

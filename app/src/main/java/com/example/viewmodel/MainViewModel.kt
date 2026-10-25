@@ -388,7 +388,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val discoveryError: String get() = aiFeatures.discoveryError
 
     // --- Chapter Recap ---
-    suspend fun getChapterRecap(chapter: ChapterEntity, force: Boolean = false): String? {
+    suspend fun getChapterRecap(passed: ChapterEntity, force: Boolean = false): String? {
+        // Always summarise the stored text (list rows in the reader carry no text).
+        val chapter = repository.getChapter(passed.id) ?: passed
         if (!force) {
             val cached = repository.getChapterRecap(chapter.id)
             if (cached != null) return cached.summary

@@ -43,8 +43,9 @@ fun ReaderScreen(
     // Flows are remembered: a new Flow on each recomposition restarts every query (all chapter
     // text) while scrolling.
     val bookState by remember(bookId) { viewModel.repository.getBookFlow(bookId) }.collectAsState(null)
-    val chapters by remember(bookId) { viewModel.repository.getChaptersFlow(bookId) }.collectAsState(emptyList())
-    val archivedChapters by remember(bookId) { viewModel.progress.getArchivedChaptersFlow(bookId) }.collectAsState(emptyList())
+    // Lists without chapter text (fast to load); the open chapter's text is loaded on its own below.
+    val chapters by remember(bookId) { viewModel.repository.getChapterOutlineFlow(bookId) }.collectAsState(emptyList())
+    val archivedChapters by remember(bookId) { viewModel.repository.getArchivedChapterOutlineFlow(bookId) }.collectAsState(emptyList())
     val bookmarks by remember(bookId) { viewModel.repository.getBookmarksFlow(bookId) }.collectAsState(emptyList())
     val glossaries by remember(bookId) { viewModel.repository.getGlossaryFlow(bookId) }.collectAsState(emptyList())
     val textReplacementRules by remember(bookId) { viewModel.textRules.getRulesForBookFlow(bookId) }.collectAsState(emptyList())
@@ -159,7 +160,7 @@ fun ReaderScreen(
     }
 
     // Active Chapter object
-    val rawActiveChapter = remember(chapters, archivedChapters, currentChapterId) {
+    val outlineActive = remember(chapters, archivedChapters, currentChapterId) {
         if (currentChapterId.isEmpty()) {
             chapters.firstOrNull()
         } else {
@@ -167,6 +168,11 @@ fun ReaderScreen(
             chapters.find { it.id == currentChapterId } ?: archivedChapters.find { it.id == currentChapterId }
         }
     }
+    val fullActive by remember(outlineActive?.id) {
+        outlineActive?.let { viewModel.repository.getChapterFlow(it.id) } ?: kotlinx.coroutines.flow.flowOf(null)
+    }.collectAsState(null)
+    // The full chapter (with text); null for the moment it takes to load.
+    val rawActiveChapter = fullActive?.takeIf { it.id == outlineActive?.id && !it.isDeleted }
 
     // AI polish: show the polished copy when the novel has it switched on (the original stays
     // in the database and is what editing tools change).
@@ -188,7 +194,10 @@ fun ReaderScreen(
         val idx = chapters.indexOfFirst { it.id == raw.id }
         val ahead = listOf(raw) + (if (idx >= 0) chapters.drop(idx + 1).take(2) else emptyList())
         com.example.NovelHoarderApp.getContainer(context.applicationContext as android.app.Application).appScope.launch {
-            for (ch in ahead) if (ch.content.isNotBlank()) polisher.polish(ch)
+            for (ch in ahead) {
+                val full = viewModel.repository.getChapter(ch.id) ?: continue // the list has no text
+                if (full.content.isNotBlank()) polisher.polish(full)
+            }
         }
     }
 
@@ -230,7 +239,9 @@ fun ReaderScreen(
 
     // Restore scroll position or scroll to initial target
     var initialTargetUsed by remember { mutableStateOf(false) }
-    LaunchedEffect(currentChapterId) {
+    val chapterTextLoaded = rawActiveChapter != null
+    LaunchedEffect(currentChapterId, chapterTextLoaded) {
+        if (!chapterTextLoaded) return@LaunchedEffect // wait for the text, or the jump lands on an empty list
         if (currentChapterId.isNotEmpty()) {
             // The launch target applies once; coming back to that chapter later uses saved progress.
             if (!initialTargetUsed && currentChapterId == initialChapterId && initialParaIndex >= 0) {
@@ -719,7 +730,7 @@ private fun PreviouslyOnCard(
         if (!viewModel.aiRegistry.best().isAvailable()) return@LaunchedEffect
         val idx = chapters.indexOfFirst { it.id == activeChapter.id }
         val previous = chapters.take(maxOf(idx, 0)).lastOrNull { it.content.isNotBlank() } ?: return@LaunchedEffect
-        val text = viewModel.getChapterRecap(previous)
+        val text = viewModel.getChapterRecap(viewModel.repository.getChapter(previous.id) ?: return@LaunchedEffect)
         if (!text.isNullOrBlank() && !text.startsWith("Error") && !text.startsWith("No AI") &&
             !text.startsWith("No on-device") && !text.startsWith("That model")
         ) recap = text

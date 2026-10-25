@@ -60,6 +60,10 @@ class NovelRepository(private val bookDao: BookDao) {
 
     fun getChapterFlow(id: String): Flow<ChapterEntity?> = bookDao.getChapterByIdFlow(id)
 
+    /** Light chapter lists for display (no text); see BookDao.getChapterOutlineFlow. */
+    fun getChapterOutlineFlow(bookId: String): Flow<List<ChapterEntity>> = bookDao.getChapterOutlineFlow(bookId)
+    fun getArchivedChapterOutlineFlow(bookId: String): Flow<List<ChapterEntity>> = bookDao.getArchivedChapterOutlineFlow(bookId)
+
     suspend fun insertChapter(chapter: ChapterEntity) = bookDao.insertChapter(chapter)
 
     suspend fun updateChapterTitle(id: String, title: String) = bookDao.updateChapterTitle(id, title)

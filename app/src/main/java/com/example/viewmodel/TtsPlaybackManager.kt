@@ -157,7 +157,8 @@ class TtsPlaybackManager(
                 pausedByFocusLoss = false
                 resumeTts(isTransientFocusGain = true)
             }
-        }
+        },
+        onDuck = { duck -> if (ttsIsPlaying) applyTtsVolume(if (duck) 0.3f else 1.0f) }
     )
 
     private val noisyReceiver = object : BroadcastReceiver() {

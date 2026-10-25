@@ -208,7 +208,9 @@ object WebViewFactory {
                 domStorageEnabled = true
                 useWideViewPort = true
                 loadWithOverviewMode = true
-                mediaPlaybackRequiresUserGesture = false
+                // No autoplaying (ad) videos: one with sound takes the audio over and Android pauses
+                // read-aloud, which looked like playback stopping at random.
+                mediaPlaybackRequiresUserGesture = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 userAgentString = if (!userAgent.isNullOrBlank()) userAgent else DEFAULT_UA
                 allowContentAccess = true

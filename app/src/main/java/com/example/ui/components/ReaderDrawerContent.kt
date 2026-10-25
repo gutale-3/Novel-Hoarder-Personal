@@ -539,6 +539,12 @@ fun ReaderDrawerContent(
                 // One-tap selections for the usual clean-ups: chapters already read, and empty
                 // ones (listed but never downloaded, or blanked).
                 val pool = if (chapterSubTab == 0) chapters else archivedChapters
+                Text(
+                    "Tip: hold a chapter, then slide up or down to select everything in between.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
                 LazyRow(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -785,8 +791,19 @@ fun ReaderDrawerContent(
                     )
                 }
             } else {
+                val chapterListState = androidx.compose.foundation.lazy.rememberLazyListState()
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = chapterListState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // In Select mode: hold a chapter, then slide to select everything you pass.
+                        .dragToSelect(
+                            enabled = isMultiSelectMode,
+                            listState = chapterListState,
+                            orderedKeys = currentList.map { it.id },
+                            selected = selectedChapters,
+                            onSelectionChange = { selectedChapters = it }
+                        ),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
                     val hiddenInPlace = subdivisionMode == TocSubdivisionMode.AS_IS && chapterSubTab == 0 &&

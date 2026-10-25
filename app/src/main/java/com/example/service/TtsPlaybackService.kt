@@ -126,14 +126,17 @@ class TtsPlaybackService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        // Swiping the app away from Recents keeps the narration going, like other audio apps;
+        // the notification's Stop ends it. Only an idle player is cleaned up.
         try {
             val tts = NovelHoarderApp.getContainer(application).tts
-            tts.pauseTts()
-            tts.dismissTtsNotification()
+            if (!tts.ttsIsPlaying) {
+                tts.dismissTtsNotification()
+                stopSelf()
+            }
         } catch (_: Exception) {
-            // ignore
+            stopSelf()
         }
-        stopSelf()
     }
 
     override fun onDestroy() {
