@@ -64,7 +64,7 @@ fun ReaderTopBar(
                         val activeTags = viewModel.chapterTags.getTagsForChapter(activeChapter.id)
                         val tagSnippet = if (activeTags.isNotEmpty()) " ${activeTags.joinToString("") { it.icon }}" else ""
                         Text(
-                            text = "${activeChapter.title}$tagSnippet",
+                            text = "${com.example.viewmodel.ChapterNumbering.label(context, activeChapter)}$tagSnippet",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodySmall.copy(

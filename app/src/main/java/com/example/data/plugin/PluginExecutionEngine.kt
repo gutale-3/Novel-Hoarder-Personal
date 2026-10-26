@@ -153,6 +153,7 @@ class PluginExecutionEngine(val config: PluginConfig) : NovelSource {
             }
 
             val entries = GenericScraper.parseTocEntries(jsonResult)
+            entries.forEach { com.example.util.TocTitles.put(it.href, it.text) }
             var urls = GenericScraper.buildChapterList(entries)
 
             if (config.chapterLinkFilterRegex.isNotBlank()) {

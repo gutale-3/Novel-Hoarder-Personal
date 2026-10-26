@@ -72,6 +72,7 @@ fun LibraryBookItem(
     onDownloadBatch: (Int) -> Unit = {},
     onDownloadAllRemaining: () -> Unit = {},
     onRefreshToc: () -> Unit = {},
+    onFixStructure: () -> Unit = {},
     isCheckingNewChapters: Boolean,
     isBatchMode: Boolean = false,
     isSelected: Boolean = false,
@@ -226,11 +227,12 @@ fun LibraryBookItem(
                                     )
                                 }
                                 if (!book.url.startsWith("local://")) {
+                                    // Replaces "Refresh Table of Contents": same site check, plus order and numbering.
                                     DropdownMenuItem(
-                                        text = { Text("Refresh Table of Contents") },
+                                        text = { Text("Fix chapter order & numbering") },
                                         onClick = {
                                             expandedMenu = false
-                                            onRefreshToc()
+                                            onFixStructure()
                                         },
                                         leadingIcon = { Icon(Icons.Default.ListAlt, contentDescription = null) }
                                     )

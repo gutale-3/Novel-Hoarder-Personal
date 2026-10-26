@@ -68,6 +68,8 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun updateChapterTitle(id: String, title: String) = bookDao.updateChapterTitle(id, title)
 
+    suspend fun updateChapterNumber(id: String, number: Int) = bookDao.updateChapterNumber(id, number)
+
     suspend fun insertChapters(chapters: List<ChapterEntity>) = bookDao.insertChapters(chapters)
 
     // Move Chapter Up / Down (Reordering)

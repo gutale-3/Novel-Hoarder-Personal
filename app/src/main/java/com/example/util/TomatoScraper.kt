@@ -341,6 +341,26 @@ object TomatoScraper : NovelSource {
         """.trimIndent()
 
         val listJson = withContext(Dispatchers.Main) { webView.evaluateJs(extractJs) }
+        // Chapter titles as listed (used to name not-yet-downloaded chapters); best effort.
+        runCatching {
+            val titlesJs = """
+                (() => {
+                    const out = {};
+                    document.querySelectorAll('a[href*="/book/$bookId/"]').forEach(a => {
+                        try {
+                            const u = new URL(a.getAttribute('href'), location.href);
+                            const t = (a.textContent || '').trim();
+                            if (t) out[u.origin + u.pathname.replace(/\/$/, '')] = t;
+                        } catch (e) {}
+                    });
+                    return out;
+                })()
+            """.trimIndent()
+            val raw = withContext(Dispatchers.Main) { webView.evaluateJs(titlesJs) }
+            com.example.util.JsResultParser.toJsonObject(raw)?.let { o ->
+                o.keys().forEach { k -> com.example.util.TocTitles.put(k, o.optString(k)) }
+            }
+        }
         val urls = mutableListOf<String>()
         try {
             val jsonArray = JSONArray(listJson)

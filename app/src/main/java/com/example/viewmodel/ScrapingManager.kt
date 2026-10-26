@@ -1390,6 +1390,68 @@ class ScrapingManager(
         downloadNextChapters(bookId, limit = 10000, onComplete = onComplete)
     }
 
+    /**
+     * "Fix chapter order & numbering": reads the site's chapter list (no chapter text), puts the
+     * saved chapters in the site's order, adds the chapters you don't have yet as empty entries,
+     * and numbers everything 1, 2, 3… See [ChapterStructure].
+     */
+    fun fixChapterStructure(bookId: String, onComplete: (Boolean, String) -> Unit) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val book = repository.getBook(bookId) ?: error("Novel not found.")
+                if (book.url.startsWith("local://")) error("Imported novels have no site list to compare with.")
+                val scraper = SourceManager.getSourceForUrl(book.url, pluginManager)
+                val webView = createFreshWebView()
+                val urls = try {
+                    withTimeoutOrNull(tocTimeoutMs(scraper)) { scraper.scrapeChapterList(webView, book.url) } ?: emptyList()
+                } finally {
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                        com.example.util.WebViewFactory.destroySafely(webView)
+                    }
+                }
+                if (urls.isEmpty()) error("The site's chapter list didn't load. Open the novel in the browser once, then try again.")
+
+                val toc = urls.map { ChapterStructure.TocItem(it, com.example.util.TocTitles.get(it).orEmpty()) }
+                val all = repository.getAllChaptersIncludingHidden(bookId)
+                val live = all.filter { !it.isDeleted }
+                val skip = com.example.util.ChapterUrls.deletedFor(application, bookId) +
+                    all.filter { it.isDeleted }.map { com.example.util.ChapterUrls.normalize(it.url) }
+                val plan = ChapterStructure.plan(live, toc, skip)
+
+                // Trashed chapters move out of the way so numbers never repeat.
+                val top = (plan.numbers.values + plan.added.map { it.second }).maxOrNull() ?: 0
+                all.filter { it.isDeleted }.forEachIndexed { i, c -> repository.updateChapterNumber(c.id, top + 1 + i) }
+                plan.numbers.forEach { (id, n) -> repository.updateChapterNumber(id, n) }
+                plan.titles.forEach { (id, t) -> repository.updateChapterTitle(id, t) }
+                val added = plan.added.map { (t, n) ->
+                    val chapId = scraper.parseChapterId(t.url) ?: "ch_$n"
+                    ChapterEntity(
+                        id = "${bookId}_$chapId",
+                        bookId = bookId,
+                        chapterId = chapId,
+                        chapterNumber = n,
+                        title = com.example.util.ChapterTitleCleaner.clean(t.title.ifBlank { "Chapter $n" }, book.title, chapterNumber = n),
+                        url = t.url,
+                        content = "",
+                        hash = ""
+                    )
+                }.filter { repository.getChapter(it.id) == null }
+                if (added.isNotEmpty()) repository.insertChapters(added)
+                val total = repository.getChapters(bookId).size
+                repository.getBook(bookId)?.let { repository.updateBook(it.copy(totalChapters = total, updatedAt = System.currentTimeMillis())) }
+
+                buildString {
+                    append("Chapters now follow the site's order (${urls.size} on the site).")
+                    if (added.isNotEmpty()) append(" Added ${added.size} chapter${if (added.size == 1) "" else "s"} you didn't have (not downloaded yet).")
+                    if (plan.extras > 0) append(" Kept ${plan.extras} page${if (plan.extras == 1) "" else "s"} the site doesn't list, in place.")
+                }
+            }
+            withContext(Dispatchers.Main) {
+                result.fold(onSuccess = { onComplete(true, it) }, onFailure = { onComplete(false, it.message ?: "Couldn't check the chapter list.") })
+            }
+        }
+    }
+
     fun refreshTableOfContents(bookId: String, onComplete: ((Boolean, String) -> Unit)? = null) {
         coroutineScope.launch(Dispatchers.IO) {
             try {

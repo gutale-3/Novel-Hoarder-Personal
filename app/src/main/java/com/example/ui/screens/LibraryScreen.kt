@@ -97,6 +97,10 @@ fun LibraryScreen(
     val shelves = remember(shelfVersion) { LibraryPrefs.shelves(context) }
     val categories = listOf("All") + shelves
     var showNewShelfDialog by remember { mutableStateOf(false) }
+    var structureBookId by remember { mutableStateOf<String?>(null) }
+    structureBookId?.let { id ->
+        com.example.ui.components.ChapterStructureDialog(id, viewModel) { structureBookId = null }
+    }
     var shelfToRemove by remember { mutableStateOf<String?>(null) }
     var selectedCategory by remember { mutableStateOf(viewModel.settings.activeLibraryCategory) }
 
@@ -958,6 +962,7 @@ fun LibraryScreen(
             } else {
                 items(filteredAndSortedBooks) { book ->
                     LibraryBookItem(
+                        onFixStructure = { structureBookId = book.id },
                         shelves = shelves,
                         book = book,
                         onRead = { onOpenBook(book.id) },

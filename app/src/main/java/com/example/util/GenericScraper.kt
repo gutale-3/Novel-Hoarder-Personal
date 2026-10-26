@@ -108,6 +108,7 @@ object GenericScraper : NovelSource {
             jsonResult = evaluateJs(webView, PageExtractors.TOC_EXTRACT_JS)
         }
         val entries = parseTocEntries(jsonResult)
+        entries.forEach { TocTitles.put(it.href, it.text) }
         buildChapterList(entries)
     }
 
@@ -173,17 +174,30 @@ object GenericScraper : NovelSource {
 
     fun buildChapterList(entries: List<TocEntry>): List<String> {
         if (entries.isEmpty()) return emptyList()
-        val numbered = entries.mapNotNull { entry ->
-            val num = parseChapterNumber(entry.text, entry.href)
-            if (num != null) Pair(num, entry.href) else null
-        }
+        // Numbers from the link text only: a number taken from the address (often an id) would
+        // send author notes to odd places.
+        val nums = entries.map { ChapterCleaner.detectChapterNumber(it.text) }
+        val seq = nums.filterNotNull()
 
-        val urls = if (numbered.size >= entries.size / 2 && numbered.isNotEmpty()) {
-            numbered.distinctBy { it.first }
-                .sortedBy { it.first }
-                .map { it.second }
+        val urls = if (seq.size >= 3 && seq.size >= entries.size / 2) {
+            val steps = seq.zipWithNext()
+            val up = steps.count { (a, b) -> b >= a }.toFloat() / steps.size
+            when {
+                // The page is already in order (or newest first): keep its order, so author notes
+                // and other unnumbered entries stay where the site has them.
+                up >= 0.8f -> entries.map { it.href }
+                up <= 0.2f -> entries.reversed().map { it.href }
+                // Shuffled (e.g. several page columns): sort by number as before.
+                else -> entries.zip(nums).filter { it.second != null }
+                    .distinctBy { it.second }.sortedBy { it.second }.map { it.first.href }
+            }
         } else {
-            entries.map { it.href }
+            val numbered = entries.mapNotNull { e -> parseChapterNumber(e.text, e.href)?.let { it to e.href } }
+            if (numbered.size >= entries.size / 2 && numbered.isNotEmpty()) {
+                numbered.distinctBy { it.first }.sortedBy { it.first }.map { it.second }
+            } else {
+                entries.map { it.href }
+            }
         }
 
         return distinctChapterUrls(urls)

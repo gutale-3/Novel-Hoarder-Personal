@@ -286,7 +286,7 @@ fun ReaderContent(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                text = activeChapter.title,
+                                text = com.example.viewmodel.ChapterNumbering.label(context, activeChapter),
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 textAlign = TextAlign.Center
                             )
@@ -358,7 +358,7 @@ fun ReaderContent(
                     item {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = activeChapter.title,
+                                text = com.example.viewmodel.ChapterNumbering.label(context, activeChapter),
                                 style = MaterialTheme.typography.headlineMedium.copy(
                                     fontWeight = FontWeight.Black,
                                     color = if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary,

@@ -61,6 +61,8 @@ fun ReaderDrawerContent(
     var chapterForTagging by remember { mutableStateOf<ChapterEntity?>(null) }
     var duplicateGroups by remember { mutableStateOf<List<List<ChapterEntity>>>(emptyList()) }
     var showDuplicates by remember { mutableStateOf(false) }
+    var showStructure by remember { mutableStateOf(false) }
+    if (showStructure) ChapterStructureDialog(bookId, viewModel) { showStructure = false }
     if (showDuplicates) {
         val extras = duplicateGroups.sumOf { it.size - 1 }
         AlertDialog(
@@ -340,6 +342,11 @@ fun ReaderDrawerContent(
                                     text = { Text("Undo & history") },
                                     leadingIcon = { Icon(Icons.Default.History, null) },
                                     onClick = { toolsMenu = false; onOpenRevisionHistory() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Fix chapter order & numbering") },
+                                    leadingIcon = { Icon(Icons.Default.FormatListNumbered, null) },
+                                    onClick = { toolsMenu = false; showStructure = true }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Remove duplicate chapters") },
@@ -1186,7 +1193,7 @@ private fun ChapterDrawerRowItem(
                         }
                 ) {
                     Text(
-                        text = ch.title,
+                        text = com.example.viewmodel.ChapterNumbering.label(androidx.compose.ui.platform.LocalContext.current, ch),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
