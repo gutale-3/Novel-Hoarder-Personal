@@ -33,3 +33,23 @@ class ChapterQualityCheckerTest {
         assertTrue(r.isClean)
     }
 }
+
+class ChapterQualityExtraTest {
+    private fun ch(n: Int, title: String, content: String) = com.example.data.local.ChapterEntity(
+        id = "c$n", bookId = "b", chapterId = "$n", chapterNumber = n, title = title, url = "u$n", content = content, hash = "h$n"
+    )
+    private fun para(i: Int) = "This is paragraph number $i of the story, long enough to count as prose."
+
+    @org.junit.Test
+    fun findsTwoChaptersInOne() {
+        val body = (1..10).joinToString("\n") { para(it) } + "\nChapter 13: The Next Day\n" + (11..20).joinToString("\n") { para(it) }
+        org.junit.Assert.assertEquals("Chapter 13: The Next Day", ChapterQualityChecker.secondChapterHeading(ch(12, "Chapter 12: Rain", body)))
+    }
+
+    @org.junit.Test
+    fun findsTextCapturedTwice() {
+        val half = (1..10).joinToString("\n") { para(it) }
+        org.junit.Assert.assertNotNull(ChapterQualityChecker.repeatedShare("$half\n$half"))
+        org.junit.Assert.assertNull(ChapterQualityChecker.repeatedShare(half))
+    }
+}

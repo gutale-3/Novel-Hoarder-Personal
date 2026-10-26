@@ -350,6 +350,13 @@ fun ParagraphBookmarkActionDialog(
 ) {
     val scope = rememberCoroutineScope()
     var bookmarkNoteText by remember { mutableStateOf(existingBookmark?.note ?: "") }
+    var showDeleteLikeThis by remember { mutableStateOf(false) }
+    if (showDeleteLikeThis) {
+        DeleteLinesLikeThisDialog(bookId, activeChapter, paragraphText, viewModel, context) {
+            showDeleteLikeThis = false
+            if (it) onDismiss()
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -648,6 +655,32 @@ fun ParagraphBookmarkActionDialog(
                         }
                     }
 
+                    // Action 3C: delete every line shaped like this one (same text, numbers may differ)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.22f), RoundedCornerShape(10.dp))
+                            .clickable { showDeleteLikeThis = true }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Default.PlaylistRemove, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Delete Lines Like This",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                "Removes this line and every line like it (numbers may differ) — only that line, " +
+                                    "the rest of the chapter stays. Shows how many first.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+
                     // Action 4: Truncate matching lines in ALL chapters
                     Row(
                         modifier = Modifier
@@ -799,4 +832,91 @@ internal fun locateParagraphLine(lines: List<String>, paragraphText: String, par
         }
     }
     return best
+}
+
+/** Preview, then remove every line shaped like [line] in this chapter or the whole novel. */
+@Composable
+private fun DeleteLinesLikeThisDialog(
+    bookId: String,
+    chapter: ChapterEntity?,
+    line: String,
+    viewModel: MainViewModel,
+    context: Context,
+    onClose: (done: Boolean) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val pattern = remember(line) { com.example.util.LinePattern.forLine(line) }
+    var wholeNovel by remember { mutableStateOf(true) }
+    var preview by remember { mutableStateOf<Pair<Int, Int>?>(null) } // lines, chapters
+    var examples by remember { mutableStateOf<List<String>>(emptyList()) }
+    var working by remember { mutableStateOf(false) }
+
+    LaunchedEffect(wholeNovel) {
+        preview = null
+        val chapters = if (wholeNovel) viewModel.repository.getAllChaptersIncludingHidden(bookId).filter { !it.isDeleted }
+        else listOfNotNull(chapter?.let { viewModel.repository.getChapter(it.id) })
+        var lines = 0
+        var chs = 0
+        val ex = LinkedHashSet<String>()
+        for (c in chapters) {
+            val hits = c.content.split("\n").filter { com.example.util.LinePattern.matches(pattern, it) }
+            if (hits.isNotEmpty()) { lines += hits.size; chs++; hits.take(2).forEach { if (ex.size < 4) ex += it.trim() } }
+        }
+        preview = lines to chs
+        examples = ex.toList()
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!working) onClose(false) },
+        title = { Text("Delete lines like this") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !wholeNovel, onClick = { wholeNovel = false }, label = { Text("This chapter") })
+                    FilterChip(selected = wholeNovel, onClick = { wholeNovel = true }, label = { Text("Whole novel") })
+                }
+                val p = preview
+                if (p == null) {
+                    Text("Looking…", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text(
+                        "${p.first} line${if (p.first == 1) "" else "s"} in ${p.second} chapter${if (p.second == 1) "" else "s"} will be removed. " +
+                            "A copy of each chapter is saved first (Undo & history).",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    examples.forEach {
+                        Text("• ${it.take(80)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !working && (preview?.first ?: 0) > 0,
+                onClick = {
+                    working = true
+                    scope.launch {
+                        val chapters = if (wholeNovel) viewModel.repository.getAllChaptersIncludingHidden(bookId).filter { !it.isDeleted }
+                        else listOfNotNull(chapter?.let { viewModel.repository.getChapter(it.id) })
+                        var changed = 0
+                        for (c in chapters) {
+                            val lines = c.content.split("\n")
+                            val kept = lines.filterNot { com.example.util.LinePattern.matches(pattern, it) }
+                            if (kept.size == lines.size) continue
+                            viewModel.repository.saveChapterHistorySnapshot(
+                                chapterId = c.id, bookId = bookId, currentContent = c.content,
+                                description = "Removed lines like: ${line.trim().take(30)}"
+                            )
+                            viewModel.repository.updateChapterContent(c.id, kept.joinToString("\n").trim())
+                            changed++
+                        }
+                        android.widget.Toast.makeText(context, "Cleaned $changed chapters (undo in Undo & history)", android.widget.Toast.LENGTH_LONG).show()
+                        working = false
+                        onClose(true)
+                    }
+                }
+            ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(enabled = !working, onClick = { onClose(false) }) { Text("Cancel") } }
+    )
 }

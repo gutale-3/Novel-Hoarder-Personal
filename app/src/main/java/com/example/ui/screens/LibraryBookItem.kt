@@ -337,50 +337,9 @@ fun LibraryBookItem(
         }
     }
 
-    // Swipe right to continue reading, left to listen.
-    val swipeState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            when (value) {
-                SwipeToDismissBoxValue.StartToEnd -> onRead()
-                SwipeToDismissBoxValue.EndToStart -> onListen()
-                else -> {}
-            }
-            false // snap back; the card stays in the list
-        },
-        positionalThreshold = { it * 0.35f }
-    )
-    SwipeToDismissBox(
-        state = swipeState,
-        enableDismissFromStartToEnd = !isBatchMode,
-        enableDismissFromEndToStart = !isBatchMode,
-        modifier = modifier,
-        backgroundContent = {
-            val toRead = swipeState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(horizontal = 20.dp),
-                contentAlignment = if (toRead) Alignment.CenterStart else Alignment.CenterEnd
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(
-                        if (toRead) Icons.Default.MenuBook else Icons.Default.Headphones, null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Text(
-                        if (toRead) "Continue reading" else "Listen",
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
-    ) {
     // Compact card: cover, title, one progress line — several novels fit on screen.
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { if (isBatchMode) onToggleSelect() else onRead() }
             .testTag("library_book_card_${book.id}"),
@@ -461,7 +420,6 @@ fun LibraryBookItem(
                 Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Menu for ${book.title}")
             }
         }
-    }
     }
 }
 

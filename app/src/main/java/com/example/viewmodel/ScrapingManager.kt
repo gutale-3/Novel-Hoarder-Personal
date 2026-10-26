@@ -59,7 +59,7 @@ internal fun cleanScrapedBody(
     } else {
         com.example.util.GenericScraper.sanitizeText(raw, aggressive)
     }
-    return com.example.util.ChapterTextCleaner.stripLeadingHeadings(cleaned)
+    return com.example.util.ChapterTextCleaner.removeJunk(cleaned)
 }
 
 class ScrapingManager(

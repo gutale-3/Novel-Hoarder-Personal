@@ -62,6 +62,11 @@ fun ReaderDrawerContent(
     var duplicateGroups by remember { mutableStateOf<List<List<ChapterEntity>>>(emptyList()) }
     var showDuplicates by remember { mutableStateOf(false) }
     var showStructure by remember { mutableStateOf(false) }
+    var showQuality by remember { mutableStateOf(false) }
+    if (showQuality) {
+        val qualityBook by remember(bookId) { viewModel.repository.getBookFlow(bookId) }.collectAsState(null)
+        qualityBook?.let { ChapterQualityDialog(it) { showQuality = false } }
+    }
     if (showStructure) ChapterStructureDialog(bookId, viewModel) { showStructure = false }
     if (showDuplicates) {
         val extras = duplicateGroups.sumOf { it.size - 1 }
@@ -347,6 +352,11 @@ fun ReaderDrawerContent(
                                     text = { Text("Fix chapter order & numbering") },
                                     leadingIcon = { Icon(Icons.Default.FormatListNumbered, null) },
                                     onClick = { toolsMenu = false; showStructure = true }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Check chapter problems") },
+                                    leadingIcon = { Icon(Icons.Default.FactCheck, null) },
+                                    onClick = { toolsMenu = false; showQuality = true }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Remove duplicate chapters") },

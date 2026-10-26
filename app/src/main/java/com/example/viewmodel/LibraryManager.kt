@@ -67,7 +67,33 @@ class LibraryManager(
                 }
                 prefs.edit().putBoolean("chapter_headings_stripped_v1", true).apply()
             }
+            // One-time: remove page navigation copied into chapters ("x", "« PrevTable of
+            // Contents", "Next »", "#2Chapter 2: …") from everything already saved.
+            if (!prefs.getBoolean("chapter_nav_junk_removed_v1", false)) {
+                runCatching { removeJunkFromAllChapters(null) }
+                prefs.edit().putBoolean("chapter_nav_junk_removed_v1", true).apply()
+            }
         }
+    }
+
+    /**
+     * Removes navigation lines and repeated headings from stored chapters of one novel (or all
+     * when [bookId] is null). @return how many chapters changed.
+     */
+    suspend fun removeJunkFromAllChapters(bookId: String?): Int {
+        var changed = 0
+        val books = if (bookId != null) listOfNotNull(repository.getBook(bookId)) else repository.getAllBooks()
+        for (b in books) {
+            for (ch in repository.getAllChaptersIncludingHidden(b.id)) {
+                if (ch.content.isBlank()) continue
+                val cleaned = com.example.util.ChapterTextCleaner.removeJunk(ch.content)
+                if (cleaned != ch.content) {
+                    repository.updateChapterContent(ch.id, cleaned)
+                    changed++
+                }
+            }
+        }
+        return changed
     }
 
     /**

@@ -12,7 +12,9 @@ object ChapterQualityChecker {
     enum class Problem(val label: String) {
         ERROR_PAGE("Login, limit or locked page"),
         DUPLICATE("Same text as another chapter"),
-        TRUNCATED("Much shorter than usual")
+        TRUNCATED("Much shorter than usual"),
+        TWO_CHAPTERS("Holds more than one chapter"),
+        REPEATED_TEXT("Same text twice inside")
     }
 
     data class Issue(val chapter: ChapterEntity, val problem: Problem, val detail: String)
@@ -41,6 +43,29 @@ object ChapterQualityChecker {
         return ERROR_MARKERS.any { lower.contains(it) }
     }
 
+    /**
+     * A heading for a different chapter number after the opening lines, e.g. a chapter that
+     * captured "Chapter 12" and then "Chapter 13". Returns that heading.
+     */
+    internal fun secondChapterHeading(c: ChapterEntity): String? {
+        val own = ChapterCleaner.detectChapterNumber(c.title)
+        val lines = c.content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size < 12) return null
+        return lines.drop(5).firstOrNull { line ->
+            ChapterTextCleaner.isHeading(line) &&
+                ChapterCleaner.detectChapterNumber(line).let { it != null && it != own }
+        }
+    }
+
+    /** Describes it when a large part of the chapter's paragraphs appear twice. */
+    internal fun repeatedShare(text: String): String? {
+        val paras = text.split("\n").map { it.trim() }.filter { it.length >= 40 }
+        if (paras.size < 8) return null
+        val repeated = paras.groupingBy { it }.eachCount().filterValues { it > 1 }
+        val extraCopies = repeated.values.sumOf { it - 1 }
+        return if (extraCopies >= maxOf(4, paras.size / 5)) "$extraCopies paragraphs appear more than once" else null
+    }
+
     fun check(chapters: List<ChapterEntity>): Report {
         val live = chapters.filter { !it.isDeleted }
         val downloaded = live.filter { it.content.isNotBlank() }
@@ -62,6 +87,20 @@ object ChapterQualityChecker {
                     issues += Issue(it, Problem.DUPLICATE, "same as chapter ${sorted.first().chapterNumber}")
                 }
             }
+
+        // Copies that aren't byte-identical (one tidied, one with page junk): same chapter number
+        // and mostly the same paragraphs.
+        com.example.viewmodel.DuplicateChapters.find(downloaded).forEach { group ->
+            group.drop(1).filter { c -> issues.none { it.chapter.id == c.id } }.forEach {
+                issues += Issue(it, Problem.DUPLICATE, "a second copy of \"${group.first().title}\"")
+            }
+        }
+
+        downloaded.forEach { c ->
+            if (issues.any { it.chapter.id == c.id }) return@forEach
+            secondChapterHeading(c)?.let { issues += Issue(c, Problem.TWO_CHAPTERS, "\"$it\" appears part-way through") }
+                ?: repeatedShare(c.content)?.let { issues += Issue(c, Problem.REPEATED_TEXT, it) }
+        }
 
         // Truncation: compared with this novel's own typical length, so short-chapter novels are fine.
         val lengths = downloaded.map { it.content.length }.sorted()

@@ -181,7 +181,7 @@ class ManualCaptureManager(
                     isCapturing = false
                     return@launch
                 }
-                val cleanBody = com.example.util.ChapterTextCleaner.stripLeadingHeadings(
+                val cleanBody = com.example.util.ChapterTextCleaner.removeJunk(
                     GenericScraper.sanitizeText(rawContent, aggressive = false)
                 )
                 if (cleanBody.isBlank()) {
