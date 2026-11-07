@@ -1048,7 +1048,10 @@ class ScrapingManager(
                         break
                     }
                     try {
-                        val rawContent = withTimeoutOrNull(com.example.util.ScrapeTimeouts.chapterMs + 15_000L) {
+                        // Tomato gets its own, longer wait (35 s) plus room to spare.
+                        val limitMs = if (scraper === com.example.util.TomatoScraper) 60_000L
+                            else com.example.util.ScrapeTimeouts.chapterMs + 15_000L
+                        val rawContent = withTimeoutOrNull(limitMs) {
                             scraper.scrapeChapterContent(webView, chapterUrl) { shouldSkipCurrentChapter }
                         } ?: throw IOException("Chapter download timed out (Limbo detected)")
 
@@ -1107,9 +1110,11 @@ class ScrapingManager(
                         if (shouldSkipCurrentChapter) {
                             break
                         }
-                        if (tries == 1) {
+                        if (tries == 1 && scraper !== com.example.util.TomatoScraper) {
                             // First problem on this chapter: hand it to the user straight away rather
                             // than retrying blindly — usually it is a check that takes a second to pass.
+                            // Not for Tomato: it has no such checks, it's just slow, so it retries
+                            // quietly with a fresh page as it always did.
                             val secs = com.example.util.ScrapeTimeouts.chapterSeconds
                             addLog("Chapter $absoluteChapterNum didn't load within ${secs}s (${e.message}). Opening it for you…")
                             handleCaptchaChallenge(

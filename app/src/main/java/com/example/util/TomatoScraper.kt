@@ -18,6 +18,9 @@ import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
 object TomatoScraper : NovelSource {
+    /** How long a chapter page may take; Tomato's pages are slow to fill in. */
+    private const val CHAPTER_WAIT_SECONDS = 35
+
 
     override val sourceName: String = "TomatoMTL"
 
@@ -394,7 +397,9 @@ object TomatoScraper : NovelSource {
             })()
         """.trimIndent()
 
-        val jsonStr = loadUrlAndWait(webView, chapterUrl, checkJs, ScrapeTimeouts.chapterSeconds, shouldSkip)
+        // Tomato is slow but reliable: give it the full wait it always had (the short wait and
+        // instant prompt are for sites with bot checks).
+        val jsonStr = loadUrlAndWait(webView, chapterUrl, checkJs, CHAPTER_WAIT_SECONDS, shouldSkip)
         if (jsonStr == "null" || jsonStr == "\"null\"" || jsonStr.trim().isEmpty()) {
             throw IOException("Failed to scrape chapter text content")
         }
@@ -407,9 +412,9 @@ object TomatoScraper : NovelSource {
         if (body.isEmpty()) {
             throw IOException("No chapter text content found on page")
         }
-        // Text still loading (placeholders left) when the wait ran out: saving it would keep a
-        // half chapter forever, since a saved chapter is never fetched again.
-        if (!json.optBoolean("ready", false)) {
+        // Still showing loading placeholders after the full wait: only a short text is treated as
+        // not loaded; a long one is the chapter (as it always was).
+        if (!json.optBoolean("ready", false) && body.length < 1000) {
             throw IOException("Chapter text was still loading")
         }
 

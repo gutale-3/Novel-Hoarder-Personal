@@ -20,6 +20,8 @@ object HumanPacing {
      * [index] counts chapters in this session, used for the periodic longer pause.
      */
     fun nextDelayMs(context: Context, sourceKey: String, baseMs: Long, index: Int, random: Random = Random.Default): Long {
+        // Tomato has no bot checks: keep its plain, steady delay (as it always worked).
+        if (sourceKey == SourceKeys.TOMATO) return baseMs.coerceAtLeast(800L)
         val base = baseMs.coerceAtLeast(800L) * slowdownFactor(context, sourceKey)
         // 0.7x–1.8x, skewed towards the slow side like real reading speed.
         val jitter = 0.7 + random.nextDouble().let { it * it } * 1.1

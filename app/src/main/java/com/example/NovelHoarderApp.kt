@@ -120,6 +120,14 @@ class NovelHoarderApp : Application() {
             com.example.background.SiteHealthWorker.schedule(this)
             com.example.background.ChapterAlerts.scheduleDigest(this)
             com.example.viewmodel.AutoShelves.start(this, container.repository, container.appScope)
+            // One-time: undo pauses left on Tomato by the false "security check" prompts of builds 17–23.
+            getSharedPreferences("novel_hoarder_prefs", MODE_PRIVATE).let { p ->
+                if (!p.getBoolean("tomato_false_check_cleared", false)) {
+                    com.example.data.scraper.DownloadQuota.get(this)
+                        .clearChallenge(com.example.data.scraper.SourceKeys.TOMATO)
+                    p.edit().putBoolean("tomato_false_check_cleared", true).apply()
+                }
+            }
         } catch (t: Throwable) {
             Log.e("NovelHoarderApp", "Failed to schedule background chapter updates", t)
         }
