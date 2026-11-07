@@ -19,7 +19,7 @@ import kotlin.coroutines.resume
 
 object TomatoScraper : NovelSource {
     /** How long a chapter page may take; Tomato's pages are slow to fill in. */
-    private const val CHAPTER_WAIT_SECONDS = 35
+    private const val CHAPTER_WAIT_SECONDS = 25
 
 
     override val sourceName: String = "TomatoMTL"
@@ -159,6 +159,8 @@ object TomatoScraper : NovelSource {
             var attempts = 0
             val totalAttempts = maxWaitSeconds * 2 // check every 500ms
             var result = "null"
+            var lastBodyLength = -1
+            var stableChecks = 0
             while (attempts < totalAttempts) {
                 delay(500)
                 if (!coroutineContext.isActive || shouldSkip()) {
@@ -209,6 +211,15 @@ object TomatoScraper : NovelSource {
                                 if (json.optBoolean("ready", false)) {
                                     break
                                 }
+                                // Long text that has stopped growing for ~2 s is the chapter, even if
+                                // some small "loading" bits on the page never clear.
+                                val len = json.optString("body").length
+                                if (len >= 1500 && len == lastBodyLength) {
+                                    if (++stableChecks >= 4) break
+                                } else {
+                                    stableChecks = 0
+                                }
+                                lastBodyLength = len
                             } else {
                                 val jsonArray = JSONArray(readyRes)
                                 if (jsonArray.length() > 0) {
@@ -412,8 +423,7 @@ object TomatoScraper : NovelSource {
         if (body.isEmpty()) {
             throw IOException("No chapter text content found on page")
         }
-        // Still showing loading placeholders after the full wait: only a short text is treated as
-        // not loaded; a long one is the chapter (as it always was).
+        // Not marked ready: only a short text counts as not loaded; a long one is the chapter.
         if (!json.optBoolean("ready", false) && body.length < 1000) {
             throw IOException("Chapter text was still loading")
         }

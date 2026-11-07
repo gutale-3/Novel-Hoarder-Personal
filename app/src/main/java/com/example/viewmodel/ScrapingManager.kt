@@ -1048,8 +1048,8 @@ class ScrapingManager(
                         break
                     }
                     try {
-                        // Tomato gets its own, longer wait (35 s) plus room to spare.
-                        val limitMs = if (scraper === com.example.util.TomatoScraper) 60_000L
+                        // Tomato gets its own, longer wait (up to 25 s) plus room to spare.
+                        val limitMs = if (scraper === com.example.util.TomatoScraper) 45_000L
                             else com.example.util.ScrapeTimeouts.chapterMs + 15_000L
                         val rawContent = withTimeoutOrNull(limitMs) {
                             scraper.scrapeChapterContent(webView, chapterUrl) { shouldSkipCurrentChapter }
