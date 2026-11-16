@@ -134,6 +134,16 @@ interface BookDao {
     @Query("SELECT id, bookId, chapterId, chapterNumber, title, url, CASE WHEN content = '' THEN '' ELSE '…' END AS content, isRead, hash, downloadedAt, isArchived, readAt, isDeleted FROM chapters WHERE bookId = :bookId AND isArchived = 1 AND isDeleted = 0 ORDER BY chapterNumber ASC")
     fun getArchivedChapterOutlineFlow(bookId: String): Flow<List<ChapterEntity>>
 
+    /**
+     * For sync: every chapter except trashed ones, without its text; `hash` carries
+     * "<hash>/<text length>" so a change of text is noticed without reading the text.
+     */
+    @Query("SELECT id, bookId, chapterId, chapterNumber, title, url, '' AS content, isRead, hash || '/' || length(content) AS hash, downloadedAt, isArchived, readAt, isDeleted FROM chapters WHERE bookId = :bookId AND isDeleted = 0 ORDER BY chapterNumber ASC")
+    suspend fun getChapterSyncRows(bookId: String): List<ChapterEntity>
+
+    @Query("UPDATE chapters SET content = :content, hash = :hash, downloadedAt = :downloadedAt WHERE id = :id")
+    suspend fun setChapterText(id: String, content: String, hash: String, downloadedAt: Long)
+
     /** Every chapter of a book, hidden and trashed ones included (for backups and sync). */
     @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY chapterNumber ASC")
     suspend fun getAllChaptersForBookIncludingHidden(bookId: String): List<ChapterEntity>

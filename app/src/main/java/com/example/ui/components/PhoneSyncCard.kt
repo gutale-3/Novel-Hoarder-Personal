@@ -40,9 +40,9 @@ fun PhoneSyncCard() {
     fun report(r: Result<com.example.data.sync.CloudSync.Summary>) {
         message = r.fold(
             onSuccess = { s ->
-                if (s.booksAdded + s.positionsUpdated + s.chaptersMarkedRead == 0) "In sync."
-                else "Synced: ${s.booksAdded} novels added, ${s.positionsUpdated} reading positions updated, " +
-                    "${s.chaptersMarkedRead} chapters marked read."
+                if (s.booksAdded + s.positionsUpdated + s.chaptersMarkedRead + s.chaptersFilled == 0) "In sync."
+                else "Synced: ${s.booksAdded} novels added, ${s.chaptersFilled} chapters copied, " +
+                    "${s.positionsUpdated} reading positions updated, ${s.chaptersMarkedRead} chapters marked read."
             },
             onFailure = { "Couldn't sync: ${it.message ?: "no connection"}" }
         )
@@ -59,8 +59,8 @@ fun PhoneSyncCard() {
             Text(
                 "Your library, chapter lists, read marks, bookmarks and exactly where you are in each novel, " +
                     "kept the same on every phone where you enter the same sync password. Everything is " +
-                    "encrypted with your password before it leaves the phone. Chapter text downloads on each " +
-                    "phone when you open a chapter.",
+                    "encrypted with your password before it leaves the phone. Downloaded chapters are copied " +
+                    "too, so nothing needs downloading again.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

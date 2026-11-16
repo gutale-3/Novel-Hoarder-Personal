@@ -38,6 +38,10 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun getChapters(bookId: String): List<ChapterEntity> = bookDao.getChaptersForBook(bookId)
 
+    suspend fun getChapterSyncRows(bookId: String): List<ChapterEntity> = bookDao.getChapterSyncRows(bookId)
+    suspend fun setChapterText(id: String, content: String, hash: String, downloadedAt: Long) =
+        bookDao.setChapterText(id, content, hash, downloadedAt)
+
     /** Hidden and trashed chapters too. */
     suspend fun getAllChaptersIncludingHidden(bookId: String): List<ChapterEntity> =
         bookDao.getAllChaptersForBookIncludingHidden(bookId)

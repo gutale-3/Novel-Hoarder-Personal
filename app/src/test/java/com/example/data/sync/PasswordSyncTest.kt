@@ -47,7 +47,9 @@ class PasswordSyncTest {
         // Phone A: reads book "a" to chapter 3, paragraph 17.
         val dbA = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
         val repoA = NovelRepository(dbA.bookDao())
-        repoA.insertBookAndChapters(book("a"), listOf(ch("a", 1, true), ch("a", 2, true), ch("a", 3)))
+        // 120 chapters with text (several bundles), one of them hidden.
+        repoA.insertBookAndChapters(book("a"), listOf(ch("a", 1, true), ch("a", 2, true), ch("a", 3)) +
+            (4..120).map { ch("a", it).copy(content = "Text of chapter $it", hash = "x$it", isArchived = it == 7) })
         prefs.edit().putString("progress_chapter_a", "a_3").putInt("progress_para_a_a_3", 17).putLong("progress_at_a", 9_000L).commit()
         val phoneA = CloudSync(context, repoA).apply { setServiceUrl(url!!) }
         phoneA.setPassword("my sync password").getOrThrow()
@@ -60,7 +62,11 @@ class PasswordSyncTest {
         val summary = phoneB.setPassword("my sync password").getOrThrow()
 
         assertEquals(1, summary.booksAdded)
-        assertEquals(listOf(1, 2, 3), repoB.getChapters("a").map { it.chapterNumber })
+        assertEquals(120, summary.chaptersFilled)
+        assertEquals((1..120).filter { it != 7 }, repoB.getChapters("a").map { it.chapterNumber })
+        assertEquals("Text of chapter 99", repoB.getChapter("a_99")?.content)
+        assertEquals(true, repoB.getChapter("a_7")?.isArchived)
+        assertEquals("Text of chapter 7", repoB.getChapter("a_7")?.content)
         assertEquals(2, repoB.getChapters("a").count { it.isRead })
         assertEquals("a_3", prefs.getString("progress_chapter_a", null))
         assertEquals(17, prefs.getInt("progress_para_a_a_3", 0))
