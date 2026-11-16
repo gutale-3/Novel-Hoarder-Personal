@@ -1,0 +1,7 @@
+name = "inkvault-sync"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "SYNC"
+id = "65ac7c9b8b8e4bf48b26293a63a152bf"

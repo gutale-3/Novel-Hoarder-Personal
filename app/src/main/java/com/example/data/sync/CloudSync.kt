@@ -34,8 +34,57 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
     private val progressPrefs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
     private val syncPrefs = context.getSharedPreferences("cloud_sync", Context.MODE_PRIVATE)
 
-    val isEnabled: Boolean get() = syncPrefs.getBoolean(KEY_ENABLED, false) && folder() != null
+    /** On when a sync password is set (cloud), or when folder sync is switched on. */
+    val isEnabled: Boolean get() = isCloud || (syncPrefs.getBoolean(KEY_ENABLED, false) && folder() != null)
     fun setEnabled(on: Boolean) = syncPrefs.edit().putBoolean(KEY_ENABLED, on).apply()
+
+    // ---------------- cloud sync (password) ----------------
+
+    private fun cloudCrypto(): SyncCrypto? = SyncCrypto.import(syncPrefs.getString(KEY_CLOUD, null))
+    val isCloud: Boolean get() = cloudCrypto() != null && serviceUrl().isNotBlank()
+    fun hasPassword(): Boolean = cloudCrypto() != null
+
+    fun serviceUrl(): String = syncPrefs.getString(KEY_SERVICE_URL, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_SERVICE_URL
+    fun setServiceUrl(url: String) = syncPrefs.edit().putString(KEY_SERVICE_URL, url.trim()).apply()
+
+    /**
+     * Turns on cloud sync with [password] (the same on every phone) and syncs right away.
+     * A new password means a different mailbox, so what this phone had pulled is forgotten.
+     */
+    suspend fun setPassword(password: String): Result<Summary> {
+        val crypto = withContext(Dispatchers.Default) { SyncCrypto.fromPassword(password) }
+        syncPrefs.edit().putString(KEY_CLOUD, crypto.export()).remove(KEY_PULLED + "_cloud").apply()
+        return syncNow()
+    }
+
+    fun signOut() = syncPrefs.edit().remove(KEY_CLOUD).remove(KEY_PULLED + "_cloud").apply()
+
+    /** Where the novels' sync files live: the cloud mailbox when a password is set, else the folder. */
+    private interface Store {
+        fun read(name: String): JSONObject?
+        fun write(name: String, text: String)
+        fun legacy(): JSONObject? = null
+        val id: String
+    }
+
+    private fun openStore(): Store {
+        cloudCrypto()?.takeIf { serviceUrl().isNotBlank() }?.let { crypto ->
+            val cloud = CloudStore(serviceUrl(), crypto)
+            return object : Store {
+                override val id = "cloud"
+                override fun read(name: String) = cloud.read(name)?.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() }
+                override fun write(name: String, text: String) = cloud.write(name, text)
+            }
+        }
+        val tree = folder() ?: throw IllegalStateException("Set a sync password (or choose a backup folder) first")
+        val dir = SyncFolder(tree)
+        return object : Store {
+            override val id = "folder"
+            override fun read(name: String) = dir.file(name)?.let { read(it) }
+            override fun write(name: String, text: String) = dir.write(name, text)
+            override fun legacy() = dir.legacyFile()?.let { read(it) }
+        }
+    }
     fun lastSync(): Long = syncPrefs.getLong(KEY_LAST, 0L)
     fun lastError(): String? = syncPrefs.getString(KEY_ERROR, null)
 
@@ -69,26 +118,26 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
     suspend fun syncNow(): Result<Summary> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
-                val tree = folder() ?: throw IllegalStateException("Choose a backup folder first")
-                val dir = SyncFolder(tree)
+                val dir = openStore()
+                val pulledKey = if (dir.id == "cloud") KEY_PULLED + "_cloud" else KEY_PULLED
                 var total = Summary(0, 0, 0, 0)
 
                 // One-time upgrade from the old single-file sync.
-                if (!syncPrefs.getBoolean(KEY_LEGACY_DONE, false)) {
-                    dir.legacyFile()?.let { read(it) }?.let { total += merge(it) }
+                if (dir.id == "folder" && !syncPrefs.getBoolean(KEY_LEGACY_DONE, false)) {
+                    dir.legacy()?.let { total += merge(it) }
                     syncPrefs.edit().putBoolean(KEY_LEGACY_DONE, true).apply()
                 }
 
                 // Pull: only novels whose fingerprint differs from what was last seen here.
-                val manifest = dir.file(MANIFEST)?.let { read(it) } ?: JSONObject()
+                val manifest = dir.read(MANIFEST) ?: JSONObject()
                 val remoteStamps = manifest.optJSONObject("books") ?: JSONObject()
-                val pulled = stamps(KEY_PULLED)
+                val pulled = stamps(pulledKey)
                 val changed = JSONArray()
                 for (id in remoteStamps.keys()) {
                     val stamp = remoteStamps.getString(id)
                     if (pulled.optString(id) == stamp) continue
                     // Not there yet (Drive still copying it)? Try again next sync.
-                    val book = dir.file(bookFileName(id))?.let { read(it) } ?: continue
+                    val book = dir.read(bookFileName(id)) ?: continue
                     changed.put(book)
                     pulled.put(id, stamp)
                 }
@@ -107,14 +156,16 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
                     if (remoteStamps.optString(b.id) != stamp) dir.write(bookFileName(b.id), json)
                     pulled.put(b.id, stamp)
                 }
-                dir.write(
-                    MANIFEST,
-                    JSONObject().put("version", 2).put("savedAt", System.currentTimeMillis())
-                        .put("books", newStamps).put("bookmarks", bookmarksJson()).put("removed", removals())
-                        .toString()
-                )
+                // The manifest is only rewritten when something in it changed (keeps the cloud
+                // service well inside its free daily writes).
+                val newManifest = JSONObject().put("version", 2)
+                    .put("books", newStamps).put("bookmarks", bookmarksJson()).put("removed", removals())
+                val oldComparable = JSONObject(manifest.toString()).apply { remove("savedAt") }.toString()
+                if (newManifest.toString() != oldComparable) {
+                    dir.write(MANIFEST, JSONObject(newManifest.toString()).put("savedAt", System.currentTimeMillis()).toString())
+                }
                 syncPrefs.edit()
-                    .putString(KEY_PULLED, pulled.toString())
+                    .putString(pulledKey, pulled.toString())
                     .putLong(KEY_LAST, System.currentTimeMillis()).remove(KEY_ERROR).apply()
                 total
             }.onFailure { e ->
@@ -335,6 +386,10 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
         private const val MANIFEST = "manifest.json"
         private const val KEY_PULLED = "pulled_stamps"
         private const val KEY_LEGACY_DONE = "legacy_imported"
+        private const val KEY_CLOUD = "cloud_crypto"
+        private const val KEY_SERVICE_URL = "service_url"
+        /** The Inkvault sync service (sync-server/ in the repo), on the owner's Cloudflare account. */
+        const val DEFAULT_SERVICE_URL = ""
 
         /** Book ids can hold any character, so files are named by a fingerprint of the id. */
         fun bookFileName(id: String) = "book_" + com.example.util.ContentHash.of(id) + ".json"

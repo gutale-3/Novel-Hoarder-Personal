@@ -132,6 +132,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // While the app is open, keep other phones up to date every few minutes (the sync
+            // itself skips if it ran in the last two minutes or isn't set up).
+            LaunchedEffect(Unit) {
+                val container = NovelHoarderApp.getContainer(application)
+                while (true) {
+                    kotlinx.coroutines.delay(3 * 60 * 1000L)
+                    container.appScope.launch { runCatching { container.cloudSync.syncIfDue() } }
+                }
+            }
+
             // Handle incoming intents (e.g. from notifications and the widget)
             val currentPendingRoute by pendingRoute
             LaunchedEffect(currentPendingRoute) {

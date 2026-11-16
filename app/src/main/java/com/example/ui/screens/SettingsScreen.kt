@@ -195,6 +195,8 @@ fun SettingsScreen(
             item {
                 SectionHeader("App Updates")
                 com.example.ui.components.AppUpdateCard(alwaysShow = true)
+                Spacer(Modifier.height(12.dp))
+                com.example.ui.components.PhoneSyncCard()
             }
 
             // --- 1. Reading ---
