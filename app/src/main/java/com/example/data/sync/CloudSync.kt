@@ -389,7 +389,7 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
         private const val KEY_CLOUD = "cloud_crypto"
         private const val KEY_SERVICE_URL = "service_url"
         /** The Inkvault sync service (sync-server/ in the repo), on the owner's Cloudflare account. */
-        const val DEFAULT_SERVICE_URL = ""
+        const val DEFAULT_SERVICE_URL = "https://inkvault-sync.ahmeddahirgutale.workers.dev"
 
         /** Book ids can hold any character, so files are named by a fingerprint of the id. */
         fun bookFileName(id: String) = "book_" + com.example.util.ContentHash.of(id) + ".json"
