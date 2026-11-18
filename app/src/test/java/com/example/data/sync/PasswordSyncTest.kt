@@ -52,17 +52,27 @@ class PasswordSyncTest {
             (4..120).map { ch("a", it).copy(content = "Text of chapter $it", hash = "x$it", isArchived = it == 7) })
         prefs.edit().putString("progress_chapter_a", "a_3").putInt("progress_para_a_a_3", 17).putLong("progress_at_a", 9_000L).commit()
         val phoneA = CloudSync(context, repoA).apply { setServiceUrl(url!!) }
-        phoneA.setPassword("my sync password").getOrThrow()
+        phoneA.setPassword("my sync password").getOrThrow() // novel details only; text not uploaded yet
 
-        // Phone B: empty, same password (fresh device state).
+        // Phone B: empty, same password (fresh device state). A's sync state is kept aside,
+        // since both "phones" share one test app's preferences.
+        val phoneAState = syncPrefs.all.toMap()
         prefs.edit().clear().commit(); syncPrefs.edit().clear().commit()
         val dbB = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
         val repoB = NovelRepository(dbB.bookDao())
         val phoneB = CloudSync(context, repoB).apply { setServiceUrl(url!!) }
         val summary = phoneB.setPassword("my sync password").getOrThrow()
-
         assertEquals(1, summary.booksAdded)
-        assertEquals(120, summary.chaptersFilled)
+        // B tries before A has uploaded any text: nothing yet, and nothing is marked done.
+        assertEquals(0, phoneB.syncText().getOrThrow())
+        // A's background copy runs; on B's next run all text arrives.
+        val bPrefs = syncPrefs.all.toMap()
+        syncPrefs.edit().clear().commit(); restore(syncPrefs, phoneAState)
+        assertEquals(0, phoneA.syncText().getOrThrow())
+        syncPrefs.edit().clear().commit(); restore(syncPrefs, bPrefs)
+        assertEquals(120, phoneB.syncText().getOrThrow())
+        // Nothing left to copy, and B doesn't upload back what it just received.
+        assertEquals(0, phoneB.syncText().getOrThrow())
         assertEquals((1..120).filter { it != 7 }, repoB.getChapters("a").map { it.chapterNumber })
         assertEquals("Text of chapter 99", repoB.getChapter("a_99")?.content)
         assertEquals(true, repoB.getChapter("a_7")?.isArchived)
@@ -71,5 +81,18 @@ class PasswordSyncTest {
         assertEquals("a_3", prefs.getString("progress_chapter_a", null))
         assertEquals(17, prefs.getInt("progress_para_a_a_3", 0))
         dbA.close(); dbB.close()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun restore(p: android.content.SharedPreferences, values: Map<String, *>) {
+        val e = p.edit()
+        values.forEach { (k, v) ->
+            when (v) {
+                is String -> e.putString(k, v); is Boolean -> e.putBoolean(k, v)
+                is Long -> e.putLong(k, v); is Int -> e.putInt(k, v)
+                is Set<*> -> e.putStringSet(k, v as Set<String>)
+            }
+        }
+        e.commit()
     }
 }

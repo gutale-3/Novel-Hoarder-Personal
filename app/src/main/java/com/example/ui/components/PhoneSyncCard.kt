@@ -119,12 +119,29 @@ fun PhoneSyncCard() {
                     style = MaterialTheme.typography.bodySmall,
                     color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // Chapter text copying runs on its own in the background; show where it is.
+                var textStatus by remember { mutableStateOf(sync.textStatus()) }
+                LaunchedEffect(Unit) {
+                    while (true) { textStatus = sync.textStatus(); kotlinx.coroutines.delay(1500) }
+                }
+                if (textStatus.message.isNotBlank() || textStatus.error != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (textStatus.running) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Text(
+                            textStatus.message + (textStatus.error?.let { " · problem: $it" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (textStatus.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(enabled = !working, onClick = {
                         working = true
                         message = "Syncing…"
                         scope.launch {
                             report(kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { sync.syncNow() })
+                            // Copy chapter text right away too (it also runs in the background).
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { sync.syncText() }
                             working = false
                             refresh++
                         }

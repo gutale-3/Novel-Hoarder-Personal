@@ -128,6 +128,11 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
             runCatching {
                 val dir = openStore()
                 val pulledKey = if (dir.id == "cloud") KEY_PULLED + "_cloud" else KEY_PULLED
+                // One-time (text copy v2): read every novel file again so this phone learns which
+                // text bundles the other phone has.
+                if (!syncPrefs.getBoolean(KEY_TEXT_V2, false)) {
+                    syncPrefs.edit().remove(KEY_PULLED).remove(KEY_PULLED + "_cloud").putBoolean(KEY_TEXT_V2, true).apply()
+                }
                 var total = Summary(0, 0, 0, 0)
 
                 // One-time upgrade from the old single-file sync.
@@ -158,23 +163,19 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
                         .put("bookmarks", manifest.optJSONArray("bookmarks") ?: JSONArray())
                         .put("removed", manifest.optJSONObject("removed") ?: JSONObject())
                 )
-                // Chapter text, after merge has added the chapters it belongs to. A novel only
-                // counts as pulled once all of its text arrived.
+                // Chapter text is copied afterwards by [syncText] (in the background, resumable);
+                // here we only note which bundles the other device has.
                 for (i in 0 until changed.length()) {
                     val rb = changed.getJSONObject(i)
                     val id = rb.getString("id")
-                    val filled = pullText(dir, rb) ?: continue
-                    total += Summary(0, 0, 0, 0, filled)
+                    rb.optJSONObject("text")?.let { saveTextRecord("rtext", dir.id, id, it) }
                     pulled.put(id, changedStamps.getValue(id))
                 }
 
                 // Push: rewrite only the novels that differ from the folder's copy.
                 val newStamps = JSONObject()
                 for (b in repository.getAllBooks()) {
-                    val obj = bookJson(b)
-                    // Text first, so a device that sees the new novel file finds its text too.
-                    pushText(dir, b.id, obj.getJSONObject("text"))
-                    val json = obj.toString()
+                    val json = bookJson(b).toString()
                     val stamp = com.example.util.ContentHash.of(json)
                     newStamps.put(b.id, stamp)
                     if (remoteStamps.optString(b.id) != stamp) dir.write(bookFileName(b.id), json)
@@ -191,6 +192,7 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
                 syncPrefs.edit()
                     .putString(pulledKey, pulled.toString())
                     .putLong(KEY_LAST, System.currentTimeMillis()).remove(KEY_ERROR).apply()
+                runCatching { com.example.background.TextSyncWorker.runNow(context) }
                 total
             }.onFailure { e ->
                 syncPrefs.edit().putString(KEY_ERROR, e.message ?: e::class.simpleName).apply()
@@ -307,73 +309,114 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
     private fun textFileName(bookId: String, n: Int, i: Int) =
         "text_" + com.example.util.ContentHash.of(bookId).take(16) + "_${n}_$i.json"
 
-    /** What the shared store is known to hold for this novel's text (per store). */
-    private fun knownText(storeId: String, bookId: String): JSONObject =
-        runCatching { JSONObject(syncPrefs.getString("text_${storeId}_$bookId", "{}")!!) }.getOrDefault(JSONObject())
+    // Per novel and store: "rtext" = bundles the other device announced, "tpull" = bundles
+    // copied in from it, "tpush" = bundles this device uploaded. Each is {"n": .., "s": [..]}
+    // and is saved after every single bundle, so an interrupted copy picks up where it stopped.
+    private fun textRecord(kind: String, storeId: String, bookId: String): JSONObject =
+        runCatching { JSONObject(syncPrefs.getString("${kind}_${storeId}_$bookId", "{}")!!) }.getOrDefault(JSONObject())
 
-    private fun saveKnownText(storeId: String, bookId: String, text: JSONObject) =
-        syncPrefs.edit().putString("text_${storeId}_$bookId", text.toString()).apply()
+    private fun saveTextRecord(kind: String, storeId: String, bookId: String, rec: JSONObject) =
+        syncPrefs.edit().putString("${kind}_${storeId}_$bookId", rec.toString()).apply()
 
-    private suspend fun pushText(dir: Store, bookId: String, text: JSONObject) {
-        val known = knownText(dir.id, bookId)
-        val n = text.getInt("n")
-        val s = text.getJSONArray("s")
-        val sameLayout = known.optInt("n") == n
-        val knownS = known.optJSONArray("s")
-        var rows: Map<Int, List<ChapterEntity>>? = null
-        for (i in 0 until n) {
-            val stamp = s.getString(i)
-            if (stamp.isEmpty() || (sameLayout && knownS?.optString(i) == stamp)) continue
-            if (rows == null) {
-                rows = repository.getChapterSyncRows(bookId).filter { !it.hash.endsWith("/0") }.groupBy { bucketOf(it.id, n) }
-            }
-            val out = JSONArray()
-            for (r in rows[i].orEmpty()) {
-                val full = repository.getChapter(r.id) ?: continue
-                out.put(
-                    JSONObject().put("id", full.id).put("c", full.content).put("hash", full.hash)
-                        .put("h", r.hash).put("at", full.downloadedAt)
-                )
-            }
-            dir.write(textFileName(bookId, n, i), JSONObject().put("chapters", out).toString())
-        }
-        saveKnownText(dir.id, bookId, text)
+    /** [rec] with bundle [i] set to [stamp], starting a fresh record when the layout ([n]) differs. */
+    private fun withBundle(rec: JSONObject, n: Int, i: Int, stamp: String): JSONObject {
+        val out = if (rec.optInt("n") == n) JSONObject(rec.toString())
+        else JSONObject().put("n", n).put("s", JSONArray().apply { repeat(n) { put("") } })
+        out.getJSONArray("s").put(i, stamp)
+        return out
     }
 
+    private fun stampAt(rec: JSONObject, n: Int, i: Int): String =
+        if (rec.optInt("n") == n) rec.optJSONArray("s")?.optString(i).orEmpty() else ""
+
+    data class TextStatus(val running: Boolean, val message: String, val error: String?)
+
+    fun textStatus() = TextStatus(
+        syncPrefs.getBoolean(KEY_TEXT_RUNNING, false),
+        syncPrefs.getString(KEY_TEXT_MSG, null).orEmpty(),
+        syncPrefs.getString(KEY_TEXT_ERROR, null)
+    )
+
+    private fun setTextStatus(running: Boolean, message: String) =
+        syncPrefs.edit().putBoolean(KEY_TEXT_RUNNING, running).putString(KEY_TEXT_MSG, message).apply()
+
+    private val textMutex = Mutex()
+
     /**
-     * Fills in chapter text from the other devices. Returns how many chapters got text, or null
-     * when a bundle isn't available yet (or is an older copy), so the novel is tried again.
+     * Copies chapter text both ways, one bundle at a time: downloads the other device's bundles
+     * this device hasn't applied, then uploads this device's bundles the other hasn't got.
+     * Safe to stop at any point; the next run continues. Returns chapters filled in here.
      */
-    private suspend fun pullText(dir: Store, rb: JSONObject): Int? {
-        val text = rb.optJSONObject("text") ?: return 0 // from a device on an older version
-        val bookId = rb.getString("id")
-        val n = text.getInt("n")
-        val s = text.getJSONArray("s")
-        val known = knownText(dir.id, bookId)
-        val sameLayout = known.optInt("n") == n
-        val knownS = known.optJSONArray("s")
-        var filled = 0
-        for (i in 0 until n) {
-            val stamp = s.getString(i)
-            if (stamp.isEmpty() || (sameLayout && knownS?.optString(i) == stamp)) continue
-            val bundle = dir.read(textFileName(bookId, n, i)) ?: return null
-            val items = bundle.optJSONArray("chapters") ?: return null
-            val list = (0 until items.length()).map { items.getJSONObject(it) }
-            if (bucketStamp(list.map { it.getString("id") to it.getString("h") }) != stamp) return null
-            for (o in list) {
-                val local = repository.getChapter(o.getString("id")) ?: continue
-                if (local.isDeleted) continue
-                val content = o.getString("c")
-                val at = o.optLong("at")
-                // Fill what's missing; otherwise the most recently downloaded copy wins.
-                if (local.content.isBlank() || (at > local.downloadedAt && local.content != content)) {
-                    repository.setChapterText(local.id, content, o.optString("hash"), at)
-                    filled++
+    suspend fun syncText(): Result<Int> = withContext(Dispatchers.IO) {
+        if (!isEnabled) return@withContext Result.success(0)
+        textMutex.withLock {
+            runCatching {
+                val dir = openStore()
+                val books = repository.getAllBooks()
+                var filled = 0
+                var uploaded = 0
+                books.forEachIndexed { bi, b ->
+                    setTextStatus(true, "Copying chapters: novel ${bi + 1} of ${books.size} (${b.title.take(40)})")
+
+                    // Download what the other device has.
+                    val remote = textRecord("rtext", dir.id, b.id)
+                    val rn = remote.optInt("n")
+                    val rs = remote.optJSONArray("s")
+                    var pulledRec = textRecord("tpull", dir.id, b.id)
+                    if (rn > 0 && rs != null) for (i in 0 until rn) {
+                        val want = rs.optString(i)
+                        if (want.isEmpty() || stampAt(pulledRec, rn, i) == want) continue
+                        val bundle = dir.read(textFileName(b.id, rn, i)) ?: continue // not uploaded yet
+                        val items = bundle.optJSONArray("chapters") ?: continue
+                        val list = (0 until items.length()).map { items.getJSONObject(it) }
+                        if (bucketStamp(list.map { it.getString("id") to it.getString("h") }) != want) continue // older copy
+                        for (o in list) {
+                            val local = repository.getChapter(o.getString("id")) ?: continue
+                            if (local.isDeleted) continue
+                            val content = o.getString("c")
+                            val at = o.optLong("at")
+                            if (local.content.isBlank() || (at > local.downloadedAt && local.content != content)) {
+                                repository.setChapterText(local.id, content, o.optString("hash"), at)
+                                filled++
+                            }
+                        }
+                        pulledRec = withBundle(pulledRec, rn, i, want)
+                        saveTextRecord("tpull", dir.id, b.id, pulledRec)
+                    }
+
+                    // Upload what the other device hasn't got.
+                    val rows = repository.getChapterSyncRows(b.id).filter { !it.hash.endsWith("/0") }
+                    val local = textInfo(rows)
+                    val n = local.getInt("n")
+                    val ls = local.getJSONArray("s")
+                    var pushedRec = textRecord("tpush", dir.id, b.id)
+                    val groups = rows.groupBy { bucketOf(it.id, n) }
+                    for (i in 0 until n) {
+                        val have = ls.getString(i)
+                        if (have.isEmpty() || stampAt(pushedRec, n, i) == have) continue
+                        // The other device already has exactly this bundle (e.g. we copied it from there).
+                        if (stampAt(remote, n, i) == have) {
+                            pushedRec = withBundle(pushedRec, n, i, have); saveTextRecord("tpush", dir.id, b.id, pushedRec); continue
+                        }
+                        val out = JSONArray()
+                        for (r in groups[i].orEmpty()) {
+                            val full = repository.getChapter(r.id) ?: continue
+                            out.put(JSONObject().put("id", full.id).put("c", full.content).put("hash", full.hash).put("h", r.hash).put("at", full.downloadedAt))
+                        }
+                        dir.write(textFileName(b.id, n, i), JSONObject().put("chapters", out).toString())
+                        uploaded++
+                        pushedRec = withBundle(pushedRec, n, i, have)
+                        saveTextRecord("tpush", dir.id, b.id, pushedRec)
+                    }
                 }
+                setTextStatus(false, "All chapters copied" + if (filled > 0) " (received $filled)" else "")
+                syncPrefs.edit().remove(KEY_TEXT_ERROR).putLong(KEY_TEXT_LAST, System.currentTimeMillis()).apply()
+                filled
+            }.onFailure { e ->
+                setTextStatus(false, "Copying chapters paused")
+                syncPrefs.edit().putString(KEY_TEXT_ERROR, e.message ?: e::class.simpleName).apply()
             }
         }
-        saveKnownText(dir.id, bookId, text)
-        return filled
     }
 
     private suspend fun bookmarksJson(): JSONArray {
@@ -511,6 +554,11 @@ class CloudSync(private val context: Context, private val repository: NovelRepos
         const val LEGACY_FILE_NAME = "NovelHoarder-sync.json"
         const val SUBFOLDER = "Inkvault-sync"
         private const val TEXT_PER_BUCKET = 50
+        private const val KEY_TEXT_RUNNING = "text_running"
+        private const val KEY_TEXT_MSG = "text_message"
+        private const val KEY_TEXT_ERROR = "text_error"
+        private const val KEY_TEXT_LAST = "text_last"
+        private const val KEY_TEXT_V2 = "text_v2_reset"
         private const val MANIFEST = "manifest.json"
         private const val KEY_PULLED = "pulled_stamps"
         private const val KEY_LEGACY_DONE = "legacy_imported"

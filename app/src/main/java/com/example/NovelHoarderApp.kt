@@ -119,6 +119,7 @@ class NovelHoarderApp : Application() {
             com.example.background.DownloadQueue.schedule(this)
             com.example.background.SiteHealthWorker.schedule(this)
             com.example.background.ChapterAlerts.scheduleDigest(this)
+            com.example.background.TextSyncWorker.schedule(this)
             com.example.viewmodel.AutoShelves.start(this, container.repository, container.appScope)
             // One-time: undo pauses left on Tomato by the false "security check" prompts of builds 17–23.
             getSharedPreferences("novel_hoarder_prefs", MODE_PRIVATE).let { p ->
